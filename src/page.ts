@@ -7,7 +7,7 @@ export function renderPage(user: string): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Twitch Chat</title>
 <style>
   :root {
@@ -15,7 +15,8 @@ export function renderPage(user: string): string {
     --accent:#9147ff; --accent-hover:#772ce8; --danger:#eb0400; --mention:#5c1618; --notice:#1f1a2e;
   }
   * { box-sizing:border-box; }
-  html, body { height:100%; }
+  /* The document never scrolls; only the message list does. */
+  html, body { position:fixed; inset:0; overflow:hidden; overscroll-behavior:none; }
   body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
   button, input { font:inherit; }
   button, a.btn { padding:7px 12px; border:0; border-radius:6px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; text-decoration:none; white-space:nowrap; }
@@ -29,7 +30,7 @@ export function renderPage(user: string): string {
   input:focus { outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent; }
   [hidden] { display:none !important; }
 
-  .app { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:100dvh; max-width:900px; margin:0 auto; border-inline:1px solid var(--line); background:var(--panel); }
+  .app { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:var(--app-height, 100dvh); padding-bottom:env(safe-area-inset-bottom); max-width:900px; margin:0 auto; border-inline:1px solid var(--line); background:var(--panel); }
   .top { position:sticky; top:0; z-index:10; background:var(--panel); }
   header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:10px 12px; border-bottom:1px solid var(--line); }
   header h1 { font-size:15px; margin:0; }
@@ -560,6 +561,22 @@ window.addEventListener("hashchange", () => {
   const h = normalizeChannel(location.hash.slice(1));
   if (h && h !== channel && me) join(h);
 });
+
+// Mobile keyboards shrink only the visual viewport (and iOS scrolls it), so size and
+// position the app to whatever is actually visible.
+const vv = window.visualViewport;
+if (vv) {
+  const app = document.querySelector(".app");
+  const fit = () => {
+    const stick = nearBottom();
+    app.style.setProperty("--app-height", vv.height + "px");
+    app.style.transform = vv.offsetTop ? "translateY(" + vv.offsetTop + "px)" : "";
+    if (stick) list.scrollTop = list.scrollHeight;
+  };
+  vv.addEventListener("resize", fit);
+  vv.addEventListener("scroll", fit);
+  fit();
+}
 
 load7tvGlobal();
 refreshStatus();

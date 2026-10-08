@@ -169,6 +169,10 @@ export class ColorLoop extends DurableObject<Env> {
     const current = await this.getRun();
     if (!current?.running || current.id !== run.id) return;
 
+    console.log(
+      JSON.stringify({ tick: run.channel, color: update.lastColor, offlineStreak: update.offlineStreak, error: update.lastError, stopReason }),
+    );
+
     const next: Run = { ...current, ...update };
     if (stopReason) {
       next.running = false;

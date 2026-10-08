@@ -4,11 +4,14 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-15",
   "observability": { "enabled": true },
+  "routes": [{ "pattern": "old.example.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
   "vars": {
     // Your Zero Trust team domain, e.g. "https://myteam.cloudflareaccess.com"
     "ACCESS_TEAM_DOMAIN": "https://YOUR-TEAM.cloudflareaccess.com",
     // Application Audience (AUD) tag of the existing Access application
-    "ACCESS_AUD": "YOUR-EXISTING-ACCESS-AUD-TAG",
+    "ACCESS_AUD": "YOUR-ACCESS-APPLICATION-AUD-TAG",
     "TWITCH_CLIENT_ID": "YOUR-TWITCH-CLIENT-ID"
   },
   // Secret (set with `wrangler secret put`): TWITCH_CLIENT_SECRET

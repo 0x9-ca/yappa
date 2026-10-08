@@ -77,7 +77,7 @@ export function renderPage(user: string): string {
   #send-error { color:#ff8080; font-size:12px; margin-top:6px; }
   #emote-btn { padding:7px 9px; display:grid; place-items:center; }
   #emote-btn svg { width:18px; height:18px; }
-  .picker { position:absolute; left:8px; right:8px; bottom:calc(100% + 6px); max-height:min(380px, 55%); display:flex; flex-direction:column; background:#1f1f23; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #000a; z-index:20; }
+  .picker { position:absolute; left:8px; right:8px; bottom:calc(100% + 6px); max-height:min(380px, calc(var(--app-height, 100dvh) * 0.55)); display:flex; flex-direction:column; background:#1f1f23; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #000a; z-index:20; }
   .picker > input { margin:8px; }
   .picker .note { padding:0 10px 6px; font-size:12px; color:var(--muted); }
   .picker .note a { color:#bf94ff; }

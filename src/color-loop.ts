@@ -74,7 +74,8 @@ export class ColorLoop extends DurableObject<Env> {
   }
 
   async status(): Promise<Status> {
-    const [tokens, run] = await Promise.all([this.getTokens(), this.getRun()]);
+    let [tokens, run] = await Promise.all([this.getTokens(), this.getRun()]);
+    if (tokens && !tokens.scopes) tokens = await this.backfillScopes(tokens);
     let publicRun: Status["run"] = null;
     if (run) {
       const { id, offlineStreak, errorStreak, ...rest } = run;
@@ -90,6 +91,20 @@ export class ColorLoop extends DurableObject<Env> {
         : null,
       run: publicRun,
     };
+  }
+
+  /** Tokens saved by older code lack the scope list; ask Twitch for it. */
+  private async backfillScopes(tokens: Tokens): Promise<Tokens> {
+    try {
+      const info = await this.withToken((t) => validateToken(t.accessToken));
+      const current = await this.getTokens();
+      if (!current) return tokens;
+      const next = { ...current, scopes: info.scopes, validatedAt: Date.now() };
+      await this.ctx.storage.put("tokens", next);
+      return next;
+    } catch {
+      return tokens;
+    }
   }
 
   async connectTwitch(code: string, redirectUri: string): Promise<void> {

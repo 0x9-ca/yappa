@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yappa",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "observability": { "enabled": true },
+  "vars": {
+    // Your Zero Trust team domain, e.g. "https://myteam.cloudflareaccess.com"
+    "ACCESS_TEAM_DOMAIN": "https://YOUR-TEAM.cloudflareaccess.com",
+    // Application Audience (AUD) tag of the existing Access application
+    "ACCESS_AUD": "YOUR-EXISTING-ACCESS-AUD-TAG",
+    "TWITCH_CLIENT_ID": "YOUR-TWITCH-CLIENT-ID"
+  },
+  // Secret (set with `wrangler secret put`): TWITCH_CLIENT_SECRET
+  "durable_objects": {
+    "bindings": [{ "name": "COLOR_LOOP", "class_name": "ColorLoop" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ColorLoop"] }]
+}

@@ -199,11 +199,11 @@ async function refreshStatus() {
   const run = s.run;
   const running = !!(run && run.running);
   $("swatch").style.background = run && run.lastColor ? run.lastColor : "transparent";
-  $("color").textContent = run && run.lastColor ? run.lastColor : "—";
+  $("color").textContent = run && run.lastColor ? run.lastColor + " - " + run.changes : "—";
   $("cycle").textContent = running ? "Stop cycling" : "Cycle color";
   $("cycle").className = running ? "stop" : "ghost";
   let note = "";
-  if (running) note = "Cycling your color every 10s while " + run.channel + " is live · " + run.changes + " changes" + (run.lastError ? " · last error: " + run.lastError : "");
+  if (running && run.lastError) note = "Color cycling error: " + run.lastError;
   else if (run && run.stoppedReason && Date.now() - run.stoppedAt < 10 * 60000) note = "Color cycling stopped: " + run.stoppedReason;
   $("cycle-status").textContent = note;
   show("cycle-status", !!note && !!tw);

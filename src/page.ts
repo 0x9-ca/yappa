@@ -75,6 +75,19 @@ export function renderPage(user: string): string {
   footer form { display:flex; gap:8px; }
   footer form input { flex:1; padding:9px 10px; }
   #send-error { color:#ff8080; font-size:12px; margin-top:6px; }
+  #emote-btn { padding:7px 9px; display:grid; place-items:center; }
+  #emote-btn svg { width:18px; height:18px; }
+  .picker { position:absolute; left:8px; right:8px; bottom:calc(100% + 6px); max-height:min(380px, 55%); display:flex; flex-direction:column; background:#1f1f23; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #000a; z-index:20; }
+  .picker > input { margin:8px; }
+  .picker .note { padding:0 10px 6px; font-size:12px; color:var(--muted); }
+  .picker .note a { color:#bf94ff; }
+  .picker .scroll { overflow-y:auto; overscroll-behavior:contain; padding:0 8px 8px; }
+  .picker h3 { position:sticky; top:0; margin:0; padding:6px 2px 4px; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); background:#1f1f23; }
+  .picker .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(42px, 1fr)); gap:2px; margin-bottom:6px; }
+  .picker .grid button { height:42px; padding:4px; background:none; border-radius:6px; display:grid; place-items:center; }
+  .picker .grid button:hover, .picker .grid button:focus-visible { background:#ffffff1a; }
+  .picker .grid img { max-height:30px; max-width:38px; }
+  .picker .empty { padding:16px; text-align:center; color:var(--muted); }
 
   .connect { display:grid; place-items:center; text-align:center; padding:24px; }
   .connect p { color:var(--muted); max-width:320px; }
@@ -119,7 +132,15 @@ export function renderPage(user: string): string {
 
   <footer id="footer" hidden>
     <div class="replying" id="replying" hidden><span id="replying-text"></span><button class="link" id="reply-cancel">cancel</button></div>
+    <div class="picker" id="picker" hidden>
+      <input id="emote-search" placeholder="Search emotes" autocomplete="off" spellcheck="false" aria-label="Search emotes">
+      <div class="note" id="picker-note" hidden></div>
+      <div class="scroll" id="picker-list"></div>
+    </div>
     <form id="send-form">
+      <button type="button" class="ghost" id="emote-btn" aria-label="Emotes" title="Emotes" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="3"/></svg>
+      </button>
       <input id="message" placeholder="Join a channel to chat" autocomplete="off" maxlength="500" disabled aria-label="Message">
       <button type="submit" id="send" disabled>Chat</button>
     </form>
@@ -243,6 +264,7 @@ function join(name) {
   channel = name;
   retries = 0;
   stvChannel = new Map();
+  twitchEmotes = null;
   $("channel").value = name;
   location.hash = name;
   safeSet("lastChannel", name);
@@ -345,6 +367,8 @@ async function load7tvChannel(twitchId, gen) {
 function find7tv(word) { return stvChannel.get(word) || stvGlobal.get(word); }
 
 function setComposer(on) {
+  $("emote-btn").disabled = !on;
+  if (!on) closePicker();
   $("message").disabled = !on;
   $("send").disabled = !on;
   $("message").placeholder = on ? "Send a message" : (channel ? "Connecting…" : "Join a channel to chat");
@@ -516,6 +540,135 @@ function handleEvent(type, ev) {
   }
 }
 
+// ---------- emote picker ----------
+
+let twitchEmotes = null;     // null = not loaded; otherwise the /api/chat/emotes response
+let twitchEmotesFor = null;
+const TWITCH_GROUPS = ["This channel", "Other channels", "Twitch global", "Other"];
+const coarse = matchMedia("(pointer: coarse)").matches;
+
+function twitchEmoteUrl(e) {
+  return "https://static-cdn.jtvnw.net/emoticons/v2/" + e.id + "/" + (e.animated ? "animated" : "static") + "/dark/2.0";
+}
+
+function recentEmotes() {
+  try { return JSON.parse(localStorage.getItem("recentEmotes") || "[]"); } catch { return []; }
+}
+
+function rememberEmote(name, url) {
+  const list = [{ name, url }, ...recentEmotes().filter((e) => e.name !== name)].slice(0, 24);
+  safeSet("recentEmotes", JSON.stringify(list));
+}
+
+async function openPicker() {
+  show("picker", true);
+  if (!coarse) $("emote-search").focus();
+  renderPicker();
+  if (broadcaster && twitchEmotesFor !== broadcaster.id) {
+    const id = broadcaster.id;
+    twitchEmotesFor = id;
+    twitchEmotes = null;
+    const r = await api("/api/chat/emotes?broadcaster_id=" + encodeURIComponent(id));
+    if (!broadcaster || broadcaster.id !== id) return;
+    twitchEmotes = r;
+    if (!r.ok && !r.needsScope) twitchEmotesFor = null; // allow a retry next open
+    if (!$("picker").hidden) renderPicker();
+  }
+}
+
+function closePicker() {
+  show("picker", false);
+  $("emote-search").value = "";
+}
+
+function renderPicker() {
+  const q = $("emote-search").value.trim().toLowerCase();
+  const match = (name) => !q || name.toLowerCase().includes(q);
+  const sections = [];
+  const add = (title, items) => {
+    items = items.filter((e) => match(e.name));
+    if (items.length) sections.push([title, items]);
+  };
+  const stv = (m) => [...m].map(([name, e]) => ({ name, url: e.url }));
+  const tw = (group) => twitchEmotes && twitchEmotes.ok
+    ? twitchEmotes.emotes.filter((e) => e.group === group).map((e) => ({ name: e.name, url: twitchEmoteUrl(e) }))
+    : [];
+
+  if (!q) add("Recent", recentEmotes());
+  add("Twitch · this channel", tw("This channel"));
+  add("7TV · this channel", stv(stvChannel));
+  add("Twitch · your other subs", tw("Other channels"));
+  add("Twitch · global", tw("Twitch global"));
+  add("7TV · global", stv(stvGlobal));
+  add("Twitch · other", tw("Other"));
+
+  let note = "";
+  if (twitchEmotes === null && broadcaster) note = "Loading your Twitch emotes…";
+  else if (twitchEmotes && twitchEmotes.needsScope) note = '<a href="/auth/login">Reconnect Twitch</a> to include your Twitch emotes.';
+  else if (twitchEmotes && !twitchEmotes.ok) note = "Couldn't load Twitch emotes.";
+  $("picker-note").innerHTML = note;
+  show("picker-note", !!note);
+
+  const list = $("picker-list");
+  list.replaceChildren();
+  if (!sections.length) {
+    list.appendChild(el("div", "empty", q ? "No emotes match “" + q + "”." : "No emotes yet."));
+    return;
+  }
+  for (const [title, items] of sections) {
+    list.appendChild(el("h3", null, title + " (" + items.length + ")"));
+    const grid = el("div", "grid");
+    for (const e of items) {
+      const b = el("button");
+      b.type = "button";
+      b.title = e.name;
+      b.dataset.name = e.name;
+      b.dataset.url = e.url;
+      const img = document.createElement("img");
+      img.src = e.url;
+      img.alt = e.name;
+      img.loading = "lazy";
+      b.appendChild(img);
+      grid.appendChild(b);
+    }
+    list.appendChild(grid);
+  }
+}
+
+function insertEmote(name) {
+  const input = $("message");
+  const v = input.value;
+  const start = input.selectionStart ?? v.length;
+  const end = input.selectionEnd ?? v.length;
+  const before = v.slice(0, start), after = v.slice(end);
+  const text = (before && !/\\s$/.test(before) ? " " : "") + name + (/^\\s/.test(after) ? "" : " ");
+  if ((before + text + after).length > 500) return;
+  input.value = before + text + after;
+  const pos = before.length + text.length;
+  input.setSelectionRange(pos, pos);
+  if (!coarse) input.focus();
+}
+
+$("emote-btn").addEventListener("click", () => ($("picker").hidden ? openPicker() : closePicker()));
+$("emote-search").addEventListener("input", renderPicker);
+$("emote-search").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closePicker(); $("message").focus(); }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const first = $("picker-list").querySelector(".grid button");
+    if (first) first.click();
+  }
+});
+$("picker-list").addEventListener("click", (e) => {
+  const b = e.target.closest(".grid button");
+  if (!b) return;
+  insertEmote(b.dataset.name);
+  rememberEmote(b.dataset.name, b.dataset.url);
+});
+document.addEventListener("pointerdown", (e) => {
+  if (!$("picker").hidden && !e.target.closest("#picker, #emote-btn")) closePicker();
+});
+
 // ---------- sending ----------
 
 function setReply(r) {
@@ -530,7 +683,7 @@ $("reply-cancel").addEventListener("click", () => setReply(null));
 
 $("message").addEventListener("keydown", (e) => {
   if (e.key === "ArrowUp" && !$("message").value && lastSent) { $("message").value = lastSent; e.preventDefault(); }
-  if (e.key === "Escape") setReply(null);
+  if (e.key === "Escape") { if (!$("picker").hidden) closePicker(); else setReply(null); }
 });
 
 $("send-form").addEventListener("submit", async (e) => {
@@ -550,6 +703,7 @@ $("send-form").addEventListener("submit", async (e) => {
     lastSent = text;
     input.value = "";
     setReply(null);
+    closePicker();
   } else {
     $("send-error").textContent = r.error;
     show("send-error", true);

@@ -1,7 +1,10 @@
 const ID_BASE = "https://id.twitch.tv/oauth2";
 const API_BASE = "https://api.twitch.tv/helix";
 
+/** Scopes the app can't work without. */
 export const SCOPES = ["user:manage:chat_color", "user:read:chat", "user:write:chat"];
+/** Nice-to-have scopes: requested at login, but older tokens without them still work. */
+export const OPTIONAL_SCOPES = ["user:read:emotes"];
 
 export class TwitchError extends Error {
   constructor(
@@ -43,7 +46,7 @@ export function authorizeUrl(clientId: string, redirectUri: string, state: strin
     response_type: "code",
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: SCOPES.join(" "),
+    scope: [...SCOPES, ...OPTIONAL_SCOPES].join(" "),
     state,
     force_verify: "true",
   }).toString();
@@ -201,6 +204,37 @@ export async function getBadges(
   const out: Record<string, { url: string; title: string }> = {};
   for (const set of [...global, ...channel]) {
     for (const v of set.versions) out[`${set.set_id}/${v.id}`] = { url: v.image_url_2x, title: v.title };
+  }
+  return out;
+}
+
+export interface UserEmote {
+  id: string;
+  name: string;
+  emote_type: string;
+  owner_id: string;
+  format: string[];
+}
+
+/** Every Twitch emote the user can use in the given channel (Get User Emotes; needs user:read:emotes). */
+export async function getUserEmotes(
+  env: Env,
+  accessToken: string,
+  userId: string,
+  broadcasterId: string,
+): Promise<UserEmote[]> {
+  const out: UserEmote[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const url = new URL(`${API_BASE}/chat/emotes/user`);
+    url.searchParams.set("user_id", userId);
+    url.searchParams.set("broadcaster_id", broadcasterId);
+    if (cursor) url.searchParams.set("after", cursor);
+    const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get User Emotes");
+    const body = (await res.json()) as { data: UserEmote[]; pagination?: { cursor?: string } };
+    out.push(...body.data);
+    cursor = body.pagination?.cursor;
+    if (!cursor) break;
   }
   return out;
 }

@@ -118,6 +118,16 @@ export default {
         return json(result, result.ok ? 200 : 502);
       }
 
+      case "GET /api/chat/emotes": {
+        const id = url.searchParams.get("broadcaster_id");
+        if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);
+        try {
+          return json(await stub.chatEmotes(id));
+        } catch (err) {
+          return json({ ok: false, error: (err as Error).message }, 502);
+        }
+      }
+
       case "GET /api/chat/badges": {
         const id = url.searchParams.get("broadcaster_id");
         if (!id) return json({}, 400);

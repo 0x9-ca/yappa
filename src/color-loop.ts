@@ -6,6 +6,7 @@ import {
   exchangeCode,
   getBadges,
   getUser,
+  getUserEmotes,
   isLive,
   refreshToken,
   revokeToken,
@@ -151,6 +152,35 @@ export class ColorLoop extends DurableObject<Env> {
         sendChatMessage(this.env, t.accessToken, broadcasterId, t.userId, message, replyParentId),
       );
       return res.is_sent ? { ok: true } : { ok: false, error: res.drop_reason?.message ?? "Message was not sent." };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  /** Twitch emotes the user can use in this channel, slimmed down for the picker. */
+  async chatEmotes(
+    broadcasterId: string,
+  ): Promise<{ ok: true; emotes: { id: string; name: string; group: string; animated: boolean }[] } | { ok: false; error: string; needsScope?: boolean }> {
+    const tokens = await this.getTokens();
+    if (!tokens?.scopes?.includes("user:read:emotes")) return { ok: false, error: "Missing user:read:emotes", needsScope: true };
+    try {
+      const list = await this.withToken((t) => getUserEmotes(this.env, t.accessToken, t.userId, broadcasterId));
+      const seen = new Set<string>();
+      const emotes = [];
+      for (const e of list) {
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        const group =
+          e.owner_id === broadcasterId
+            ? "This channel"
+            : e.emote_type === "globals" || e.owner_id === "0"
+              ? "Twitch global"
+              : e.emote_type === "subscriptions" || e.emote_type === "follower"
+                ? "Other channels"
+                : "Other";
+        emotes.push({ id: e.id, name: e.name, group, animated: e.format.includes("animated") });
+      }
+      return { ok: true, emotes };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }

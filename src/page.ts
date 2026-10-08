@@ -319,7 +319,9 @@ async function subscribe(sessionId, gen) {
   if (gen !== joinGen) return;
   if (!r.ok) {
     sysLine("Couldn't join #" + channel + ": " + r.error);
+    const name = channel;
     leave();
+    if (r.retry) setTimeout(() => { if (gen + 1 === joinGen && channel === name) join(name); }, 10000);
     return;
   }
   retries = 0;
@@ -551,6 +553,12 @@ function twitchEmoteUrl(e) {
   return "https://static-cdn.jtvnw.net/emoticons/v2/" + e.id + "/" + (e.animated ? "animated" : "static") + "/dark/2.0";
 }
 
+function escapeText(t) {
+  const d = document.createElement("div");
+  d.textContent = t;
+  return d.innerHTML;
+}
+
 function recentEmotes() {
   try { return JSON.parse(localStorage.getItem("recentEmotes") || "[]"); } catch { return []; }
 }
@@ -572,7 +580,10 @@ async function openPicker() {
     if (!broadcaster || broadcaster.id !== id) return;
     twitchEmotes = r;
     if (!r.ok && !r.needsScope) twitchEmotesFor = null; // allow a retry next open
-    if (!$("picker").hidden) renderPicker();
+    if (!$("picker").hidden) {
+      renderPicker();
+      if (r.retry) setTimeout(() => { if (!$("picker").hidden && twitchEmotesFor === null) openPicker(); }, 10000);
+    }
   }
 }
 
@@ -605,7 +616,7 @@ function renderPicker() {
   let note = "";
   if (twitchEmotes === null && broadcaster) note = "Loading your Twitch emotes…";
   else if (twitchEmotes && twitchEmotes.needsScope) note = '<a href="/auth/login">Reconnect Twitch</a> to include your Twitch emotes.';
-  else if (twitchEmotes && !twitchEmotes.ok) note = "Couldn't load Twitch emotes.";
+  else if (twitchEmotes && !twitchEmotes.ok) note = "Couldn't load Twitch emotes: " + escapeText(twitchEmotes.error || "unknown error");
   $("picker-note").innerHTML = note;
   show("picker-note", !!note);
 

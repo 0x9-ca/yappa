@@ -29,7 +29,8 @@ export function renderPage(user: string): string {
   input:focus { outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent; }
   [hidden] { display:none !important; }
 
-  .app { display:grid; grid-template-rows:auto auto 1fr auto; height:100dvh; max-width:900px; margin:0 auto; border-inline:1px solid var(--line); background:var(--panel); }
+  .app { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:100dvh; max-width:900px; margin:0 auto; border-inline:1px solid var(--line); background:var(--panel); }
+  .top { position:sticky; top:0; z-index:10; background:var(--panel); }
   header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:10px 12px; border-bottom:1px solid var(--line); }
   header h1 { font-size:15px; margin:0; }
   header form { display:flex; gap:6px; flex:1 1 220px; }
@@ -67,7 +68,7 @@ export function renderPage(user: string): string {
   .notice .sysmsg { font-weight:600; }
   .more { position:absolute; left:50%; bottom:10px; transform:translateX(-50%); box-shadow:0 2px 8px #0008; }
 
-  footer { border-top:1px solid var(--line); padding:8px 12px 12px; }
+  footer { position:sticky; bottom:0; z-index:10; background:var(--panel); border-top:1px solid var(--line); padding:8px 12px 12px; }
   footer .replying { display:flex; justify-content:space-between; gap:8px; font-size:12px; color:var(--muted); margin-bottom:6px; }
   footer .replying span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   footer form { display:flex; gap:8px; }
@@ -80,6 +81,7 @@ export function renderPage(user: string): string {
 </head>
 <body>
 <div class="app">
+  <div class="top">
   <header>
     <h1>Chat</h1>
     <form id="join-form">
@@ -100,6 +102,7 @@ export function renderPage(user: string): string {
     <div class="banner error" id="error" hidden></div>
     <div class="banner info" id="reauth" hidden>Twitch needs extra permissions to read and send chat. <a href="/auth/login">Reconnect Twitch</a></div>
     <div class="banner info" id="cycle-status" hidden></div>
+  </div>
   </div>
 
   <div class="chat" id="chat" hidden>

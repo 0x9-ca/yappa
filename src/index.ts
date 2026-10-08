@@ -93,6 +93,36 @@ export default {
       case "POST /api/stop":
         await stub.stop();
         return json({ ok: true });
+
+      case "POST /api/chat/subscribe": {
+        const body = (await request.json().catch(() => ({}))) as { channel?: unknown; session_id?: unknown };
+        const channel = parseChannel(body.channel);
+        if (!channel) return json({ ok: false, error: "Enter a valid channel name." }, 400);
+        if (typeof body.session_id !== "string") return json({ ok: false, error: "Missing session_id." }, 400);
+        const result = await stub.chatSubscribe(channel, body.session_id);
+        return json(result, result.ok ? 200 : 502);
+      }
+
+      case "POST /api/chat/send": {
+        const body = (await request.json().catch(() => ({}))) as {
+          broadcaster_id?: unknown;
+          message?: unknown;
+          reply_parent_message_id?: unknown;
+        };
+        const message = typeof body.message === "string" ? body.message.trim() : "";
+        if (typeof body.broadcaster_id !== "string" || !message || message.length > 500) {
+          return json({ ok: false, error: "Message must be 1–500 characters." }, 400);
+        }
+        const reply = typeof body.reply_parent_message_id === "string" ? body.reply_parent_message_id : undefined;
+        const result = await stub.chatSend(body.broadcaster_id, message, reply);
+        return json(result, result.ok ? 200 : 502);
+      }
+
+      case "GET /api/chat/badges": {
+        const id = url.searchParams.get("broadcaster_id");
+        if (!id) return json({}, 400);
+        return json(await stub.chatBadges(id));
+      }
     }
 
     return new Response("Not found", { status: 404 });

@@ -1,7 +1,8 @@
 # yappa
 
-Cloudflare Worker that changes your Twitch chat color to a random hex color
-every 10 seconds while a chosen channel is live. Gated by Cloudflare Access.
+Web Twitch chat client (EventSub WebSocket + Helix, with 7TV emotes) that can also
+change your chat color to a random hex color
+every 10 seconds while the channel is live. Gated by Cloudflare Access.
 
 ## Setup
 
@@ -20,7 +21,7 @@ every 10 seconds while a chosen channel is live. Gated by Cloudflare Access.
 
 ## Behavior
 
-- Twitch scope requested: `user:manage:chat_color`.
+- Twitch scopes: `user:manage:chat_color`, `user:read:chat`, `user:write:chat`.
 - Start requires the channel to be live. The loop stops when the channel has been offline
   for 3 consecutive checks (~30s), when you click Stop, or on unrecoverable errors.
 - Twitch only allows hex colors for **Turbo or Prime** accounts; otherwise the

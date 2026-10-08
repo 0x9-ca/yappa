@@ -1,10 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  SCOPES,
   TwitchError,
+  createWebSocketSubscription,
   exchangeCode,
+  getBadges,
+  getUser,
   isLive,
   refreshToken,
   revokeToken,
+  sendChatMessage,
   setChatColor,
   validateToken,
 } from "./twitch";
@@ -15,6 +20,13 @@ const VALIDATE_EVERY_MS = 55 * 60_000;
 // Stream status can briefly flicker; require several offline checks in a row.
 const OFFLINE_TICKS_BEFORE_STOP = 3;
 const ERROR_TICKS_BEFORE_STOP = 6;
+const CHAT_EVENTS = [
+  "channel.chat.message",
+  "channel.chat.notification",
+  "channel.chat.message_delete",
+  "channel.chat.clear",
+  "channel.chat.clear_user_messages",
+];
 
 interface Tokens {
   accessToken: string;
@@ -23,6 +35,7 @@ interface Tokens {
   validatedAt: number;
   userId: string;
   login: string;
+  scopes?: string[];
 }
 
 interface Run {
@@ -41,7 +54,7 @@ interface Run {
 }
 
 export interface Status {
-  twitch: { login: string; userId: string } | null;
+  twitch: { login: string; userId: string; missingScopes: string[] } | null;
   run: Omit<Run, "id" | "offlineStreak" | "errorStreak"> | null;
 }
 
@@ -68,7 +81,13 @@ export class ColorLoop extends DurableObject<Env> {
       publicRun = rest;
     }
     return {
-      twitch: tokens ? { login: tokens.login, userId: tokens.userId } : null,
+      twitch: tokens
+        ? {
+            login: tokens.login,
+            userId: tokens.userId,
+            missingScopes: SCOPES.filter((s) => !tokens.scopes?.includes(s)),
+          }
+        : null,
       run: publicRun,
     };
   }
@@ -83,7 +102,51 @@ export class ColorLoop extends DurableObject<Env> {
       validatedAt: Date.now(),
       userId: info.user_id,
       login: info.login,
+      scopes: info.scopes,
     });
+  }
+
+  /** Subscribes the browser's EventSub WebSocket session to a channel's chat events. */
+  async chatSubscribe(
+    channel: string,
+    sessionId: string,
+  ): Promise<{ ok: true; broadcaster: { id: string; login: string; name: string } } | { ok: false; error: string }> {
+    try {
+      return await this.withToken(async (t) => {
+        const user = await getUser(this.env, t.accessToken, channel);
+        if (!user) return { ok: false as const, error: `No Twitch channel named ${channel}.` };
+        const condition = { broadcaster_user_id: user.id, user_id: t.userId };
+        await Promise.all(
+          CHAT_EVENTS.map((type) => createWebSocketSubscription(this.env, t.accessToken, type, condition, sessionId)),
+        );
+        return { ok: true as const, broadcaster: { id: user.id, login: user.login, name: user.display_name } };
+      });
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  async chatSend(
+    broadcasterId: string,
+    message: string,
+    replyParentId?: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const res = await this.withToken((t) =>
+        sendChatMessage(this.env, t.accessToken, broadcasterId, t.userId, message, replyParentId),
+      );
+      return res.is_sent ? { ok: true } : { ok: false, error: res.drop_reason?.message ?? "Message was not sent." };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  async chatBadges(broadcasterId: string): Promise<Record<string, { url: string; title: string }>> {
+    try {
+      return await this.withToken((t) => getBadges(this.env, t.accessToken, broadcasterId));
+    } catch {
+      return {};
+    }
   }
 
   async disconnectTwitch(): Promise<void> {

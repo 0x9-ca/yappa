@@ -1,7 +1,7 @@
 const ID_BASE = "https://id.twitch.tv/oauth2";
 const API_BASE = "https://api.twitch.tv/helix";
 
-export const SCOPES = ["user:manage:chat_color"];
+export const SCOPES = ["user:manage:chat_color", "user:read:chat", "user:write:chat"];
 
 export class TwitchError extends Error {
   constructor(
@@ -118,4 +118,89 @@ export async function setChatColor(env: Env, accessToken: string, userId: string
     await fetch(url, { method: "PUT", headers: helixHeaders(env, accessToken) }),
     "Update User Chat Color",
   );
+}
+
+export interface TwitchUser {
+  id: string;
+  login: string;
+  display_name: string;
+}
+
+export async function getUser(env: Env, accessToken: string, login: string): Promise<TwitchUser | null> {
+  const url = `${API_BASE}/users?login=${encodeURIComponent(login)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Users");
+  const body = (await res.json()) as { data: TwitchUser[] };
+  return body.data[0] ?? null;
+}
+
+/** Creates an EventSub subscription delivered to the browser's WebSocket session. */
+export async function createWebSocketSubscription(
+  env: Env,
+  accessToken: string,
+  type: string,
+  condition: Record<string, string>,
+  sessionId: string,
+): Promise<void> {
+  await check(
+    await fetch(`${API_BASE}/eventsub/subscriptions`, {
+      method: "POST",
+      headers: { ...helixHeaders(env, accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify({ type, version: "1", condition, transport: { method: "websocket", session_id: sessionId } }),
+    }),
+    `Subscribe to ${type}`,
+  );
+}
+
+export interface SendResult {
+  message_id: string;
+  is_sent: boolean;
+  drop_reason?: { code: string; message: string } | null;
+}
+
+export async function sendChatMessage(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  senderId: string,
+  message: string,
+  replyParentId?: string,
+): Promise<SendResult> {
+  const res = await check(
+    await fetch(`${API_BASE}/chat/messages`, {
+      method: "POST",
+      headers: { ...helixHeaders(env, accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        broadcaster_id: broadcasterId,
+        sender_id: senderId,
+        message,
+        ...(replyParentId ? { reply_parent_message_id: replyParentId } : {}),
+      }),
+    }),
+    "Send Chat Message",
+  );
+  return ((await res.json()) as { data: SendResult[] }).data[0];
+}
+
+interface BadgeSet {
+  set_id: string;
+  versions: { id: string; image_url_1x: string; image_url_2x: string; title: string }[];
+}
+
+/** Returns "set_id/version" -> {url, title}, channel badges overriding global ones. */
+export async function getBadges(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+): Promise<Record<string, { url: string; title: string }>> {
+  const headers = helixHeaders(env, accessToken);
+  const [global, channel] = await Promise.all(
+    [`${API_BASE}/chat/badges/global`, `${API_BASE}/chat/badges?broadcaster_id=${encodeURIComponent(broadcasterId)}`].map(
+      async (url) => ((await (await check(await fetch(url, { headers }), "Get Chat Badges")).json()) as { data: BadgeSet[] }).data,
+    ),
+  );
+  const out: Record<string, { url: string; title: string }> = {};
+  for (const set of [...global, ...channel]) {
+    for (const v of set.versions) out[`${set.set_id}/${v.id}`] = { url: v.image_url_2x, title: v.title };
+  }
+  return out;
 }

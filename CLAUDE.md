@@ -65,4 +65,4 @@ Tokens never reach the browser.
 
 - **Never put the user's real name or Twitch login anywhere in the repo:** code, placeholders, examples, test data, comments or commit messages. Use neutral stand-ins (`testuser`, "your nickname"). Grep diffs for it (as a whole word) before committing.
 - Config (`wrangler.jsonc` vars): `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` (the existing Access app's audience tag) and `TWITCH_CLIENT_ID`. Secret: `TWITCH_CLIENT_SECRET`. Var `APP_HOST` is the canonical hostname. The Twitch app's redirect URL is `https://yappa.0x9.ca/auth/callback`. The OAuth redirect is built from the request's origin, so every hostname in use must be registered with Twitch and covered by the Access app (same AUD).
-- There is no git remote. Commits are local unless the user asks otherwise.
+- The GitHub remote is `origin` (`git@github.com:0x9-ca/yappa.git`, branch `main`). Commit freely, but only push when the user asks.

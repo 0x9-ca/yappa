@@ -1,5 +1,5 @@
 import { verifyAccess } from "./access";
-import { renderPage } from "./page";
+import { assets, renderPage } from "./page";
 import { authorizeUrl } from "./twitch";
 
 export { ColorLoop } from "./color-loop";
@@ -40,6 +40,15 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   switch (`${request.method} ${url.pathname}`) {
+    case "GET /app.css":
+    case "GET /app.js": {
+      const asset = assets[url.pathname];
+      return new Response(asset.body, {
+        // URLs carry a content hash, so they can be cached for good.
+        headers: { "Content-Type": asset.type, "Cache-Control": "private, max-age=31536000, immutable" },
+      });
+    }
+
     case "GET /":
       return new Response(renderPage(user), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
@@ -114,6 +123,32 @@ async function handle(request: Request, env: Env): Promise<Response> {
       }
       const reply = typeof body.reply_parent_message_id === "string" ? body.reply_parent_message_id : undefined;
       const result = await stub.chatSend(body.broadcaster_id, message, reply);
+      return json(result, result.ok ? 200 : 502);
+    }
+
+    case "POST /api/chat/unsubscribe": {
+      const body = (await request.json().catch(() => ({}))) as { ids?: unknown };
+      const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === "string").slice(0, 50) : [];
+      await stub.chatUnsubscribe(ids);
+      return json({ ok: true });
+    }
+
+    case "POST /api/chat/mod": {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+      const action = body.action;
+      const broadcasterId = str(body.broadcaster_id);
+      if (!broadcasterId || !["delete", "clear", "ban", "timeout", "unban"].includes(action as string)) {
+        return json({ ok: false, error: "Bad moderation request." }, 400);
+      }
+      const login = str(body.login)?.replace(/^@/, "").toLowerCase();
+      const result = await stub.chatMod(broadcasterId, action as "delete" | "clear" | "ban" | "timeout" | "unban", {
+        userId: str(body.user_id),
+        login,
+        messageId: str(body.message_id),
+        duration: typeof body.duration === "number" ? body.duration : undefined,
+        reason: str(body.reason)?.slice(0, 500),
+      });
       return json(result, result.ok ? 200 : 502);
     }
 

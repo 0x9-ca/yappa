@@ -4,7 +4,12 @@ const API_BASE = "https://api.twitch.tv/helix";
 /** Scopes the app can't work without. */
 export const SCOPES = ["user:manage:chat_color", "user:read:chat", "user:write:chat"];
 /** Nice-to-have scopes: requested at login, but older tokens without them still work. */
-export const OPTIONAL_SCOPES = ["user:read:emotes"];
+export const OPTIONAL_SCOPES = [
+  "user:read:emotes",
+  "user:read:moderated_channels",
+  "moderator:manage:chat_messages",
+  "moderator:manage:banned_users",
+];
 
 export class TwitchError extends Error {
   constructor(
@@ -143,8 +148,8 @@ export async function createWebSocketSubscription(
   type: string,
   condition: Record<string, string>,
   sessionId: string,
-): Promise<void> {
-  await check(
+): Promise<string> {
+  const res = await check(
     await fetch(`${API_BASE}/eventsub/subscriptions`, {
       method: "POST",
       headers: { ...helixHeaders(env, accessToken), "Content-Type": "application/json" },
@@ -152,6 +157,15 @@ export async function createWebSocketSubscription(
     }),
     `Subscribe to ${type}`,
   );
+  return ((await res.json()) as { data: { id: string }[] }).data[0].id;
+}
+
+export async function deleteSubscription(env: Env, accessToken: string, id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/eventsub/subscriptions?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: helixHeaders(env, accessToken),
+  });
+  if (res.status !== 404) await check(res, "Delete EventSub subscription");
 }
 
 export interface SendResult {
@@ -237,4 +251,75 @@ export async function getUserEmotes(
     if (!cursor) break;
   }
   return out;
+}
+
+/** IDs of channels the user moderates (Get Moderated Channels; needs user:read:moderated_channels). */
+export async function getModeratedChannelIds(env: Env, accessToken: string, userId: string): Promise<string[]> {
+  const out: string[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const url = new URL(`${API_BASE}/moderation/channels`);
+    url.searchParams.set("user_id", userId);
+    url.searchParams.set("first", "100");
+    if (cursor) url.searchParams.set("after", cursor);
+    const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Moderated Channels");
+    const body = (await res.json()) as { data: { broadcaster_id: string }[]; pagination?: { cursor?: string } };
+    out.push(...body.data.map((c) => c.broadcaster_id));
+    cursor = body.pagination?.cursor;
+    if (!cursor) break;
+  }
+  return out;
+}
+
+/** Deletes one message, or clears the whole chat when messageId is omitted. */
+export async function deleteChatMessages(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  moderatorId: string,
+  messageId?: string,
+): Promise<void> {
+  const url = new URL(`${API_BASE}/moderation/chat`);
+  url.searchParams.set("broadcaster_id", broadcasterId);
+  url.searchParams.set("moderator_id", moderatorId);
+  if (messageId) url.searchParams.set("message_id", messageId);
+  await check(await fetch(url, { method: "DELETE", headers: helixHeaders(env, accessToken) }), "Delete Chat Messages");
+}
+
+/** Bans a user, or times them out when duration (seconds) is given. */
+export async function banUser(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  moderatorId: string,
+  userId: string,
+  duration?: number,
+  reason?: string,
+): Promise<void> {
+  const url = new URL(`${API_BASE}/moderation/bans`);
+  url.searchParams.set("broadcaster_id", broadcasterId);
+  url.searchParams.set("moderator_id", moderatorId);
+  await check(
+    await fetch(url, {
+      method: "POST",
+      headers: { ...helixHeaders(env, accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify({ data: { user_id: userId, ...(duration ? { duration } : {}), ...(reason ? { reason } : {}) } }),
+    }),
+    duration ? "Timeout" : "Ban",
+  );
+}
+
+/** Removes a ban or timeout. */
+export async function unbanUser(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  moderatorId: string,
+  userId: string,
+): Promise<void> {
+  const url = new URL(`${API_BASE}/moderation/bans`);
+  url.searchParams.set("broadcaster_id", broadcasterId);
+  url.searchParams.set("moderator_id", moderatorId);
+  url.searchParams.set("user_id", userId);
+  await check(await fetch(url, { method: "DELETE", headers: helixHeaders(env, accessToken) }), "Unban");
 }

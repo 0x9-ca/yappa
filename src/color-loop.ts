@@ -1,17 +1,23 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  OPTIONAL_SCOPES,
   SCOPES,
   TwitchError,
+  banUser,
   createWebSocketSubscription,
+  deleteChatMessages,
+  deleteSubscription,
   exchangeCode,
   getBadges,
   getUser,
+  getModeratedChannelIds,
   getUserEmotes,
   isLive,
   refreshToken,
   revokeToken,
   sendChatMessage,
   setChatColor,
+  unbanUser,
   validateToken,
 } from "./twitch";
 
@@ -55,7 +61,7 @@ interface Run {
 }
 
 export interface Status {
-  twitch: { login: string; userId: string; missingScopes: string[] } | null;
+  twitch: { login: string; userId: string; missingScopes: string[]; missingOptionalScopes: string[] } | null;
   run: Omit<Run, "id" | "offlineStreak" | "errorStreak"> | null;
 }
 
@@ -66,6 +72,8 @@ function randomHexColor(): string {
 
 /** One instance per Access user. Holds Twitch tokens and drives the color loop via alarms. */
 export class ColorLoop extends DurableObject<Env> {
+  private moderated: { at: number; ids: Set<string> } | undefined;
+
   private async getTokens(): Promise<Tokens | undefined> {
     return this.ctx.storage.get<Tokens>("tokens");
   }
@@ -88,6 +96,7 @@ export class ColorLoop extends DurableObject<Env> {
             login: tokens.login,
             userId: tokens.userId,
             missingScopes: SCOPES.filter((s) => !tokens.scopes?.includes(s)),
+            missingOptionalScopes: OPTIONAL_SCOPES.filter((s) => !tokens.scopes?.includes(s)),
           }
         : null,
       run: publicRun,
@@ -122,20 +131,98 @@ export class ColorLoop extends DurableObject<Env> {
     });
   }
 
-  /** Subscribes the browser's EventSub WebSocket session to a channel's chat events. */
+  /**
+   * Subscribes the browser's EventSub WebSocket session to a channel's chat events.
+   * isMod is null when we lack the scope to find out.
+   */
   async chatSubscribe(
     channel: string,
     sessionId: string,
-  ): Promise<{ ok: true; broadcaster: { id: string; login: string; name: string } } | { ok: false; error: string }> {
+  ): Promise<
+    | {
+        ok: true;
+        broadcaster: { id: string; login: string; name: string };
+        isMod: boolean | null;
+        subscriptionIds: string[];
+      }
+    | { ok: false; error: string }
+  > {
     try {
       return await this.withToken(async (t) => {
         const user = await getUser(this.env, t.accessToken, channel);
         if (!user) return { ok: false as const, error: `No Twitch channel named ${channel}.` };
         const condition = { broadcaster_user_id: user.id, user_id: t.userId };
-        await Promise.all(
-          CHAT_EVENTS.map((type) => createWebSocketSubscription(this.env, t.accessToken, type, condition, sessionId)),
-        );
-        return { ok: true as const, broadcaster: { id: user.id, login: user.login, name: user.display_name } };
+        const [subscriptionIds, isMod] = await Promise.all([
+          Promise.all(
+            CHAT_EVENTS.map((type) => createWebSocketSubscription(this.env, t.accessToken, type, condition, sessionId)),
+          ),
+          this.isModerator(t, user.id),
+        ]);
+        return {
+          ok: true as const,
+          broadcaster: { id: user.id, login: user.login, name: user.display_name },
+          isMod,
+          subscriptionIds,
+        };
+      });
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  private async isModerator(t: Tokens, broadcasterId: string): Promise<boolean | null> {
+    if (broadcasterId === t.userId) return true;
+    if (!t.scopes?.includes("user:read:moderated_channels")) return null;
+    if (!this.moderated || Date.now() - this.moderated.at > 5 * 60_000) {
+      try {
+        const ids = await getModeratedChannelIds(this.env, t.accessToken, t.userId);
+        this.moderated = { at: Date.now(), ids: new Set(ids) };
+      } catch {
+        return null;
+      }
+    }
+    return this.moderated.ids.has(broadcasterId);
+  }
+
+  async chatUnsubscribe(ids: string[]): Promise<void> {
+    await this.withToken((t) => Promise.all(ids.map((id) => deleteSubscription(this.env, t.accessToken, id)))).catch(
+      () => {},
+    );
+  }
+
+  /** Moderator actions. Target users can be given by id or login. */
+  async chatMod(
+    broadcasterId: string,
+    action: "delete" | "clear" | "ban" | "timeout" | "unban",
+    target: { userId?: string; login?: string; messageId?: string; duration?: number; reason?: string },
+  ): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+    try {
+      return await this.withToken(async (t) => {
+        if (action === "delete") {
+          if (!target.messageId) return { ok: false as const, error: "Missing message." };
+          await deleteChatMessages(this.env, t.accessToken, broadcasterId, t.userId, target.messageId);
+          return { ok: true as const, message: "Message deleted." };
+        }
+        if (action === "clear") {
+          await deleteChatMessages(this.env, t.accessToken, broadcasterId, t.userId);
+          return { ok: true as const, message: "Chat cleared." };
+        }
+        let userId = target.userId;
+        let name = target.login ?? "user";
+        if (!userId && target.login) {
+          const u = await getUser(this.env, t.accessToken, target.login);
+          if (!u) return { ok: false as const, error: `No user named ${target.login}.` };
+          userId = u.id;
+          name = u.display_name;
+        }
+        if (!userId) return { ok: false as const, error: "Missing user." };
+        if (action === "unban") {
+          await unbanUser(this.env, t.accessToken, broadcasterId, t.userId, userId);
+          return { ok: true as const, message: `Unbanned ${name}.` };
+        }
+        const duration = action === "timeout" ? Math.min(1_209_600, Math.max(1, target.duration ?? 600)) : undefined;
+        await banUser(this.env, t.accessToken, broadcasterId, t.userId, userId, duration, target.reason);
+        return { ok: true as const, message: duration ? `Timed out ${name} for ${duration}s.` : `Banned ${name}.` };
       });
     } catch (err) {
       return { ok: false, error: (err as Error).message };

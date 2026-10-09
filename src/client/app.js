@@ -1490,10 +1490,30 @@ async function refreshStreams() {
 
 // ---------- stream player ----------
 
-// One embedded player, for the tab in view, shown while that channel is live.
-let videoChannel = null;
+// One Twitch player (official embed API) for the tab in view, shown while that channel is
+// live. Switching tabs calls setChannel() instead of reloading, so once you unmute, sound
+// stays on. Browsers block autoplay with sound until the page has had a tap/click; if the
+// player reports that, fall back to muted autoplay so the stream still starts.
+let player = null;
+let playerChannel = null;
+let embedScript = null;
 
-function renderVideo() {
+function loadEmbedScript() {
+  embedScript = embedScript || new Promise((resolve, reject) => {
+    const sc = document.createElement("script");
+    sc.src = "https://player.twitch.tv/js/embed/v1.js";
+    sc.onload = resolve;
+    sc.onerror = () => { embedScript = null; reject(new Error("Couldn't load the Twitch player")); };
+    document.head.appendChild(sc);
+  });
+  return embedScript;
+}
+
+function canPlaySound() {
+  return !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
+}
+
+async function renderVideo() {
   const box = $("video");
   const tab = active;
   const want = !!(settings.video && me && tab && tab.stream);
@@ -1501,21 +1521,35 @@ function renderVideo() {
   $("video-btn").setAttribute("aria-pressed", String(!!settings.video));
   $("video-btn").title = settings.video ? "Hide the stream" + (tab && !tab.stream ? " (offline right now)" : "") : "Show the stream";
   if (!want) {
-    if (videoChannel) { box.replaceChildren(); videoChannel = null; }
     box.hidden = true;
+    if (player) try { player.pause(); } catch {}
     return;
   }
   box.hidden = false;
-  if (videoChannel === tab.login) return;
-  const frame = document.createElement("iframe");
-  // Twitch requires parent= to name the site embedding the player.
-  frame.src = "https://player.twitch.tv/?channel=" + encodeURIComponent(tab.login) +
-    "&parent=" + encodeURIComponent(location.hostname) + "&autoplay=true&muted=false";
-  frame.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media";
-  frame.allowFullscreen = true;
-  frame.title = "Live stream: " + tab.login;
-  box.replaceChildren(frame);
-  videoChannel = tab.login;
+  const channel = tab.login;
+  if (player) {
+    if (playerChannel !== channel) { player.setChannel(channel); playerChannel = channel; }
+    try { player.play(); } catch {}
+    return;
+  }
+  try { await loadEmbedScript(); } catch (err) { if (active) sysLine(active, err.message, "err"); return; }
+  if (player || active !== tab || box.hidden) return;
+  const host = el("div", "player-host");
+  host.id = "player-host";
+  box.replaceChildren(host);
+  player = new Twitch.Player("player-host", {
+    width: "100%",
+    height: "100%",
+    channel,
+    parent: [location.hostname], // Twitch requires the embedding site's hostname
+    autoplay: true,
+    muted: !canPlaySound(),
+  });
+  playerChannel = channel;
+  player.addEventListener(Twitch.Player.PLAYBACK_BLOCKED, () => {
+    player.setMuted(true);
+    player.play();
+  });
 }
 
 $("video-btn").addEventListener("click", () => {

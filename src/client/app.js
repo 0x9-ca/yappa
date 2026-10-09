@@ -2300,11 +2300,12 @@ async function renderNative(box, channel, wasHidden) {
   let url;
   try { url = await hlsUrl(channel); } catch (err) { if (gen === nativeGen) nativeFail("token: " + err.message); return; }
   if (gen !== nativeGen || !native) return;
-  // hls.js first wherever Media Source Extensions exist (it explains its errors), then the
-  // browser's built-in HLS (iPhone; also a fallback, since it doesn't need CORS on video).
+  // The browser's built-in HLS first: Twitch only lets twitch.tv read its playlists
+  // (CORS), which blocks hls.js everywhere, but a plain <video src> works in some browsers
+  // (tested: Firefox for Android yes, Chrome for Android no). hls.js is the last resort.
   const ways = [];
-  if (window.MediaSource || window.ManagedMediaSource) ways.push("hls.js");
   if (native.video.canPlayType("application/vnd.apple.mpegurl")) ways.push("built-in");
+  if (window.MediaSource || window.ManagedMediaSource) ways.push("hls.js");
   playNext(gen, url, ways, []);
 }
 
@@ -2956,7 +2957,8 @@ function openSettings() {
     el("h3", null, "Video player"),
     playerSeg,
     el("div", "hint", "Native plays the stream directly in a plain video player, which can autoplay (muted) on phones. " +
-      "It relies on an unofficial Twitch API that can stop working at any time; if it fails, Yappa switches back to Twitch's player."),
+      "Tested: Native works in Firefox for Android but not in Chrome (Twitch only lets its own site load its video in browsers that enforce cross-site rules), and Twitch's player is the other way round. " +
+      "This choice is saved per browser. Native also relies on an unofficial Twitch API that can stop working at any time; if it fails, Yappa switches back to Twitch's player for that visit."),
     el("h3", null, "Appearance"),
     themeSeg,
     el("h3", null, "Chat text size"),

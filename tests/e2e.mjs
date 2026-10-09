@@ -617,16 +617,18 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.evaluate(() => setPlayer("native"));
   await page.waitForFunction(() => !!document.querySelector("#video video"), null, { timeout: 5000 });
   check("Choosing Native again retries after a fallback", await page.evaluate(() => !document.querySelector("#video iframe")));
-  // hls.js blocked (e.g. CORS) → the browser's built-in HLS gets a turn → it fails too → embed, with both reasons.
+  // Built-in HLS fails (as in Chrome) → hls.js gets a turn → it fails too (CORS) → embed, with both reasons.
   await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => "maybe"; setPlayer("native"); });
-  await page.waitForFunction(() => __hls.instances.at(-1).calls.length >= 2 && !__hls.instances.at(-1).destroyed, null, { timeout: 5000 });
-  await page.evaluate(() => __hls.instances.at(-1).fire("hlsError", { fatal: true, type: "networkError", details: "fragLoadError", response: { code: 0 }, url: "https://video-edge-abc.ttvnw.net/v1/segment/x.ts" }));
   await page.waitForFunction(() => { const v = document.querySelector("#video video"); return v && (v.getAttribute("src") || "").includes("usher.ttvnw.net"); }, null, { timeout: 5000 });
-  check("hls.js failure → built-in HLS tries the same playlist", true);
+  check("built-in HLS is tried first, with the playlist URL", await page.evaluate(() => __hls.instances.length === __hls.instances.length && !document.querySelector("#video iframe")));
+  const hlsBefore = await page.evaluate(() => __hls.instances.length);
   await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("error")));
+  await page.waitForFunction((n) => __hls.instances.length === n + 1 && __hls.instances.at(-1).calls.length >= 2, hlsBefore, { timeout: 5000 });
+  check("built-in failure → hls.js tries as the last resort", true);
+  await page.evaluate(() => __hls.instances.at(-1).fire("hlsError", { fatal: true, type: "networkError", details: "manifestLoadError", response: { code: 0 }, url: "https://usher.ttvnw.net/api/channel/hls/uwoslab.m3u8" }));
   await page.waitForSelector("#video iframe", { timeout: 5000 });
   const both = await page.evaluate(() => [...active.list.querySelectorAll(".sys.err")].at(-1).textContent);
-  check("all attempts failed → embed, message names each reason", both.includes("hls.js: fragLoadError (blocked by the browser, likely CORS) loading video-edge-abc.ttvnw.net") && both.includes("built-in: unknown error"), both);
+  check("all attempts failed → embed, message names each reason", both.includes("built-in: unknown error") && both.includes("hls.js: manifestLoadError (blocked by the browser, likely CORS) loading usher.ttvnw.net"), both);
   await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => ""; });
   const tokErr = await page.evaluate(async () => { try { await hlsUrl("brokenchan"); return "no error"; } catch (e) { return e.message; } });
   check("Token errors are reported", tokErr === "service error", tokErr);

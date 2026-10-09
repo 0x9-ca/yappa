@@ -829,6 +829,8 @@ function setHistory(on) {
   if (on) for (const t of tabs.values()) if (t.joined) backfill(t, { since: 0, until: Date.now() });
 }
 
+const IRC_MESSAGE_TYPES = { "highlighted-message": "channel_points_highlighted", "skip-subs-mode-message": "channel_points_sub_only" };
+
 // "@a=b;c=d :nick!nick@host PRIVMSG #chan :text" -> an object shaped like an EventSub chat event.
 function ircToEvent(line) {
   const m = /^@(\S+) :([^!\s]+)!\S+ PRIVMSG #(\S+) :([\s\S]*)$/.exec(line);
@@ -890,6 +892,9 @@ function ircToEvent(line) {
     first: tags["first-msg"] === "1",
     bits: Number(tags.bits) || 0,
     deleted: tags["rm-deleted"] === "1", // removed by a moderator before we loaded it
+    // The IRC names for what EventSub calls message_type / channel_points_custom_reward_id.
+    message_type: IRC_MESSAGE_TYPES[tags["msg-id"]] || "text",
+    channel_points_custom_reward_id: tags["custom-reward-id"] || null,
     historical: true,
   };
 }
@@ -1448,6 +1453,8 @@ function renderMessage(tab, ev, opts = {}) {
   li.appendChild(actions);
   if (!li.classList.contains("ignored")) attachClipCards(tab, li, body);
   if (ev.first || ev.message_type === "user_intro" || firstMsgIds.has(ev.message_id)) addFlag(li, "first", "First-time chatter");
+  const points = pointsLabel(ev);
+  if (points) addFlag(li, "points", points);
 
   if (opts.merge) {
     insertByTime(tab, li, ev.ts);
@@ -1458,6 +1465,19 @@ function renderMessage(tab, ev, opts = {}) {
   }
   if (mentioned && tab !== active && !opts.historical && !li.classList.contains("ignored")) { tab.mentioned = true; updateTabEl(tab); }
   return li;
+}
+
+/**
+ * Channel points redemptions that show up in chat. They're the only ones a viewer can see:
+ * the redemption events themselves need the broadcaster's own permission. So this covers
+ * "Highlight My Message", "Send a Message in Sub-Only Mode" and rewards that ask for text,
+ * without the reward's name or cost.
+ */
+function pointsLabel(ev) {
+  if (ev.message_type === "channel_points_highlighted") return "Highlighted message · channel points";
+  if (ev.message_type === "channel_points_sub_only") return "Sub-only mode message · channel points";
+  if (ev.channel_points_custom_reward_id) return "Redeemed a channel points reward";
+  return null;
 }
 
 function renderNotification(tab, ev) {

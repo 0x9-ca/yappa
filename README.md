@@ -54,6 +54,8 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
   `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
+- Channel points redemptions that show up in chat (highlighted messages, sub-only-mode messages and
+  reward messages) are marked; Twitch only exposes the full redemption feed to the broadcaster.
 - Live status on tabs, search/filter, highlight words, mention notifications and sound, ignored
   users, text size. Color cycling also reacts to messages you send from other apps while their
   channel is open in a tab.

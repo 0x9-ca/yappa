@@ -1,6 +1,7 @@
 :root {
   --bg: #0e0e10; --panel: #18181b; --raised: #1f1f23; --line: #2f2f35; --text: #efeff1; --muted: #adadb8;
   --accent: #9147ff; --accent-hover: #772ce8; --danger: #eb0400; --mention: #5c1618; --notice: #1f1a2e; --mod: #00ad03;
+  --points: #a970ff; --points-bg: #2a1d4a;
   --ghost: #2f2f35; --ghost-hover: #3a3a3d; --border: #3a3a3d; --hover: #ffffff0f; --hover-strong: #ffffff1a;
   --link: #bf94ff; --link-hover: #d5b8ff; --err-text: #ff8080; --live-text: #ff7a7a; --ok-text: #7ee787;
   --err-bg: #3a1214; --err-fg: #ffb3b3; --info-bg: #22183a; --am-bg: #2a2210; --am-border: #5c4a14; --am-head: #f5c451;
@@ -12,6 +13,7 @@
 :root[data-theme="light"] {
   --bg: #efeff1; --panel: #ffffff; --raised: #ffffff; --line: #dedee3; --text: #0e0e10; --muted: #53535f;
   --mention: #ffe0e0; --notice: #f3edfd; --mod: #008a02;
+  --points: #7d3be0; --points-bg: #ede3ff;
   --ghost: #e6e6ea; --ghost-hover: #d9d9df; --border: #c8c8d0; --hover: #0000000a; --hover-strong: #00000012;
   --link: #6c2bd9; --link-hover: #5418b5; --err-text: #c40000; --live-text: #d40000; --ok-text: #18794e;
   --err-bg: #fde2e2; --err-fg: #8a1111; --info-bg: #efe6ff; --am-bg: #fff6dc; --am-border: #e8cf7a; --am-head: #8a6100;
@@ -87,6 +89,10 @@ footer { grid-area: footer; }
 .emote-wrap > img { grid-area: 1/1; justify-self: center; align-self: center; height: 28px; }
 .msg .mention { font-weight: 700; }
 .cheer-bits { font-weight: 700; margin: 0 2px 0 1px; }
+/* Channel points redemptions (highlighted / sub-only-mode / reward messages). Defined before
+   the mention, first-chatter, deleted and highlight-rule styles, so those win when both apply. */
+.msg.points { background: var(--points-bg); box-shadow: inset 3px 0 0 var(--points); }
+.msg .flag.points { background: var(--points); color: #fff; }
 .msg.mentioned { background: var(--mention); }
 .msg.historical { opacity: .7; }
 /* Flagged messages keep their content; the tint, edge and label say what happened. */

@@ -1282,6 +1282,36 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { composer.setText(""); closePicker(); });
 }
 
+// =============== channel points redemptions that show up in chat ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  cur().send(chat("999", "pts1", "Pointer", "801", "look at me", { message_type: "channel_points_highlighted" }));
+  cur().send(chat("999", "pts2", "Pointer", "801", "talking in sub-only mode", { message_type: "channel_points_sub_only" }));
+  cur().send(chat("999", "pts3", "Pointer", "801", "my reward answer", { message_type: "text", channel_points_custom_reward_id: "abc-123" }));
+  cur().send(chat("999", "pts4", "Pointer", "801", "just chatting", { message_type: "text", channel_points_custom_reward_id: null }));
+  cur().send(chat("999", "pts5", "Pointer", "801", "hey @testuser highlighted too", { message_type: "channel_points_highlighted",
+    fragments: [{ type: "text", text: "hey " }, { type: "mention", text: "@testuser", mention: { user_id: "111", user_login: "testuser", user_name: "testuser" } }, { type: "text", text: " highlighted too" }] }));
+  await page.waitForSelector('li[data-id="pts5"]');
+  const labels = await page.evaluate(() => Object.fromEntries(["pts1", "pts2", "pts3", "pts4"].map((id) => { const li = document.querySelector('li[data-id="' + id + '"]'); const f = li.querySelector(".flag.points"); return [id, f ? f.textContent : null]; })));
+  check("highlighted message is marked", labels.pts1 === "Highlighted message · channel points", JSON.stringify(labels));
+  check("sub-only-mode message is marked", labels.pts2 === "Sub-only mode message · channel points");
+  check("a message carrying a reward id is marked", labels.pts3 === "Redeemed a channel points reward");
+  check("ordinary messages (even with a null reward id) are not marked", labels.pts4 === null && await page.$eval('li[data-id="pts4"]', (l) => !l.classList.contains("points")));
+  check("the message itself is intact under the marker", await page.$eval('li[data-id="pts1"] .body', (b) => b.textContent === "look at me"));
+  const colors = await page.evaluate(() => { const bg = (id) => getComputedStyle(document.querySelector('li[data-id="' + id + '"]')).backgroundColor; return { pts1: bg("pts1"), pts4: bg("pts4"), pts5: bg("pts5"), mention: getComputedStyle(document.documentElement).getPropertyValue("--mention").trim() }; });
+  check("marked messages get their own background; a mention in one still shows as a mention", colors.pts1 !== colors.pts4 && colors.pts5 === "rgb(92, 22, 24)", JSON.stringify(colors));
+  await page.evaluate(() => document.querySelector('li[data-id="pts1"]').scrollIntoView());
+  await page.screenshot({ path: dir + "/t28-points.png" });
+  // Loaded history uses IRC tags for the same things.
+  const hist = await page.evaluate(() => {
+    const line = (tags) => ircToEvent("@" + tags + ";tmi-sent-ts=1;user-id=9;display-name=X :x!x@x PRIVMSG #c :hi");
+    return [line("id=h1;msg-id=highlighted-message"), line("id=h2;msg-id=skip-subs-mode-message"), line("id=h3;custom-reward-id=abc"), line("id=h4")].map((e) => [e.message_type, e.channel_points_custom_reward_id]);
+  });
+  check("history lines map IRC tags to the same markers", JSON.stringify(hist) === '[["channel_points_highlighted",null],["channel_points_sub_only",null],["text","abc"],["text",null]]', JSON.stringify(hist));
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  check("light theme has its own colors for the marker", await page.evaluate(() => { const c = getComputedStyle(document.querySelector('li[data-id="pts1"]')).backgroundColor; document.documentElement.dataset.theme = "dark"; return c === "rgb(237, 227, 255)"; }));
+}
+
 // =============== moving to a new address ===============
 {
   const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });

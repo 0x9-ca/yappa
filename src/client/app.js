@@ -2190,7 +2190,9 @@ async function renderVideo() {
     if (changed || wasHidden) try { player.play(); } catch {}
     return;
   }
-  try { await loadEmbedScript(); } catch (err) { if (active) sysLine(active, err.message, "err"); return; }
+  // Don't retry on every refresh (live status polls every minute); the panel has a Try again button.
+  if (embedBlocked) { showEmbedBlocked(box); return; }
+  try { await loadEmbedScript(); } catch { embedBlocked = true; if (active === tab && !box.hidden) showEmbedBlocked(box); return; }
   if (player || active !== tab || box.hidden) return;
   const host = el("div", "player-host");
   host.id = "player-host";
@@ -2220,6 +2222,29 @@ async function renderVideo() {
     player.play();
   });
 }
+
+let embedBlocked = false; // the embed script failed to load (see showEmbedBlocked)
+
+/**
+ * The embed script didn't load: usually Firefox's Enhanced Tracking Protection (Strict) or an
+ * ad blocker blocking player.twitch.tv. Say so in the video box instead of leaving it black.
+ */
+function showEmbedBlocked(box) {
+  if (box.querySelector(".video-error")) return;
+  const panel = el("div", "video-error");
+  panel.append(
+    el("div", "ve-title", "Twitch's player couldn't load"),
+    el("div", "ve-text", "Something is blocking player.twitch.tv on this site, often Firefox's tracking protection or an ad blocker. " +
+      "Allow it for this site and try again" + (canPlayBuiltInHls() ? ", or try the native player (unofficial)." : ".")),
+  );
+  const actions = el("div", "ve-actions");
+  actions.append(btn("Try again", () => { embedBlocked = false; embedScript = null; box.replaceChildren(); renderVideo(); }, "small"));
+  if (canPlayBuiltInHls()) actions.append(btn("Use native player", () => setPlayer("native"), "small ghost"));
+  panel.appendChild(actions);
+  box.replaceChildren(panel);
+}
+
+const canPlayBuiltInHls = () => !!document.createElement("video").canPlayType("application/vnd.apple.mpegurl");
 
 function teardownEmbed() {
   player = null;
@@ -2390,6 +2415,7 @@ function setPlayer(kind) {
   settings.player = kind;
   saveSettings();
   nativeFailed = false;
+  embedBlocked = false; // choosing a player is also a retry
   if (pipWindow) pipWindow.close();
   teardownNative();
   teardownEmbed();

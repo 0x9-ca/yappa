@@ -45,6 +45,7 @@ let statusCalls = 0;
 let statusDown = false, slowSend = 0;
 const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
 let followingMode = "ok";
+let embedScriptFails = false;
 const svg = (h) => `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><circle cx="28" cy="28" r="26" fill="hsl(${h},70%,55%)"/></svg>`;
 await ctx.route("**/*", async (route) => {
   const u = new URL(route.request().url());
@@ -133,6 +134,7 @@ await ctx.route("**/*", async (route) => {
     );
     return j({ messages: msgs });
   }
+  if (u.host === "player.twitch.tv" && u.pathname === "/js/embed/v1.js" && embedScriptFails) return route.abort();
   if (u.host === "player.twitch.tv" && u.pathname === "/js/embed/v1.js") return route.fulfill({ contentType: "text/javascript", body: `
     window.__player = { calls: [], handlers: {} };
     window.Twitch = { Player: function (id, opts) {
@@ -646,6 +648,36 @@ await page.setViewportSize({ width: 390, height: 760 });
     document.head.appendChild(sc);
   }));
   check("real hls.js loads under the CSP", real);
+}
+
+// =============== Twitch player script blocked (Firefox tracking protection, ad blockers) ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => "maybe"; });
+  embedScriptFails = true;
+  await page.evaluate(() => { teardownEmbed(); embedScript = null; renderVideo(); });
+  await page.waitForSelector("#video .video-error");
+  const ve = await page.textContent("#video .video-error");
+  check("blocked player script → explanation in the video box with Try again and native buttons",
+    ve.includes("Twitch's player couldn't load") && ve.includes("tracking protection") && ve.includes("Try again") && ve.includes("Use native player") && !(await page.$("#video iframe")), ve);
+  await page.screenshot({ path: dir + "/t25-player-blocked.png" });
+  await page.evaluate(() => { renderVideo(); renderVideo(); });
+  await sleep(300);
+  check("no retry loop or duplicate panels on refresh", await page.evaluate(() => document.querySelectorAll("#video .video-error").length === 1));
+  embedScriptFails = false;
+  await page.click('#video button:has-text("Try again")');
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
+  check("Try again loads the player once the block is lifted", !(await page.$("#video .video-error")));
+  // Offer the native player from the panel.
+  embedScriptFails = true;
+  await page.evaluate(() => { teardownEmbed(); embedScript = null; renderVideo(); });
+  await page.waitForSelector("#video .video-error");
+  await page.click('#video button:has-text("Use native player")');
+  await page.waitForSelector("#video video", { timeout: 5000 });
+  check("Use native player switches (and saves) the setting", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).player === "native" && !(await page.$("#video .video-error")));
+  embedScriptFails = false;
+  await page.evaluate(() => { setPlayer("embed"); HTMLMediaElement.prototype.canPlayType = () => ""; });
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
 }
 
 // =============== chat holds still once you scroll up ===============

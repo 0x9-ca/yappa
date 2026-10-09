@@ -1803,9 +1803,10 @@ function chatEmbedUrl(login) {
 const embedFrames = new Map(); // channel login -> iframe, oldest first; kept loaded while minimized
 const EMBED_KEEP = 3;           // each loaded chat uses memory and a connection, so keep only a few
 
-const chatEmbedNote = (userAgent) =>
-  "Twitch's own chat embed, so Bits and channel points work here. The × only minimizes it: it stays loaded so you stay signed in." +
-  (/Firefox\//.test(userAgent) ? " Asked to sign in or allow storage every time? Turn off Enhanced Tracking Protection for this site (shield icon in the address bar)." : "");
+/** Firefox walls off Twitch's login inside embedded frames; the fix is a per-site setting. */
+const chatEmbedTip = (userAgent) => /Firefox\//.test(userAgent)
+  ? " Firefox: if Twitch keeps asking you to sign in or allow storage, turn off Enhanced Tracking Protection for this site (shield icon in the address bar)."
+  : "";
 
 function openChatEmbed(tab) {
   const login = tab.login;
@@ -1823,7 +1824,6 @@ function openChatEmbed(tab) {
   while (embedFrames.size > EMBED_KEEP) dropChatEmbed(embedFrames.keys().next().value);
   for (const [l, f] of embedFrames) f.hidden = l !== login;
   $("embed-title").textContent = "Twitch chat: " + (tab.broadcaster ? tab.broadcaster.name : login);
-  $("embed-note").textContent = chatEmbedNote(navigator.userAgent);
   $("embed-go").textContent = coarse ? "Open the app" : "Open pop-out";
   $("embed-go").onclick = () => { hideChatEmbed(); openOnTwitch(tab); };
   $("embed-reload").onclick = () => { dropChatEmbed(login); openChatEmbed(tab); };
@@ -3115,7 +3115,7 @@ function openSettings() {
     el("h3", null, "Bits and channel points"),
     bitsSeg,
     el("div", "hint", "What the gem button next to the emote button does. Twitch: opens twitch.tv, as the pop-out chat on computers or the Twitch app on phones. " +
-      "Chat embed (experimental): Twitch's chat in a window here, with Bits and channel points. It needs your twitch.tv login to be shared with this site; closing the window keeps it loaded in the background (up to 3 channels) so you stay signed in."),
+      "Chat embed (experimental): Twitch's chat in a window here, with Bits and channel points. It needs your twitch.tv login to be shared with this site; closing the window keeps it loaded in the background (up to 3 channels) so you stay signed in." + chatEmbedTip(navigator.userAgent)),
     el("h3", null, "Appearance"),
     themeSeg,
     el("h3", null, "Chat text size"),

@@ -126,7 +126,6 @@ export function renderPage(user: string): string {
     <button class="icon-btn sheet-close" id="embed-close" type="button" aria-label="Minimize" title="Minimize (keeps you signed in)">×</button>
     <h2 id="embed-title"></h2>
     <div id="embed-frames"></div>
-    <div class="hint" id="embed-note"></div>
     <div class="row embed-actions"><button class="ghost small" id="embed-reload" type="button">Reload</button><button class="small" id="embed-go" type="button"></button></div>
   </div>
 </div>

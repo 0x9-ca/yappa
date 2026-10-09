@@ -745,7 +745,17 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.click("#embed-reload");
   await sleep(200);
   check("Reload makes a fresh frame", await page.evaluate(() => document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker === undefined && embedFrames.size === 1));
-  check("Firefox gets a tracking-protection hint; Chrome doesn't", (await page.evaluate(() => chatEmbedNote("Mozilla/5.0 (Android 16; Mobile; rv:157.0) Gecko/157.0 Firefox/157.0").includes("Enhanced Tracking Protection") && !chatEmbedNote("Mozilla/5.0 Chrome/126 Mobile Safari/537.36").includes("Enhanced Tracking Protection"))));
+  check("the embed window has no disclaimer text, just title, chat and buttons", await page.evaluate(() => !document.getElementById("embed-note") && /^× Twitch chat: \w+ ReloadOpen the app$/i.test(document.querySelector("#embed-modal .sheet").textContent.replace(/\s+/g, " ").trim())), await page.evaluate(() => document.querySelector("#embed-modal .sheet").textContent.replace(/\s+/g, " ").trim()));
+  // The Firefox tip lives in Settings (and only shows on Firefox).
+  const tipFor = (ua) => page.evaluate(async (ua) => {
+    Object.defineProperty(navigator, "userAgent", { value: ua, configurable: true });
+    openSettings();
+    const text = document.getElementById("sheet-body").textContent;
+    closeSheet();
+    delete navigator.userAgent;
+    return text.includes("Enhanced Tracking Protection");
+  }, ua);
+  check("Settings shows the tracking-protection tip on Firefox only", (await tipFor("Mozilla/5.0 (Android 16; Mobile; rv:157.0) Gecko/157.0 Firefox/157.0")) && !(await tipFor("Mozilla/5.0 Chrome/126 Mobile Safari/537.36")));
   // The escape hatch to the real thing.
   await page.tap("#embed-go");
   check("'Open the app' minimizes and hands off to Twitch", await page.$eval("#embed-modal", (m) => m.hidden) && JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]', JSON.stringify(await page.evaluate(() => __calls)));

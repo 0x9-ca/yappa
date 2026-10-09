@@ -19,7 +19,7 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-col
 [hidden] { display: none !important; }
 
 .app { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: var(--app-height, 100dvh); padding-bottom: env(safe-area-inset-bottom); max-width: 900px; margin: 0 auto; border-inline: 1px solid var(--line); background: var(--panel); }
-.top { position: sticky; top: 0; z-index: 10; background: var(--panel); }
+.top { position: sticky; top: 0; z-index: 10; background: var(--panel); padding-top: env(safe-area-inset-top); }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; }
 header h1 { font-size: 15px; margin: 0; }
 header form { display: flex; gap: 6px; flex: 1 1 220px; }
@@ -65,8 +65,15 @@ header form input { flex: 1; }
 .emote-wrap > img { grid-area: 1/1; justify-self: center; align-self: center; height: 28px; }
 .msg .mention { font-weight: 700; }
 .msg.mentioned { background: var(--mention); }
-.msg.deleted .body { color: var(--muted); font-style: italic; }
-.msg.cleared { opacity: .4; }
+.msg.historical { opacity: .7; }
+/* Flagged messages keep their content; the tint, edge and label say what happened. */
+.msg .flags { margin: 1px 0 2px; }
+.msg .flag { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: .02em; line-height: 17px; }
+.msg.first { background: rgba(0, 200, 83, .11); box-shadow: inset 3px 0 0 #00c853; }
+.msg .flag.first { background: #00c853; color: #03140a; }
+.msg.deleted { background: rgba(235, 4, 0, .13); box-shadow: inset 3px 0 0 var(--danger); }
+.msg .flag.deleted { background: var(--danger); color: #fff; }
+.msg.deleted .body { text-decoration: line-through; text-decoration-color: rgba(255, 128, 128, .6); }
 .msg .reply-ctx { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg .actions { position: absolute; right: 8px; top: -14px; display: none; gap: 2px; padding: 2px; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px #0008; z-index: 2; }
 .msg:first-child .actions { top: 2px; }

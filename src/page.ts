@@ -1,23 +1,8 @@
-import appCss from "./client/app.css";
-import appJs from "./client/app.js";
+import { APP_NAME, THEME_COLOR, versioned } from "./static";
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
-
-/** Short FNV-1a hash, used to bust caches when the client assets change. */
-function hash(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
-  return (h >>> 0).toString(36);
-}
-
-export const assets: Record<string, { body: string; type: string }> = {
-  "/app.css": { body: appCss, type: "text/css; charset=utf-8" },
-  "/app.js": { body: appJs, type: "text/javascript; charset=utf-8" },
-};
-const cssVersion = hash(appCss);
-const jsVersion = hash(appJs);
 
 export function renderPage(user: string): string {
   return `<!doctype html>
@@ -25,8 +10,17 @@ export function renderPage(user: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Twitch Chat</title>
-<link rel="stylesheet" href="/app.css?v=${cssVersion}">
+<title>${APP_NAME}</title>
+<meta name="theme-color" content="${THEME_COLOR}">
+<!-- Access protects the manifest too, so the browser must send cookies when fetching it. -->
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<link rel="icon" type="image/png" sizes="32x32" href="${versioned("/icons/favicon-32.png")}">
+<link rel="apple-touch-icon" href="${versioned("/icons/apple-touch-icon.png")}">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Chat">
+<link rel="stylesheet" href="${versioned("/app.css")}">
 </head>
 <body>
 <div class="app">
@@ -85,7 +79,7 @@ export function renderPage(user: string): string {
   </footer>
 </div>
 <div hidden id="access-user">${escapeHtml(user)}</div>
-<script src="/app.js?v=${jsVersion}"></script>
+<script src="${versioned("/app.js")}"></script>
 </body>
 </html>`;
 }

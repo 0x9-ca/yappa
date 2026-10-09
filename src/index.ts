@@ -1,5 +1,6 @@
 import { verifyAccess } from "./access";
-import { assets, renderPage } from "./page";
+import { renderPage } from "./page";
+import { staticFiles } from "./static";
 import { authorizeUrl } from "./twitch";
 
 export { ColorLoop } from "./color-loop";
@@ -31,6 +32,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (!user) return new Response("Forbidden", { status: 403 });
 
   const url = new URL(request.url);
+  const file = request.method === "GET" ? staticFiles[url.pathname] : undefined;
+  if (file) {
+    return new Response(file.body, { headers: { "Content-Type": file.type, "Cache-Control": file.cache } });
+  }
+
   const redirectUri = `${url.origin}/auth/callback`;
   const stub = await currentStub(env, user);
 
@@ -40,15 +46,6 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   switch (`${request.method} ${url.pathname}`) {
-    case "GET /app.css":
-    case "GET /app.js": {
-      const asset = assets[url.pathname];
-      return new Response(asset.body, {
-        // URLs carry a content hash, so they can be cached for good.
-        headers: { "Content-Type": asset.type, "Cache-Control": "private, max-age=31536000, immutable" },
-      });
-    }
-
     case "GET /":
       return new Response(renderPage(user), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },

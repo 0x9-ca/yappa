@@ -1,9 +1,17 @@
-// Files under src/client are imported as text (see "rules" in wrangler.jsonc).
+// Files under src/client are imported as text or binary (see "rules" in wrangler.jsonc).
 declare module "*/client/app.js" {
+  const source: string;
+  export default source;
+}
+declare module "*/client/sw.js" {
   const source: string;
   export default source;
 }
 declare module "*/client/app.css" {
   const source: string;
   export default source;
+}
+declare module "*.png" {
+  const data: ArrayBuffer;
+  export default data;
 }

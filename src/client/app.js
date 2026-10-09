@@ -19,6 +19,11 @@ let retries = 0;
 let replyTo = null;
 let lastSent = "";
 let stvGlobal = new Map();     // 7TV emote name -> { url, zeroWidth }
+let lastSocketMsgAt = 0;       // any frame (incl. keepalives) proves the socket is alive
+let keepaliveMs = 15000;
+let resumedAt = Date.now();    // when the page last became visible / unfrozen
+let reconnectTimer = null;
+let hiddenUnread = 0;
 
 // ---------- utilities ----------
 
@@ -138,6 +143,7 @@ function openTab(name, focus = true) {
     tab = {
       login: name, broadcaster: null, isMod: null, subIds: [], badges: {}, stv: new Map(),
       twitchEmotes: null, unread: 0, mentioned: false, joined: false, chatters: new Map(), loadedExtras: false,
+      seen: new Set(), lastTs: 0,
       list: el("ul", "messages"), tabEl: null,
     };
     tab.list.hidden = true;
@@ -150,6 +156,7 @@ function openTab(name, focus = true) {
     saveTabs();
     if (sessionId) subscribeTab(tab);
     else ensureSocket();
+    ircJoin(name);
   }
   if (focus) activate(tab);
   renderEmptyState();
@@ -227,6 +234,7 @@ function closeTab(tab, opts = {}) {
     else { history.replaceState(null, "", "/"); updateComposer(); }
   }
   if (!opts.keepSaved) saveTabs();
+  ircPart(tab.login);
   if (tabs.size === 0) dropSocket();
   show("tabs", tabs.size > 0);
   renderEmptyState();
@@ -279,20 +287,18 @@ function dropSocket() {
 function openSocket(url, gen, migrating) {
   const ws = new WebSocket(url);
   if (!migrating) sock = ws;
-  let keepaliveMs = 15000;
-  const arm = () => {
-    clearTimeout(ws.keepalive);
-    ws.keepalive = setTimeout(() => ws.close(), keepaliveMs + 5000);
-  };
+  lastSocketMsgAt = Date.now();
 
   ws.onmessage = (e) => {
     if (gen !== sockGen) { ws.retired = true; ws.close(); return; }
+    if (ws === sock) lastSocketMsgAt = Date.now();
     const msg = JSON.parse(e.data);
     const type = msg.metadata.message_type;
     if (type === "session_welcome") {
       keepaliveMs = (msg.payload.session.keepalive_timeout_seconds || 10) * 1000;
       const old = sock;
       sock = ws;
+      lastSocketMsgAt = Date.now();
       sessionId = msg.payload.session.id;
       if (migrating) {
         if (old && old !== ws) { old.retired = true; old.close(); }
@@ -302,16 +308,14 @@ function openSocket(url, gen, migrating) {
     } else if (type === "session_reconnect") {
       openSocket(msg.payload.session.reconnect_url, gen, true);
     } else if (type === "notification") {
-      handleEvent(msg.payload.subscription.type, msg.payload.event);
+      handleEvent(msg.payload.subscription.type, msg.payload.event, Date.parse(msg.metadata.message_timestamp));
     } else if (type === "revocation") {
       const tab = tabForBroadcaster(msg.payload.subscription.condition && msg.payload.subscription.condition.broadcaster_user_id);
       if (tab) sysLine(tab, "Twitch revoked " + msg.payload.subscription.type + " (" + msg.payload.subscription.status + ").", "err");
     }
-    arm();
   };
 
   ws.onclose = () => {
-    clearTimeout(ws.keepalive);
     if (ws.retired || gen !== sockGen) return;
     if (migrating && sock !== ws) return; // failed migration; the old socket is still serving
     sock = null;
@@ -323,11 +327,54 @@ function openSocket(url, gen, migrating) {
     }
     updateComposer();
     if (tabs.size === 0) return;
-    const delay = Math.min(30000, 1000 * 2 ** retries++);
-    if (active) sysLine(active, "Disconnected. Reconnecting in " + Math.round(delay / 1000) + "s…");
-    setTimeout(() => { if (gen === sockGen && !sock) openSocket(EVENTSUB_URL, gen, false); }, delay);
+    // Reconnect right away if the user is looking; otherwise back off.
+    const delay = document.hidden ? Math.min(30000, 1000 * 2 ** retries) : (retries ? Math.min(30000, 1000 * 2 ** (retries - 1)) : 0);
+    retries++;
+    if (active) sysLine(active, delay ? "Disconnected. Reconnecting in " + Math.round(delay / 1000) + "s…" : "Disconnected. Reconnecting…");
+    scheduleReconnect(gen, delay);
   };
-  arm();
+}
+
+function scheduleReconnect(gen, delay) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (gen === sockGen && !sock) openSocket(EVENTSUB_URL, gen, false);
+  }, delay);
+}
+
+// Twitch sends a keepalive at least every keepaliveMs, so silence means the socket is dead
+// (common after a phone sleeps or a background tab is frozen). Wait a moment after the page
+// wakes up, because frames queued while frozen are delivered right after resuming.
+setInterval(() => {
+  if (!sock || !sessionId) return;
+  if (Date.now() - resumedAt < 3000) return;
+  if (Date.now() - lastSocketMsgAt > keepaliveMs + 5000) sock.close();
+}, 2000);
+
+function onResume() {
+  resumedAt = Date.now();
+  if (document.hidden) return;
+  hiddenUnread = 0;
+  updateTitle();
+  // Skip any pending back-off: the user is here now.
+  if (!sock && tabs.size > 0 && me) {
+    retries = 0;
+    clearTimeout(reconnectTimer);
+    openSocket(EVENTSUB_URL, sockGen, false);
+  }
+}
+document.addEventListener("visibilitychange", onResume);
+document.addEventListener("resume", onResume);
+window.addEventListener("pageshow", onResume);
+window.addEventListener("online", onResume);
+window.addEventListener("focus", onResume);
+
+function updateTitle() {
+  document.title = (hiddenUnread ? "(" + (hiddenUnread > 99 ? "99+" : hiddenUnread) + ") " : "") + "Twitch Chat";
+  if (navigator.setAppBadge) {
+    (hiddenUnread ? navigator.setAppBadge(hiddenUnread) : navigator.clearAppBadge()).catch(() => {});
+  }
 }
 
 async function subscribeTab(tab) {
@@ -347,17 +394,112 @@ async function subscribeTab(tab) {
     return;
   }
   retries = 0;
+  const rejoin = !!tab.broadcaster;
+  // Pin the backfill window now: live messages arriving meanwhile must not narrow it.
+  const range = { since: rejoin ? tab.lastTs : 0, until: Date.now() };
   tab.broadcaster = r.broadcaster;
   tab.isMod = r.isMod;
   tab.subIds = r.subscriptionIds || [];
   tab.joined = true;
   updateTabEl(tab);
-  sysLine(tab, "Joined #" + r.broadcaster.name + "." + (r.isMod ? " You're a moderator here." : ""));
+  // Messages we missed (or, on first join, recent history) get inserted above this line.
+  const marker = sysLine(tab, (rejoin ? "Reconnected to #" : "Joined #") + r.broadcaster.name + "." + (r.isMod && !rejoin ? " You're a moderator here." : ""));
   if (tab === active) updateComposer();
   if (!tab.loadedExtras) {
     tab.loadedExtras = true;
-    loadTabExtras(tab);
+    await loadTabExtras(tab);
   }
+  backfill(tab, marker, range);
+}
+
+/**
+ * Twitch has no chat history API, so fetch recent messages from the public
+ * recent-messages service (as Chatterino and other clients do) and insert any we
+ * haven't shown: the gap while disconnected, or recent history on first join.
+ */
+async function backfill(tab, marker, { since, until }) {
+  let lines = [];
+  try {
+    const r = await fetch("https://recent-messages.robotty.de/api/v2/recent-messages/" + encodeURIComponent(tab.login) + "?limit=100");
+    if (r.ok) lines = (await r.json()).messages || [];
+  } catch {}
+  if (!tabs.has(tab.login) || !marker.isConnected) return;
+  const firstJoin = !since;
+  let added = 0;
+  let firstAdded = null;
+  for (const line of lines) {
+    const ev = ircToEvent(line);
+    // Newer than `until` arrives live over EventSub; already-seen ids are skipped in renderMessage.
+    if (!ev || ev.ts <= since || ev.ts > until || tab.seen.has(ev.message_id)) continue;
+    renderMessage(tab, ev, { before: marker, historical: firstJoin });
+    firstAdded = firstAdded || marker.previousElementSibling;
+    added++;
+  }
+  if (firstJoin && firstAdded) insertBefore(tab, el("li", "sys", "— recent messages —"), firstAdded);
+  else if (!firstJoin && added) marker.textContent += " Caught up on " + added + " missed message" + (added === 1 ? "" : "s") + ".";
+}
+
+// "@a=b;c=d :nick!nick@host PRIVMSG #chan :text" -> an object shaped like an EventSub chat event.
+function ircToEvent(line) {
+  const m = /^@(\S+) :([^!\s]+)!\S+ PRIVMSG #(\S+) :([\s\S]*)$/.exec(line);
+  if (!m) return null;
+  const tags = {};
+  for (const kv of m[1].split(";")) {
+    const i = kv.indexOf("=");
+    const k = i < 0 ? kv : kv.slice(0, i);
+    const v = i < 0 ? "" : kv.slice(i + 1);
+    tags[k] = v.replace(/\\(s|:|\\|r|n)/g, (_, c) => ({ s: " ", ":": ";", "\\": "\\", r: "\r", n: "\n" })[c]);
+  }
+  let text = m[4];
+  const action = /^\u0001ACTION (.*)\u0001$/.exec(text);
+  if (action) text = action[1];
+
+  // Emote ranges are code-point indices: "25:0-4,12-16/1902:6-10".
+  const ranges = [];
+  for (const part of (tags.emotes || "").split("/")) {
+    const [id, spans] = part.split(":");
+    if (!id || !spans) continue;
+    for (const span of spans.split(",")) {
+      const [a, b] = span.split("-").map(Number);
+      ranges.push([a, b, id]);
+    }
+  }
+  ranges.sort((x, y) => x[0] - y[0]);
+  const chars = Array.from(text);
+  const fragments = [];
+  let pos = 0;
+  for (const [a, b, id] of ranges) {
+    if (a > pos) fragments.push({ type: "text", text: chars.slice(pos, a).join("") });
+    fragments.push({ type: "emote", text: chars.slice(a, b + 1).join(""), emote: { id } });
+    pos = b + 1;
+  }
+  if (pos < chars.length) fragments.push({ type: "text", text: chars.slice(pos).join("") });
+
+  // Mark @mentions of me so highlighting works like it does for live messages.
+  if (me) {
+    const re = new RegExp("(^|\\s)@" + me.login + "\\b", "i");
+    for (const f of fragments) if (f.type === "text" && re.test(f.text)) f.mentionsMe = true;
+  }
+
+  const reply = tags["reply-parent-msg-id"]
+    ? { parent_message_id: tags["reply-parent-msg-id"], parent_user_name: tags["reply-parent-display-name"], parent_message_body: tags["reply-parent-msg-body"] }
+    : null;
+  if (reply && fragments[0] && fragments[0].type === "text") {
+    fragments[0].text = fragments[0].text.replace(/^@\S+\s/, ""); // Twitch prefixes replies with "@parent "
+  }
+  return {
+    message_id: tags.id,
+    ts: Number(tags["tmi-sent-ts"]) || 0,
+    chatter_user_id: tags["user-id"],
+    chatter_user_login: m[2],
+    chatter_user_name: tags["display-name"] || m[2],
+    color: tags.color || "",
+    badges: (tags.badges || "").split(",").filter(Boolean).map((b) => { const [set_id, id] = b.split("/"); return { set_id, id }; }),
+    message: { text, fragments },
+    reply,
+    first: tags["first-msg"] === "1",
+    historical: true,
+  };
 }
 
 async function loadTabExtras(tab) {
@@ -388,6 +530,74 @@ function updateComposer() {
     ? "Send a message" + (active.isMod ? " (mod: /ban /timeout /unban /clear)" : "")
     : (active ? "Connecting…" : "Open a channel to chat");
   if (!on) { closePicker(); closeSuggest(); }
+}
+
+// ---------- anonymous read-only IRC, only for first-time-chatter flags ----------
+
+// EventSub chat events don't say whether a message is someone's first in the channel, but
+// Twitch IRC tags do (first-msg=1). An anonymous "justinfan" login can read but never send.
+let irc = null;
+let ircRetries = 0;
+const firstMsgIds = new Set();
+
+function ircConnect() {
+  if (irc || tabs.size === 0) return;
+  const ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+  irc = ws;
+  ws.onopen = () => {
+    ircRetries = 0;
+    ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands\r\n");
+    ws.send("PASS SCHMOOPIIE\r\n");
+    ws.send("NICK justinfan" + Math.floor(10000 + Math.random() * 89999) + "\r\n");
+    for (const login of tabs.keys()) ws.send("JOIN #" + login + "\r\n");
+  };
+  ws.onmessage = (e) => {
+    for (const line of String(e.data).split("\r\n")) {
+      if (!line) continue;
+      if (line.startsWith("PING")) { ws.send("PONG" + line.slice(4) + "\r\n"); continue; }
+      if (!line.startsWith("@") || !line.includes(" PRIVMSG #")) continue;
+      const tags = line.slice(1, line.indexOf(" "));
+      if (!/(^|;)first-msg=1(;|$)/.test(tags)) continue;
+      const id = /(?:^|;)id=([^;]+)/.exec(tags);
+      if (id) markFirst(id[1]);
+    }
+  };
+  ws.onclose = () => {
+    if (irc !== ws) return;
+    irc = null;
+    if (tabs.size) setTimeout(ircConnect, Math.min(30000, 1000 * 2 ** ircRetries++));
+  };
+}
+
+function ircSend(line) {
+  if (irc && irc.readyState === WebSocket.OPEN) irc.send(line + "\r\n");
+}
+
+function ircJoin(login) {
+  if (irc) ircSend("JOIN #" + login); // if still connecting, onopen joins every tab
+  else ircConnect();
+}
+
+function ircPart(login) {
+  ircSend("PART #" + login);
+  if (tabs.size === 0 && irc) { const ws = irc; irc = null; ws.close(); }
+}
+
+function markFirst(id) {
+  firstMsgIds.add(id);
+  if (firstMsgIds.size > 2000) firstMsgIds.delete(firstMsgIds.values().next().value);
+  // IRC and EventSub race; whichever arrives second applies the highlight.
+  const li = document.querySelector('.msg[data-id="' + CSS.escape(id) + '"]');
+  if (li) addFlag(li, "first", "First-time chatter");
+}
+
+/** Highlights a message with a labelled flag (first-time chatter, deleted, …). */
+function addFlag(li, kind, label) {
+  li.classList.add(kind);
+  if (li.querySelector(".flag." + kind)) return;
+  const flag = el("div", "flags");
+  flag.appendChild(el("span", "flag " + kind, label));
+  li.insertBefore(flag, li.firstChild);
 }
 
 // ---------- 7TV ----------
@@ -427,11 +637,18 @@ $("more").addEventListener("click", () => {
   show("more", false);
 });
 
+function insertBefore(tab, node, ref) {
+  const stick = tab !== active || nearBottom(tab);
+  tab.list.insertBefore(node, ref);
+  if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+}
+
 function append(tab, node, countsAsUnread) {
   const list = tab.list;
   const stick = tab !== active || nearBottom(tab);
   list.appendChild(node);
   while (list.children.length > MAX_MESSAGES) list.firstChild.remove();
+  if (countsAsUnread && document.hidden) { hiddenUnread++; updateTitle(); }
   if (tab === active) {
     if (stick) list.scrollTop = list.scrollHeight;
     else show("more", true);
@@ -441,7 +658,11 @@ function append(tab, node, countsAsUnread) {
   }
 }
 
-function sysLine(tab, text, kind) { append(tab, el("li", "sys" + (kind ? " " + kind : ""), text), false); }
+function sysLine(tab, text, kind) {
+  const li = el("li", "sys" + (kind ? " " + kind : ""), text);
+  append(tab, li, false);
+  return li;
+}
 
 function userColor(ev) {
   if (ev.color) return ev.color;
@@ -506,8 +727,8 @@ function renderFragments(tab, parent, fragments, skipPrefix) {
   }
 }
 
-function timeLabel() {
-  return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function timeLabel(ts) {
+  return new Date(ts || Date.now()).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function nameNode(ev) {
@@ -529,8 +750,14 @@ function actionButton(label, onClick, danger) {
   return b;
 }
 
-function renderMessage(tab, ev) {
-  const li = el("li", "msg");
+function renderMessage(tab, ev, opts = {}) {
+  if (ev.message_id) {
+    if (tab.seen.has(ev.message_id)) return;
+    tab.seen.add(ev.message_id);
+    if (tab.seen.size > 2000) tab.seen.delete(tab.seen.values().next().value);
+  }
+  if (ev.ts && ev.ts > tab.lastTs) tab.lastTs = ev.ts;
+  const li = el("li", "msg" + (opts.historical ? " historical" : ""));
   li.dataset.id = ev.message_id;
   li.dataset.user = ev.chatter_user_id;
   if (ev.chatter_user_login) tab.chatters.set(ev.chatter_user_login, ev.chatter_user_name);
@@ -539,7 +766,7 @@ function renderMessage(tab, ev) {
   if (ev.reply) {
     li.appendChild(el("div", "reply-ctx", "↪ Replying to @" + ev.reply.parent_user_name + ": " + ev.reply.parent_message_body));
   }
-  li.appendChild(el("span", "time", timeLabel()));
+  li.appendChild(el("span", "time", timeLabel(ev.ts)));
   for (const b of ev.badges || []) {
     const info = tab.badges[b.set_id + "/" + b.id];
     if (!info) continue;
@@ -556,7 +783,7 @@ function renderMessage(tab, ev) {
   renderFragments(tab, body, ev.message.fragments, !!ev.reply);
   li.appendChild(body);
 
-  const mentioned = me && (ev.message.fragments || []).some((f) => f.type === "mention" && f.mention && f.mention.user_id === me.userId);
+  const mentioned = me && (ev.message.fragments || []).some((f) => (f.type === "mention" && f.mention && f.mention.user_id === me.userId) || f.mentionsMe);
   if (mentioned) li.classList.add("mentioned");
 
   const actions = el("div", "actions");
@@ -572,9 +799,15 @@ function renderMessage(tab, ev) {
     }, true));
   }
   li.appendChild(actions);
+  if (ev.first || ev.message_type === "user_intro" || firstMsgIds.has(ev.message_id)) addFlag(li, "first", "First-time chatter");
 
-  append(tab, li, true);
-  if (mentioned && tab !== active) { tab.mentioned = true; updateTabEl(tab); }
+  if (opts.before) {
+    insertBefore(tab, li, opts.before);
+    if (!opts.historical && tab !== active) { tab.unread++; updateTabEl(tab); }
+  } else {
+    append(tab, li, true);
+  }
+  if (mentioned && tab !== active && !opts.historical) { tab.mentioned = true; updateTabEl(tab); }
 }
 
 function renderNotification(tab, ev) {
@@ -591,23 +824,24 @@ function renderNotification(tab, ev) {
   append(tab, li, true);
 }
 
-function handleEvent(type, ev) {
+function handleEvent(type, ev, ts) {
   const tab = tabForBroadcaster(ev.broadcaster_user_id);
   if (!tab) return;
+  if (ts) ev.ts = ts;
   const list = tab.list;
   switch (type) {
     case "channel.chat.message": return renderMessage(tab, ev);
     case "channel.chat.notification": return renderNotification(tab, ev);
     case "channel.chat.message_delete": {
-      const li = list.querySelector('[data-id="' + CSS.escape(ev.message_id) + '"]');
-      if (li) { li.classList.add("deleted"); li.querySelector(".body").textContent = "<message deleted>"; }
+      const li = list.querySelector('.msg[data-id="' + CSS.escape(ev.message_id) + '"]');
+      if (li) addFlag(li, "deleted", "Deleted by a moderator");
       return;
     }
     case "channel.chat.clear_user_messages":
-      list.querySelectorAll('[data-user="' + CSS.escape(ev.target_user_id) + '"]').forEach((n) => n.classList.add("cleared"));
+      list.querySelectorAll('.msg[data-user="' + CSS.escape(ev.target_user_id) + '"]').forEach((n) => addFlag(n, "deleted", "Removed: user timed out or banned"));
       return sysLine(tab, ev.target_user_name + " was timed out or banned.");
     case "channel.chat.clear":
-      list.querySelectorAll(".msg, .notice").forEach((n) => n.classList.add("cleared"));
+      list.querySelectorAll(".msg").forEach((n) => addFlag(n, "deleted", "Removed: chat cleared"));
       return sysLine(tab, "Chat was cleared by a moderator.");
   }
 }
@@ -1006,6 +1240,8 @@ if (vv) {
   vv.addEventListener("scroll", fit);
   fit();
 }
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 load7tvGlobal();
 refreshStatus();

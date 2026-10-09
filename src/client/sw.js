@@ -1,0 +1,32 @@
+// Minimal service worker: makes the app installable and shows a friendly page when
+// offline. It deliberately caches nothing, so chat and Cloudflare Access sign-in always
+// go straight to the network.
+"use strict";
+
+const OFFLINE_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: #0e0e10; color: #efeff1; font: 15px/1.5 system-ui, sans-serif; text-align: center; padding: 16px; box-sizing: border-box; }
+  img { width: 96px; height: 96px; border-radius: 22px; margin-bottom: 16px; }
+  p { color: #adadb8; margin: 4px 0 20px; }
+  button { padding: 10px 18px; border: 0; border-radius: 6px; background: #9147ff; color: #fff; font: inherit; font-weight: 600; }
+</style></head>
+<body><div>
+  <h1 style="font-size:18px;margin:0">You're offline</h1>
+  <p>Chat will be back when your connection is.</p>
+  <button onclick="location.reload()">Try again</button>
+</div></body></html>`;
+
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
+self.addEventListener("fetch", (event) => {
+  if (event.request.mode !== "navigate") return;
+  event.respondWith(
+    fetch(event.request).catch(
+      () => new Response(OFFLINE_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } }),
+    ),
+  );
+});

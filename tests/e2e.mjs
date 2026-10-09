@@ -162,6 +162,7 @@ await ctx.route("**/*", async (route) => {
     } };
     Object.assign(Twitch.Player, { PLAYBACK_BLOCKED: "playbackBlocked", PLAY: "play", PLAYING: "playing", PAUSE: "pause", ENDED: "ended", OFFLINE: "offline", ONLINE: "online" });` });
   if (u.host === "player.twitch.tv") { log.player.push(u.search); return route.fulfill({ body: "<body style='margin:0;background:#111;color:#9147ff;display:grid;place-items:center;height:100vh;font:20px sans-serif'>▶ " + u.searchParams.get("channel") + "</body>", contentType: "text/html" }); }
+  if (u.host === "www.twitch.tv" && u.pathname.startsWith("/embed/")) { log.chatEmbeds = [...(log.chatEmbeds || []), u.pathname + u.search]; return route.fulfill({ body: "<body style='margin:0;background:#18181b;color:#adadb8;display:grid;place-items:center;height:100vh;font:15px sans-serif'>Twitch chat embed (test)</body>", contentType: "text/html" }); }
   if (u.host === "api.betterttv.net") {
     if (u.pathname === "/3/cached/emotes/global") return j([{ id: "bg1", code: "OMEGALUL" }]);
     if (u.pathname.startsWith("/3/cached/users/twitch/")) return j({ channelEmotes: [{ id: "bc1", code: "uwuDance" }], sharedEmotes: [{ id: "bs1", code: "sharedOne" }] });
@@ -689,6 +690,41 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = true; openOnTwitch(active, false); });
   check("desktop, popup blocked → opens a tab instead", (await page.evaluate(() => __calls)).length === 2 && (await page.evaluate(() => __calls[1][1])) === "https://www.twitch.tv/uwoslab");
   await page.evaluate(() => { window.__popupBlocked = false; });
+}
+
+// =============== chat embed window (experimental) ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  await page.evaluate(() => { __calls.length = 0; });
+  // Default: the gem button still hands off to Twitch.
+  await page.evaluate(() => { launchers.app = (u) => __calls.push(["app", u]); });
+  await page.tap("#twitch-btn");
+  check("default: gem button does not open the embed", !(await page.$("#sheet .chat-embed")) && (await page.evaluate(() => __calls.length)) === 1);
+  await sleep(400); // let that tap's website-fallback timer run out
+  await page.evaluate(() => { __calls.length = 0; });
+  await page.click("#settings-btn");
+  check("Settings has the Bits and channel points option", (await page.textContent("#sheet-body")).includes("Bits and channel points") && (await page.textContent("#sheet-body")).includes("Chat embed (experimental)"));
+  await page.click('#sheet-body .seg button:has-text("Chat embed")');
+  await page.click("#sheet-close");
+  check("saved", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).bitsButton === "embed");
+  await page.tap("#twitch-btn");
+  await page.waitForSelector("#sheet .chat-embed");
+  const emb = await page.evaluate(() => { const f = document.querySelector("#sheet .chat-embed"); const r = f.getBoundingClientRect(); return { src: f.src, h: Math.round(r.height), w: Math.round(r.width), title: document.querySelector("#sheet h2").textContent }; });
+  check("embed window: Twitch's official chat embed, parent= this site, dark", emb.src === "https://www.twitch.tv/embed/uwoslab/chat?parent=yappa.test&darkpopout" && emb.title === "Twitch chat: UwoSlab", JSON.stringify(emb));
+  check("embed window is big enough to use on a phone", emb.h >= 300 && emb.w >= 330, JSON.stringify(emb));
+  await sleep(300);
+  check("the embed page actually loaded", log.chatEmbeds.includes("/embed/uwoslab/chat?parent=yappa.test&darkpopout"), JSON.stringify(log.chatEmbeds));
+  await page.screenshot({ path: dir + "/t27-chat-embed.png" });
+  check("light theme: no darkpopout", await page.evaluate(() => { document.documentElement.dataset.theme = "light"; const u = chatEmbedUrl("x"); document.documentElement.dataset.theme = "dark"; return u === "https://www.twitch.tv/embed/x/chat?parent=yappa.test"; }));
+  // Escape hatch to the real thing, and closing removes the iframe.
+  await page.tap('#sheet button:has-text("Open the app")');
+  check("'Open the app' closes the window and hands off to Twitch", !(await page.$("#sheet .chat-embed")) && JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]', JSON.stringify(await page.evaluate(() => __calls)));
+  await page.tap("#twitch-btn");
+  await page.waitForSelector("#sheet .chat-embed");
+  await page.click("#sheet-close");
+  check("closing removes the embed (and the wide layout)", !(await page.$("#sheet .chat-embed")) && await page.evaluate(() => !document.getElementById("sheet").classList.contains("wide")));
+  await sleep(400); // the pending website-fallback timer from the escape hatch
+  await page.evaluate(() => { settings.bitsButton = "twitch"; saveSettings(); __calls.length = 0; });
 }
 
 // =============== Twitch player script blocked (Firefox tracking protection, ad blockers) ===============

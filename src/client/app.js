@@ -48,7 +48,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed" };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch" };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -1782,7 +1782,32 @@ function openOnTwitch(tab, touch = coarse) {
   }, appFallbackMs);
 }
 
-$("twitch-btn").addEventListener("click", () => { if (active) openOnTwitch(active); });
+$("twitch-btn").addEventListener("click", () => {
+  if (!active) return;
+  if (settings.bitsButton === "embed") openChatEmbed(active); else openOnTwitch(active);
+});
+
+// Experimental: Twitch's official chat embed in a window here. Twitch has said the embed
+// doesn't offer Bits or channel points (old forum posts), and it only shows you signed in if
+// the browser shares your twitch.tv login with it, so the window offers the real thing too.
+// (The pop-out page itself can't be framed: it sends X-Frame-Options: SAMEORIGIN.)
+function chatEmbedUrl(login) {
+  const params = new URLSearchParams({ parent: location.hostname });
+  if (!isLightTheme()) params.set("darkpopout", "");
+  return "https://www.twitch.tv/embed/" + encodeURIComponent(login) + "/chat?" + params.toString().replace(/darkpopout=($|&)/, "darkpopout$1");
+}
+
+function openChatEmbed(tab) {
+  const frame = document.createElement("iframe");
+  frame.className = "chat-embed";
+  frame.title = "Twitch chat for " + tab.login;
+  frame.src = chatEmbedUrl(tab.login);
+  const row = el("div", "row");
+  const note = el("div", "hint", "Twitch's own chat embed. If Bits or channel points aren't here, or it isn't signed in, use Twitch itself.");
+  row.append(note, btn(coarse ? "Open the app" : "Open pop-out", () => { closeSheet(); openOnTwitch(tab); }, "small"));
+  openSheet(el("h2", null, "Twitch chat: " + (tab.broadcaster ? tab.broadcaster.name : tab.login)), frame, row);
+  $("sheet").classList.add("wide");
+}
 $("emote-search").addEventListener("input", renderPicker);
 $("emote-search").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closePicker(); composer.focus(); }
@@ -2727,7 +2752,7 @@ function openSheet(...children) {
   $("sheet-body").replaceChildren(...children);
   show("sheet", true);
 }
-function closeSheet() { show("sheet", false); $("sheet-body").replaceChildren(); }
+function closeSheet() { show("sheet", false); $("sheet-body").replaceChildren(); $("sheet").classList.remove("wide"); }
 $("sheet-close").addEventListener("click", closeSheet);
 $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet").hidden) closeSheet(); });
@@ -2984,6 +3009,13 @@ function openSettings() {
     playerSeg.appendChild(b);
   }
 
+  const bitsSeg = el("div", "seg");
+  for (const [label, value] of [["Twitch", "twitch"], ["Chat embed (experimental)", "embed"]]) {
+    const b = btn(label, () => { settings.bitsButton = value; saveSettings(); bitsSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
+    if ((settings.bitsButton || "twitch") === value) b.classList.add("on");
+    bitsSeg.appendChild(b);
+  }
+
   const themeSeg = el("div", "seg");
   for (const [label, value] of [["Dark", "dark"], ["Light", "light"], ["Match device", "system"]]) {
     const b = btn(label, () => { settings.theme = value; saveSettings(); themeSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
@@ -3046,6 +3078,10 @@ function openSettings() {
     el("div", "hint", "Native plays the stream directly in a plain video player, which can autoplay (muted) on phones. " +
       "Tested: Native works in Firefox for Android but not in Chrome (Twitch only lets its own site load its video in browsers that enforce cross-site rules), and Twitch's player is the other way round. " +
       "This choice is saved per browser. Native also relies on an unofficial Twitch API that can stop working at any time; if it fails, Yappa switches back to Twitch's player for that visit."),
+    el("h3", null, "Bits and channel points"),
+    bitsSeg,
+    el("div", "hint", "What the gem button next to the emote button does. Twitch: opens twitch.tv, as the pop-out chat on computers or the Twitch app on phones. " +
+      "Chat embed (experimental): Twitch's chat in a window here; Twitch has said it may not offer Bits or channel points, and it needs your twitch.tv login to be shared with this site."),
     el("h3", null, "Appearance"),
     themeSeg,
     el("h3", null, "Chat text size"),

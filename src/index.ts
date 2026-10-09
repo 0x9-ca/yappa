@@ -128,11 +128,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
       const action = body.action;
       const broadcasterId = str(body.broadcaster_id);
-      if (!broadcasterId || !["delete", "clear", "ban", "timeout", "unban"].includes(action as string)) {
+      if (!broadcasterId || !["delete", "clear", "ban", "timeout", "unban", "pin", "unpin"].includes(action as string)) {
         return json({ ok: false, error: "Bad moderation request." }, 400);
       }
       const login = str(body.login)?.replace(/^@/, "").toLowerCase();
-      const result = await stub.chatMod(broadcasterId, action as "delete" | "clear" | "ban" | "timeout" | "unban", {
+      const result = await stub.chatMod(broadcasterId, action as "delete" | "clear" | "ban" | "timeout" | "unban" | "pin" | "unpin", {
         userId: str(body.user_id),
         login,
         messageId: str(body.message_id),
@@ -146,6 +146,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const id = url.searchParams.get("broadcaster_id");
       if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);
       return json(await stub.chatEmotes(id));
+    }
+
+    case "GET /api/chat/pin": {
+      const id = url.searchParams.get("broadcaster_id");
+      if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);
+      const result = await stub.chatPinned(id);
+      return json(result, result.ok ? 200 : 502);
     }
 
     case "GET /api/chat/badges": {

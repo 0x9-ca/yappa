@@ -50,6 +50,7 @@ export function renderPage(user: string): string {
   </div>
 
   <div class="chat" id="chat" hidden>
+    <div class="pinned" id="pinned" hidden></div>
     <div class="empty-chat" id="empty-chat">Open a channel above to start chatting.</div>
     <button class="more" id="more" hidden>More messages below</button>
   </div>

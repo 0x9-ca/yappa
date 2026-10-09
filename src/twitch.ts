@@ -323,3 +323,71 @@ export async function unbanUser(
   url.searchParams.set("user_id", userId);
   await check(await fetch(url, { method: "DELETE", headers: helixHeaders(env, accessToken) }), "Unban");
 }
+
+export interface PinnedMessage {
+  message_id: string;
+  broadcaster_id: string;
+  sender_user_id: string;
+  sender_user_login: string;
+  sender_user_name: string;
+  pinned_by_user_name: string;
+  message: { text: string; fragments: unknown[] };
+  starts_at: string;
+  ends_at: string | null;
+  updated_at: string;
+}
+
+function pinsUrl(broadcasterId: string, moderatorId: string, params: Record<string, string> = {}): URL {
+  const url = new URL(`${API_BASE}/chat/pins`);
+  url.searchParams.set("broadcaster_id", broadcasterId);
+  url.searchParams.set("moderator_id", moderatorId);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  return url;
+}
+
+/** The currently pinned message, or null. Moderators only (there's no public read API). */
+export async function getPinnedMessage(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  moderatorId: string,
+): Promise<PinnedMessage | null> {
+  const res = await check(
+    await fetch(pinsUrl(broadcasterId, moderatorId), { headers: helixHeaders(env, accessToken) }),
+    "Get Pinned Chat Message",
+  );
+  return ((await res.json()) as { data: PinnedMessage[] }).data[0] ?? null;
+}
+
+/** Pins a message for durationSeconds (30–1800), or until the stream ends when omitted. */
+export async function pinMessage(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  moderatorId: string,
+  messageId: string,
+  durationSeconds?: number,
+): Promise<void> {
+  const params: Record<string, string> = { message_id: messageId };
+  if (durationSeconds) params.duration_seconds = String(durationSeconds);
+  await check(
+    await fetch(pinsUrl(broadcasterId, moderatorId, params), { method: "PUT", headers: helixHeaders(env, accessToken) }),
+    "Pin Chat Message",
+  );
+}
+
+export async function unpinMessage(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  moderatorId: string,
+  messageId: string,
+): Promise<void> {
+  await check(
+    await fetch(pinsUrl(broadcasterId, moderatorId, { message_id: messageId }), {
+      method: "DELETE",
+      headers: helixHeaders(env, accessToken),
+    }),
+    "Unpin Chat Message",
+  );
+}

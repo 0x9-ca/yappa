@@ -436,14 +436,15 @@ await page.click('#sheet-body button:has-text("Timeout 1h")');
 check("card timeout 1h", log.mods.at(-1).action === "timeout" && log.mods.at(-1).duration === 3600 && log.mods.at(-1).user_id === "333", JSON.stringify(log.mods.at(-1)));
 // Hide user
 await page.click('li[data-id="card1"] .name');
-await page.click('#sheet-body button:has-text("Hide their messages")');
+await page.click('#sheet-body button:has-text("Ignore")');
 check("hide user hides their messages", await page.$eval('li[data-id="card1"]', (l) => getComputedStyle(l).display === "none"));
 cur().send(chat("999", "u2b", "Spammer", "333", "more spam"));
 await sleep(100);
 check("new messages from hidden user are hidden too", await page.$eval('li[data-id="u2b"]', (l) => getComputedStyle(l).display === "none"));
 await page.click("#settings-btn");
-check("settings lists hidden user", (await page.textContent("#sheet-body")).includes("Spammer"));
-await page.click('#sheet-body .row button:has-text("Show")');
+check("settings lists the ignored user, with Unignore", (await page.textContent("#sheet-body")).includes("Ignored users") && (await page.textContent("#sheet-body")).includes("Spammer") && !!(await page.$('#sheet-body button:has-text("Unignore")')));
+check("header shows the app icon (named for screen readers), not the word", await page.evaluate(() => { const h = document.querySelector("header h1"); const i = h.querySelector("img"); return !!i && i.alt === "Yappa" && h.textContent.trim() === "" && i.complete && i.naturalWidth > 0 && Math.round(i.getBoundingClientRect().width) === 30; }));
+await page.click('#sheet-body .row button:has-text("Unignore")');
 await page.click("#sheet-close");
 check("unhide restores messages", await page.$eval('li[data-id="u2b"]', (l) => getComputedStyle(l).display !== "none"));
 // Search
@@ -476,7 +477,7 @@ cur().send(chat("999", "hl4", "Random", "706", "deploy now please"));
 await sleep(100);
 check("user-scoped rule: phrase only from that user", await page.$eval('li[data-id="hl3"]', (l) => l.classList.contains("highlighted")) && !(await page.$eval('li[data-id="hl4"]', (l) => l.classList.contains("highlighted"))));
 await page.click('li[data-id="hl4"] .name');
-await page.click('#sheet-body button:has-text("Highlight their messages")');
+await page.click('#sheet-body button:has-text("Highlight")');
 cur().send(chat("999", "hl5", "Random", "706", "anything at all"));
 await sleep(100);
 check("user-only rule from the user card", await page.$eval('li[data-id="hl5"]', (l) => l.classList.contains("highlighted")));

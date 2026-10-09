@@ -38,7 +38,7 @@ export function renderPage(user: string): string {
 <div class="app">
   <div class="top">
     <header>
-      <h1>${APP_NAME}</h1>
+      <h1><img src="${versioned("/icons/icon-192.png")}" alt="${APP_NAME}" width="30" height="30"></h1>
       <form id="join-form">
         <input id="channel" placeholder="Open a channel" autocomplete="off" spellcheck="false" aria-label="Channel">
         <button class="ghost" type="submit">Open</button>

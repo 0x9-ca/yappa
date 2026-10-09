@@ -30,7 +30,7 @@ every time you send a message. Gated by Cloudflare Access.
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
   `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
-- Live status on tabs, search/filter, highlight words, mention notifications and sound, hidden
+- Live status on tabs, search/filter, highlight words, mention notifications and sound, ignored
   users, text size. Color cycling also reacts to messages you send from other apps while their
   channel is open in a tab.
 - Client code lives in `src/client/` and is bundled as text modules (see `rules` in `wrangler.jsonc`).

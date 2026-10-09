@@ -2700,15 +2700,15 @@ async function openUserCard(tab, u) {
   const actions = el("div", "card-actions");
   actions.appendChild(btn("@ Mention", () => { closeSheet(); insertEmote("@" + mentionName(u.login, u.name)); }));
   const hidden = isHidden(u.id);
-  actions.appendChild(btn(hidden ? "Show their messages" : "Hide their messages", () => { setHidden(u, !hidden); closeSheet(); }));
+  actions.appendChild(btn(hidden ? "Unignore" : "Ignore", () => { setHidden(u, !hidden); closeSheet(); }));
   const login = u.login || u.name;
   const hl = userRule(login);
-  actions.appendChild(btn(hl ? "Stop highlighting" : "Highlight their messages", () => {
+  actions.appendChild(btn(hl ? "Stop highlighting" : "Highlight", () => {
     if (hl) settings.rules = settings.rules.filter((r) => r !== hl);
     else settings.rules.push({ phrase: "", user: normLogin(login) });
     saveSettings();
     closeSheet();
-    if (active) sysLine(active, (hl ? "No longer highlighting " : "Highlighting messages from ") + u.name + ".");
+    if (active) sysLine(active, (hl ? "No longer highlighting " : "Highlighting ") + u.name + ".");
   }));
   const isMe = me && u.id === me.userId;
   const isBroadcaster = tab.broadcaster && u.id === tab.broadcaster.id;
@@ -2755,7 +2755,7 @@ function setHidden(u, hide) {
   if (hide) settings.hidden.push({ id: u.id, name: u.name });
   saveSettings();
   document.querySelectorAll('.msg[data-user="' + CSS.escape(u.id) + '"]').forEach((n) => n.classList.toggle("ignored", hide));
-  if (active) sysLine(active, (hide ? "Hiding" : "Showing") + " messages from " + u.name + ".");
+  if (active) sysLine(active, (hide ? "Ignoring " : "No longer ignoring ") + u.name + ".");
 }
 
 // ---------- highlights, notifications, sound ----------
@@ -2935,9 +2935,9 @@ function openSettings() {
   const hiddenList = el("div");
   const renderHidden = () => {
     hiddenList.replaceChildren();
-    if (!settings.hidden.length) { hiddenList.appendChild(el("div", "hint", "Nobody. Tap a name in chat to hide someone.")); return; }
+    if (!settings.hidden.length) { hiddenList.appendChild(el("div", "hint", "Nobody. Tap a name in chat to ignore someone.")); return; }
     for (const h of settings.hidden) {
-      hiddenList.appendChild(row(h.name, btn("Show", () => { setHidden(h, false); renderHidden(); })));
+      hiddenList.appendChild(row(h.name, btn("Unignore", () => { setHidden(h, false); renderHidden(); })));
     }
   };
   renderHidden();
@@ -2991,7 +2991,7 @@ function openSettings() {
     themeSeg,
     el("h3", null, "Chat text size"),
     seg,
-    el("h3", null, "Hidden users"),
+    el("h3", null, "Ignored users"),
     hiddenList,
   );
 }

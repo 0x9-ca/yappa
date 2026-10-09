@@ -39,7 +39,8 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-col
 .app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "video" "chat" "footer"; height: var(--app-height, 100dvh); padding-bottom: env(safe-area-inset-bottom); max-width: 900px; margin: 0 auto; border-inline: 1px solid var(--line); background: var(--panel); }
 .top { grid-area: top; position: sticky; top: 0; z-index: 10; background: var(--panel); padding-top: env(safe-area-inset-top); }
 header { position: relative; display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; padding: 10px 12px; }
-header h1 { font-size: 15px; margin: 0; }
+header h1 { margin: 0; line-height: 0; flex: none; }
+header h1 img { display: block; width: 30px; height: 30px; border-radius: 7px; }
 header form { display: flex; gap: 6px; flex: 1 1 0; min-width: 0; }
 header form input { flex: 1; }
 .cycler { display: flex; align-items: center; gap: 8px; }

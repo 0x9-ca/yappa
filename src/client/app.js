@@ -28,7 +28,7 @@ let hiddenUnread = 0;
 const sentIds = new Set();     // message ids sent from this app (for color cycling from elsewhere)
 const inflightSends = new Set();
 
-const DEFAULT_SETTINGS = { notify: false, sound: false, highlights: "", fontSize: 14, hidden: [], video: true };
+const DEFAULT_SETTINGS = { notify: false, sound: false, highlights: "", fontSize: 14, hidden: [], video: true, followRaids: true };
 let settings = loadSettings();
 function loadSettings() {
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(safeGet("settings") || "{}") }; } catch { return { ...DEFAULT_SETTINGS }; }
@@ -930,6 +930,7 @@ function renderNotification(tab, ev) {
 }
 
 function handleEvent(type, ev, ts) {
+  if (type === "channel.raid") return handleRaid(tabForBroadcaster(ev.from_broadcaster_user_id), ev);
   const tab = tabForBroadcaster(ev.broadcaster_user_id);
   if (!tab) return;
   if (ts) ev.ts = ts;
@@ -968,6 +969,56 @@ $("chat").addEventListener("click", (e) => {
   document.querySelectorAll(".msg.selected").forEach((n) => n.classList.remove("selected"));
   if (li && !wasSelected && !e.target.closest(".actions")) li.classList.add("selected");
 });
+
+// ---------- raids ----------
+
+const RAID_FOLLOW_SECONDS = 5;
+let raidTimer = null;
+
+/** The channel in a tab raided out. Follow it (like Twitch does) if it's the one being watched. */
+function handleRaid(tab, ev) {
+  if (!tab) return;
+  const target = ev.to_broadcaster_user_login;
+  const li = el("li", "notice raid");
+  li.appendChild(el("div", "sysmsg", ev.from_broadcaster_user_name + " raided " + ev.to_broadcaster_user_name +
+    " with " + Number(ev.viewers || 0).toLocaleString() + " viewer" + (ev.viewers === 1 ? "" : "s") + "."));
+  const row = el("div", "raid-actions");
+  row.appendChild(btn("Go to #" + target, () => { cancelRaidFollow(); openTab(target); }, "small"));
+  li.appendChild(row);
+
+  const follow = tab === active && settings.followRaids;
+  // Build the countdown before inserting the notice so chat scrolls to show all of it.
+  const note = el("span", "raid-note");
+  const stay = btn("Stay here", () => { cancelRaidFollow(); note.textContent = "Staying."; stay.remove(); }, "small ghost");
+  if (follow) row.append(note, stay);
+  append(tab, li, true);
+
+  if (tab !== active) { tab.mentioned = true; updateTabEl(tab); return; }
+  if (!follow) return;
+
+  // Countdown, cancellable; switching tabs yourself also cancels.
+  cancelRaidFollow();
+  let left = RAID_FOLLOW_SECONDS;
+  const tick = () => {
+    if (active !== tab) { cancelRaidFollow(); note.textContent = ""; stay.remove(); return; }
+    if (left <= 0) {
+      raidTimer = null;
+      stay.remove();
+      note.textContent = "Followed the raid.";
+      openTab(target);
+      return;
+    }
+    note.textContent = "Following in " + left + "s…";
+    left--;
+    raidTimer = setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+function cancelRaidFollow() {
+  clearTimeout(raidTimer);
+  raidTimer = null;
+}
 
 // ---------- moderation ----------
 
@@ -1977,6 +2028,9 @@ function openSettings() {
     cyclerEl,
     el("h3", null, "Account"),
     account,
+    el("h3", null, "Raids"),
+    row("Follow raids", checkbox(settings.followRaids, (c) => { settings.followRaids = c.checked; saveSettings(); }),
+      "When the channel you're watching raids, switch to the raided channel after " + RAID_FOLLOW_SECONDS + " seconds (you can stay)."),
     el("h3", null, "Alerts"),
     row("Notifications", notify, notifyHint),
     row("Sound", sound, "A short chime for mentions and highlights when you're looking elsewhere."),

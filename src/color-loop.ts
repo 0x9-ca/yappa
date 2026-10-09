@@ -167,6 +167,12 @@ export class ColorLoop extends DurableObject<Env> {
           this.isModerator(t, user.id),
           getChatSettings(this.env, t.accessToken, user.id).catch(() => null),
         ]);
+        // Outgoing raids from this channel (no special permission needed).
+        try {
+          subscriptionIds.push(
+            await createWebSocketSubscription(this.env, t.accessToken, "channel.raid", { from_broadcaster_user_id: user.id }, sessionId),
+          );
+        } catch {}
         // AutoMod queue for channels we moderate (best effort: an old token may lack the scope).
         let automod = false;
         if (isMod && t.scopes?.includes("moderator:manage:automod")) {

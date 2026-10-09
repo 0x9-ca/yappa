@@ -48,7 +48,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark" };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed" };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -2136,11 +2136,17 @@ async function renderVideo() {
   if (!want) {
     box.hidden = true;
     if (player) try { player.pause(); } catch {}
+    if (native) native.video.pause();
     return;
   }
   const wasHidden = box.hidden;
   if (!pipWindow) box.hidden = false;
   const channel = tab.login;
+  if (useNative()) {
+    if (player) teardownEmbed();
+    return renderNative(box, channel, wasHidden);
+  }
+  if (native) teardownNative();
   if (player) {
     // Only (re)start playback on a change, so a stream you paused stays paused.
     const changed = playerChannel !== channel;
@@ -2179,6 +2185,139 @@ async function renderVideo() {
   });
 }
 
+function teardownEmbed() {
+  player = null;
+  playerChannel = null;
+  videoBox.replaceChildren();
+}
+
+// ---------- native player (HLS), opt-in ----------
+
+// Plays the stream's HLS playlist in a plain <video>, which (unlike the embed) may autoplay
+// muted on phones. Twitch has no public API for playlists: this asks Twitch's internal
+// GraphQL API for a playback token under the ID of Twitch's own website, as tools like
+// Streamlink do. That is unofficial and can break at any time, so it's opt-in, and any
+// failure falls back to the embed for the rest of the session. Everything happens in the
+// browser: the token is tied to the IP that requested it, and the Worker never sees video.
+const TWITCH_WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+let native = null;          // { video, hls, channel }
+let nativeGen = 0;          // bumps on every load/teardown, to drop stale async results
+let nativeFailed = false;   // this session: fell back to the embed
+let hlsScript = null;
+
+const useNative = () => settings.player === "native" && !nativeFailed;
+
+async function hlsUrl(login) {
+  const res = await fetch("https://gql.twitch.tv/gql", {
+    method: "POST",
+    headers: { "Client-Id": TWITCH_WEB_CLIENT_ID, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: 'query($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: "web", playerBackend: "mediaplayer", playerType: "embed"}) { value signature } }',
+      variables: { login },
+    }),
+  });
+  if (!res.ok) throw new Error("playback token request failed (" + res.status + ")");
+  const body = await res.json();
+  const t = body.data && body.data.streamPlaybackAccessToken;
+  if (!t || !t.value) throw new Error((body.errors && body.errors[0] && body.errors[0].message) || "no playback token");
+  let info = {};
+  try { info = JSON.parse(t.value); } catch {}
+  if (info.authorization && info.authorization.forbidden) throw new Error("Twitch won't play this stream here (" + (info.authorization.reason || "forbidden") + ")");
+  const params = new URLSearchParams({
+    sig: t.signature, token: t.value, allow_source: "true", fast_bwe: "true",
+    p: String(Math.floor(Math.random() * 1e7)), player: "twitchweb", playlist_include_framerate: "true", supported_codecs: "avc1",
+  });
+  return "https://usher.ttvnw.net/api/channel/hls/" + encodeURIComponent(login) + ".m3u8?" + params;
+}
+
+function loadHlsJs() {
+  hlsScript = hlsScript || new Promise((resolve, reject) => {
+    const sc = document.createElement("script");
+    sc.src = videoBox.dataset.hlsSrc;
+    sc.onload = resolve;
+    sc.onerror = () => { hlsScript = null; reject(new Error("couldn't load hls.js")); };
+    document.head.appendChild(sc);
+  });
+  return hlsScript;
+}
+
+async function renderNative(box, channel, wasHidden) {
+  if (native && native.channel === channel) {
+    if (wasHidden) startNative(native.video); // a stream you paused stays paused otherwise
+    return;
+  }
+  const gen = ++nativeGen;
+  if (!native) {
+    const video = document.createElement("video");
+    video.className = "native-video";
+    video.controls = true;     // the browser's own: fullscreen, PiP, volume
+    video.playsInline = true;  // iPhone: don't force fullscreen
+    video.autoplay = true;
+    video.muted = !canPlaySound(); // muted autoplay is allowed everywhere, phones included
+    video.addEventListener("error", () => { if (native && native.video === video && !native.hls) nativeFail("the browser couldn't play it"); });
+    box.replaceChildren(video);
+    native = { video, hls: null, channel: null };
+  }
+  native.channel = channel;
+  let url;
+  try { url = await hlsUrl(channel); } catch (err) { if (gen === nativeGen) nativeFail(err.message); return; }
+  if (gen !== nativeGen || !native) return;
+  const { video } = native;
+  if (native.hls) { native.hls.destroy(); native.hls = null; }
+  // Built-in HLS (iPhone, Android, newer desktop Chrome) needs no CORS for the video
+  // segments; elsewhere hls.js plays it through Media Source Extensions.
+  if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = url;
+  } else {
+    try { await loadHlsJs(); } catch (err) { if (gen === nativeGen) nativeFail(err.message); return; }
+    if (gen !== nativeGen || !native) return;
+    if (!window.Hls || !Hls.isSupported()) { nativeFail("this browser can't play HLS"); return; }
+    // No web worker: the page's CSP doesn't allow blob: scripts.
+    const hls = new Hls({ enableWorker: false });
+    native.hls = hls;
+    hls.on(Hls.Events.ERROR, (_, data) => {
+      if (data.fatal && native && native.hls === hls) nativeFail(data.details || data.type || "playback error");
+    });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+  }
+  startNative(video);
+}
+
+function startNative(video) {
+  // If sound isn't allowed yet, mute and try again so the stream still starts.
+  video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+}
+
+function teardownNative() {
+  nativeGen++;
+  if (!native) return;
+  if (native.hls) native.hls.destroy();
+  native.video.removeAttribute("src");
+  native.video.load();
+  native.video.remove();
+  native = null;
+}
+
+function nativeFail(reason) {
+  if (nativeFailed) return;
+  nativeFailed = true;
+  teardownNative();
+  if (active) sysLine(active, "The native player couldn't play this stream (" + reason + "). Using Twitch's player until you reload.", "err");
+  renderVideo();
+}
+
+/** Settings: switch players now. */
+function setPlayer(kind) {
+  settings.player = kind;
+  saveSettings();
+  nativeFailed = false;
+  if (pipWindow) pipWindow.close();
+  teardownNative();
+  teardownEmbed();
+  renderVideo();
+}
+
 // ---------- picture-in-picture (Document PiP: desktop Chrome/Edge) ----------
 
 // Moves the whole player into an always-on-top window; closing it brings the player back.
@@ -2212,7 +2351,7 @@ async function openPip() {
   w.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
   box.classList.add("in-pip");
   box.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;min-height:0;max-height:none;aspect-ratio:auto";
-  for (const n of box.querySelectorAll(".player-host, iframe")) n.style.cssText = "display:block;width:100%;height:100%;border:0;aspect-ratio:auto";
+  for (const n of box.querySelectorAll(".player-host, iframe, video")) n.style.cssText = "display:block;width:100%;height:100%;border:0;aspect-ratio:auto";
   w.document.body.appendChild(box);
   box.hidden = false;
   $("pip-btn").setAttribute("aria-pressed", "true");
@@ -2221,7 +2360,7 @@ async function openPip() {
     pipWindow = null;
     box.classList.remove("in-pip");
     box.style.cssText = "";
-    for (const n of box.querySelectorAll(".player-host, iframe")) n.style.cssText = "";
+    for (const n of box.querySelectorAll(".player-host, iframe, video")) n.style.cssText = "";
     document.querySelector(".app").insertBefore(box, $("chat"));
     $("pip-btn").setAttribute("aria-pressed", "false");
     renderVideo();
@@ -2673,6 +2812,13 @@ function openSettings() {
     seg.appendChild(b);
   }
 
+  const playerSeg = el("div", "seg");
+  for (const [label, value] of [["Twitch player", "embed"], ["Native (HLS)", "native"]]) {
+    const b = btn(label, () => { setPlayer(value); playerSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
+    if ((settings.player || "embed") === value) b.classList.add("on");
+    playerSeg.appendChild(b);
+  }
+
   const themeSeg = el("div", "seg");
   for (const [label, value] of [["Dark", "dark"], ["Light", "light"], ["Match device", "system"]]) {
     const b = btn(label, () => { settings.theme = value; saveSettings(); themeSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
@@ -2730,6 +2876,10 @@ function openSettings() {
     el("div", "hint", "Matching messages are highlighted in orange (and alert you, if on). Phrases match whole words, ignoring case."),
     rulesList,
     addRule,
+    el("h3", null, "Video player"),
+    playerSeg,
+    el("div", "hint", "Native plays the stream directly in a plain video player, which can autoplay (muted) on phones. " +
+      "It relies on an unofficial Twitch API that can stop working at any time; if it fails, Yappa switches back to Twitch's player."),
     el("h3", null, "Appearance"),
     themeSeg,
     el("h3", null, "Chat text size"),

@@ -52,6 +52,15 @@ await ctx.route("**/*", async (route) => {
   const body = () => route.request().postDataJSON();
   if (u.host === "yappa.test") {
     if (u.pathname === "/") return route.fulfill({ body: html, contentType: "text/html", headers: PAGE_HEADERS });
+    // Stand-in for hls.js (headless Chromium can't play real Twitch video): records calls.
+    if (u.pathname === "/hls.js" && u.search !== "?real") return route.fulfill({ contentType: "text/javascript", body: `
+      window.__hls = { instances: [] };
+      window.Hls = class { constructor(cfg) { this.cfg = cfg; this.handlers = {}; this.calls = []; __hls.instances.push(this); }
+        static isSupported() { return true; }
+        on(ev, fn) { this.handlers[ev] = fn; } loadSource(u) { this.calls.push(["loadSource", u]); }
+        attachMedia(v) { this.calls.push(["attachMedia", v.tagName]); } destroy() { this.calls.push(["destroy"]); this.destroyed = true; }
+        fire(ev, data) { this.handlers[ev] && this.handlers[ev](ev, data); } };
+      Hls.Events = { ERROR: "hlsError", MANIFEST_PARSED: "hlsManifestParsed" };` });
     const f = staticFiles[u.pathname];
     if (f) return route.fulfill({ body: f.type === "image/png" ? Buffer.from(f.body, "base64") : f.body, contentType: f.type });
     if (u.pathname === "/api/cycle") { cycle.enabled = body().enabled; if (cycle.enabled) { cycle.lastColor = "#11AA22"; cycle.changes++; } log.cycle.push(cycle.enabled); return j({ ok: true, cycle }); }
@@ -91,6 +100,13 @@ await ctx.route("**/*", async (route) => {
   }
   // The app's old address (src/moved.ts).
   if (u.host === "old.test") return route.fulfill({ body: u.pathname === "/" ? renderMoved("yappa.test") : "<p>old</p>", contentType: "text/html" });
+  if (u.host === "gql.twitch.tv") {
+    const b = route.request().postDataJSON();
+    log.gql = [...(log.gql || []), { clientId: route.request().headers()["client-id"], login: b.variables && b.variables.login }];
+    const cors = { "access-control-allow-origin": "*" };
+    if (b.variables.login === "brokenchan") return route.fulfill({ json: { errors: [{ message: "service error" }] }, headers: cors });
+    return route.fulfill({ json: { data: { streamPlaybackAccessToken: { value: JSON.stringify({ channel: b.variables.login, authorization: { forbidden: false } }), signature: "sig-" + b.variables.login } } }, headers: cors });
+  }
   if (u.host === "recent-messages.robotty.de") {
     const chan = u.pathname.split("/").pop();
     log.history = [...(log.history || []), chan + u.search];
@@ -559,6 +575,63 @@ const lay = await page.evaluate(() => {
 check("wide: video left, 380px chat column right", lay.vRight <= lay.cLeft + 1 && lay.cW === 380 && Math.abs(lay.fRatio - 16 / 9) < 0.05 && lay.docW === 1280, JSON.stringify(lay));
 await page.screenshot({ path: dir + "/t12-video-wide.png" });
 await page.setViewportSize({ width: 390, height: 760 });
+
+// =============== native (HLS) player, opt-in ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  await page.waitForSelector("#video:not([hidden]) iframe");
+  // Make this browser take the hls.js path (headless Chromium may claim built-in HLS).
+  await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => ""; });
+  await page.click("#settings-btn");
+  check("Settings offers Twitch player / Native", (await page.textContent("#sheet-body")).includes("Native (HLS)"));
+  await page.click('#sheet-body .seg button:has-text("Native (HLS)")');
+  await page.click("#sheet-close");
+  await page.waitForFunction(() => window.__hls && __hls.instances.length === 1 && __hls.instances[0].calls.length >= 2, null, { timeout: 5000 });
+  const nat = await page.evaluate(() => {
+    const v = document.querySelector("#video video"), h = __hls.instances[0];
+    return { iframe: !!document.querySelector("#video iframe"), video: !!v, mutedOk: v && v.muted === !navigator.userActivation.hasBeenActive, inline: v && v.playsInline, controls: v && v.controls,
+      worker: h.cfg.enableWorker, src: h.calls[0][1], attach: h.calls[1] };
+  });
+  const su = new URL(nat.src);
+  check("Native: a <video> (inline, browser controls; muted until the page has been tapped) replaces the embed", nat.video && !nat.iframe && nat.mutedOk && nat.inline && nat.controls, JSON.stringify(nat));
+  check("Native: playback token from Twitch's GQL in the browser, as Twitch's web client", log.gql.at(-1).login === "uwoslab" && log.gql.at(-1).clientId === "kimne78kx3ncx6brgo4mv6wki5h1ko", JSON.stringify(log.gql.at(-1)));
+  check("Native: hls.js loads the usher playlist with the token (no web worker: CSP)",
+    su.host === "usher.ttvnw.net" && su.pathname === "/api/channel/hls/uwoslab.m3u8" && su.searchParams.get("sig") === "sig-uwoslab" && JSON.parse(su.searchParams.get("token")).channel === "uwoslab" &&
+    nat.attach[1] === "VIDEO" && nat.worker === false, nat.src);
+  check("Native: saved", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).player === "native");
+  // Switching to another live tab loads that channel; the old pipeline is torn down.
+  await page.evaluate(() => { tabs.get("otherchan").stream = { user_id: "888", title: "x", game_name: "y", viewer_count: 5, started_at: new Date().toISOString() }; });
+  await page.click(".tab:nth-child(2) .tab-name");
+  await page.waitForFunction(() => __hls.instances.length === 2 && __hls.instances[1].calls.length >= 2, null, { timeout: 5000 });
+  check("Native: switching tabs loads the new channel, same <video>", await page.evaluate(() => __hls.instances[0].destroyed && __hls.instances[1].calls[0][1].includes("/otherchan.m3u8") && document.querySelectorAll("#video video").length === 1));
+  // A fatal error falls back to Twitch's player, saying why.
+  await page.evaluate(() => __hls.instances[1].fire("hlsError", { fatal: true, type: "networkError", details: "manifestLoadError" }));
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
+  const fb = await page.evaluate(() => ({ video: !!document.querySelector("#video video"), msg: [...active.list.querySelectorAll(".sys.err")].at(-1).textContent }));
+  check("Native failure falls back to Twitch's player with the reason", !fb.video && fb.msg.includes("manifestLoadError") && fb.msg.includes("Twitch's player"), JSON.stringify(fb));
+  // A token error does the same; choosing Native again in Settings retries.
+  await page.evaluate(() => { tabs.get("otherchan").stream = null; });
+  await page.click(".tab:first-child .tab-name");
+  await page.evaluate(() => setPlayer("native"));
+  await page.waitForFunction(() => !!document.querySelector("#video video"), null, { timeout: 5000 });
+  check("Choosing Native again retries after a fallback", await page.evaluate(() => !document.querySelector("#video iframe")));
+  const tokErr = await page.evaluate(async () => { try { await hlsUrl("brokenchan"); return "no error"; } catch (e) { return e.message; } });
+  check("Token errors are reported", tokErr === "service error", tokErr);
+  await page.evaluate(() => setPlayer("embed"));
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
+  check("Back to Twitch's player", await page.evaluate(() => !document.querySelector("#video video") && JSON.parse(localStorage.getItem("settings")).player === "embed"));
+  await page.evaluate(() => { tabs.get("otherchan").stream = null; });
+  // The real hls.js must load under the page's CSP (script-src 'self', no eval, no blob: workers).
+  const real = await page.evaluate(() => new Promise((resolve) => {
+    const keep = window.Hls;
+    const sc = document.createElement("script");
+    sc.src = "/hls.js?real";
+    sc.onload = () => { const ok = typeof Hls === "function" && Hls.isSupported() !== undefined && Hls !== keep; window.Hls = keep; resolve(ok); };
+    sc.onerror = () => resolve(false);
+    document.head.appendChild(sc);
+  }));
+  check("real hls.js loads under the CSP", real);
+}
 
 // =============== recent emotes: only what works in this channel ===============
 await page.click(".tab:first-child .tab-name");

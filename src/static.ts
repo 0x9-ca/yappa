@@ -2,6 +2,8 @@ import appCss from "./client/app.css";
 import appJs from "./client/app.js";
 import swJs from "./client/sw.js";
 import themeJs from "./client/theme.js";
+// Served from our own origin so the page's CSP can stay at script-src 'self' (+ Twitch's player).
+import hlsJs from "hls.js/dist/hls.light.min.js";
 import appleTouchIcon from "./client/icons/apple-touch-icon.png";
 import favicon32 from "./client/icons/favicon-32.png";
 import icon192 from "./client/icons/icon-192.png";
@@ -31,8 +33,10 @@ const icons = {
 };
 
 /** Path including a ?v= content hash, for long-lived caching. */
-export function versioned(path: keyof typeof icons | "/app.css" | "/app.js" | "/theme.js"): string {
-  const body = path === "/app.css" ? appCss : path === "/app.js" ? appJs : path === "/theme.js" ? themeJs : icons[path];
+const scripts = { "/app.js": appJs, "/theme.js": themeJs, "/hls.js": hlsJs };
+
+export function versioned(path: keyof typeof icons | keyof typeof scripts | "/app.css"): string {
+  const body = path === "/app.css" ? appCss : path in scripts ? scripts[path as keyof typeof scripts] : icons[path as keyof typeof icons];
   return `${path}?v=${hash(body)}`;
 }
 
@@ -58,6 +62,7 @@ export const staticFiles: Record<string, { body: string | ArrayBuffer; type: str
   "/app.css": { body: appCss, type: "text/css; charset=utf-8", cache: IMMUTABLE },
   "/app.js": { body: appJs, type: "text/javascript; charset=utf-8", cache: IMMUTABLE },
   "/theme.js": { body: themeJs, type: "text/javascript; charset=utf-8", cache: IMMUTABLE },
+  "/hls.js": { body: hlsJs, type: "text/javascript; charset=utf-8", cache: IMMUTABLE }, // loaded only for the native player
   // The service worker must keep a stable URL and always be revalidated.
   "/sw.js": { body: swJs, type: "text/javascript; charset=utf-8", cache: REVALIDATE },
   "/manifest.webmanifest": { body: manifest, type: "application/manifest+json", cache: REVALIDATE },

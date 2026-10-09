@@ -59,7 +59,7 @@ export function renderPage(user: string): string {
     </div>
   </div>
 
-  <div class="video" id="video" hidden></div>
+  <div class="video" id="video" data-hls-src="${versioned("/hls.js")}" hidden></div>
   <div class="chat" id="chat" hidden>
     <div class="infobar" id="infobar" hidden>
       <span class="live" id="live"></span>

@@ -7,6 +7,10 @@ declare module "*/client/theme.js" {
   const source: string;
   export default source;
 }
+declare module "hls.js/dist/hls.light.min.js" {
+  const source: string;
+  export default source;
+}
 declare module "*/client/sw.js" {
   const source: string;
   export default source;

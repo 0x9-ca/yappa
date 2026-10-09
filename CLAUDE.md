@@ -30,6 +30,7 @@ The browser talks to these directly:
 - **recent-messages.robotty.de:** history and reconnect backfill, **only after the user opts in** (`settings.history`: `null` = not asked yet). The service's guidelines require consent, a short explanation and a link to it, both in the opt-in prompt and in Settings. Keep that if you touch it. History comes in pages of 100 (`HISTORY_PAGE`, within the service's recommended 50–100): the newest page on first load, older pages via `before=` as you scroll up (`loadOlder`), and reconnect gaps via `after=`. Lists are trimmed only while you're at the bottom.
 - **7TV / BTTV / FFZ APIs.**
 - **The Twitch embed player** (`player.twitch.tv/js/embed/v1.js`).
+- **Native player (opt-in, Settings → Video player):** the browser asks Twitch's internal GraphQL API (`gql.twitch.tv`, using the Client-Id of Twitch's own website) for a playback token, then plays the `usher.ttvnw.net` HLS playlist in a `<video>`. It uses the browser's built-in HLS where available, else hls.js (light build, served from our origin as `/hls.js`, with `enableWorker: false` because the CSP forbids blob: workers). This is unofficial and can break at any time. Any failure falls back to the embed for the session (`nativeFail`). The token is tied to the requester's IP, so keep the token and playlist requests in the browser, never in the Worker.
 
 Tokens never reach the browser.
 

@@ -24,7 +24,7 @@
   // Secret (set with `wrangler secret put`): TWITCH_CLIENT_SECRET
   // Client assets are bundled as strings and served by the Worker.
   "rules": [
-    { "type": "Text", "globs": ["**/client/*.js", "**/client/*.css"], "fallthrough": true },
+    { "type": "Text", "globs": ["**/client/*.js", "**/client/*.css", "**/hls.js/dist/hls.light.min.js"], "fallthrough": true },
     { "type": "Data", "globs": ["**/client/icons/*.png"], "fallthrough": true }
   ],
   // Lets the Worker and the Durable Object compare which code version each is running.

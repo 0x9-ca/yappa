@@ -229,11 +229,13 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .video { grid-area: video; background: #000; aspect-ratio: 16 / 9; width: 100%; min-height: min(300px, calc(var(--app-height, 100dvh) * 0.45)); max-height: calc(var(--app-height, 100dvh) * 0.45); }
 .video .player-host { width: 100%; height: 100%; display: grid; place-items: center; }
 .video iframe { display: block; width: 100%; height: 100%; border: 0; }
+.video video { display: block; width: 100%; height: 100%; background: #000; }
 #video-btn[aria-pressed="true"] { color: var(--link); }
 @media (min-width: 1000px) {
   .app.with-video { max-width: none; margin: 0; border-inline: 0; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "video top" "video chat" "video footer"; }
   .app.with-video .video { aspect-ratio: auto; max-height: none; height: 100%; border-right: 1px solid var(--line); display: grid; place-items: center; }
   /* Largest 16:9 box that fits the column. */
+  .app.with-video .video video { width: 100%; height: 100%; }
   .app.with-video .video iframe { width: min(100%, calc((var(--app-height, 100dvh)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
 }
 .sheet .cycler { padding: 2px 0 6px; }

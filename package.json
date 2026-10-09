@@ -10,6 +10,7 @@
     "test:e2e": "node tests/e2e.mjs"
   },
   "dependencies": {
+    "hls.js": "1.7.3",
     "jose": "^6.2.12"
   },
   "devDependencies": {

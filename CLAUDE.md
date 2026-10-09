@@ -2,9 +2,10 @@
 
 A personal Twitch chat client (tabs, video, 7TV/BTTV/FFZ, mod tools, chat-color cycling) running
 as a Cloudflare Worker behind Cloudflare Access at https://yappa.0x9.ca. Installable as a PWA.
-The old address, https://yappa.0x9.ca, still routes to the Worker. Its page (`src/moved.ts`) forwards
-to `APP_HOST`, carrying the browser's localStorage in the URL fragment; `app.js` imports it into a
-fresh browser. API routes still answer there, so copies of the app that are already open keep working.
+A previous hostname can keep routing to the Worker (an extra entry under `routes` in `wrangler.jsonc`).
+Its page (`src/moved.ts`) forwards to `APP_HOST`, carrying the browser's localStorage in the URL
+fragment; `app.js` imports it into a fresh browser. API routes still answer there, so copies of the
+app that are already open keep working.
 The Worker is still named `yappa` (the project started as a chat-color prank).
 
 ## Commands

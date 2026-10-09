@@ -79,7 +79,6 @@ export function renderPage(user: string): string {
       <button class="icon-btn" id="search-close" type="button" aria-label="Close search">×</button>
     </div>
     <div class="panel" id="modes-panel" hidden></div>
-    <div class="pinned" id="pinned" hidden></div>
     <div class="empty-chat" id="empty-chat">Open a channel above to start chatting.</div>
     <button class="more" id="more" hidden>More messages below</button>
   </div>

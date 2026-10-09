@@ -28,7 +28,7 @@ every time you send a message. Gated by Cloudflare Access.
   `moderator:manage:chat_settings` (optional: emote list and mod tools).
 - Chat: channel tabs sharing one EventSub WebSocket, 7TV/BTTV/FFZ emotes, cheermotes, emote picker, autocomplete
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
-  `/untimeout`, `/clear`, `/unpin`) in channels you moderate, plus pinned messages, the AutoMod
+  `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
 - Live status on tabs, search/filter, highlight words, mention notifications and sound, hidden
   users, text size. Color cycling also reacts to messages you send from other apps while their

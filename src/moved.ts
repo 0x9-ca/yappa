@@ -3,7 +3,7 @@
  * hidden users) is per-origin, so carry it over in the URL fragment, which never reaches
  * a server; the app imports it on first load at the new address (see app.js).
  */
-export const MIGRATED_KEYS = ["settings", "tabs", "lastChannel", "recentEmotes", "dismissedPins"];
+export const MIGRATED_KEYS = ["settings", "tabs", "lastChannel", "recentEmotes"];
 
 export function renderMoved(appHost: string): string {
   const target = JSON.stringify(`https://${appHost}/`);

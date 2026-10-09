@@ -35,7 +35,6 @@ page.on("dialog", (d) => d.accept());
 page.on("response", (r) => { if (r.status() === 404) errors.push("404 " + r.url()); });
 const log = { subs: [], unsubs: [], mods: [], sent: [], cycle: [], pinGets: [], settings: [], automod: [], bumps: 0, player: [], clips: [] };
 const chatSettings = { slow_mode: true, slow_mode_wait_time: 10, follower_mode: false, follower_mode_duration: null, subscriber_mode: false, emote_mode: false, unique_chat_mode: false };
-let pinState = null;
 let sendCounter = 0;
 const cycle = { enabled: false, changes: 0, lastColor: "#30E51E" };
 let statusCalls = 0;
@@ -69,11 +68,9 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/api/chat/unsubscribe") { log.unsubs.push(...body().ids); return j({ ok: true }); }
     if (u.pathname === "/api/chat/mod") {
       const b = body(); log.mods.push(b);
-      if (b.action === "pin") pinState = { message_id: b.message_id, broadcaster_id: b.broadcaster_id, sender_user_id: "333", sender_user_login: "pinme", sender_user_name: "PinMe", pinned_by_user_name: "testuser", message: { text: "pin this Kappa", fragments: [{ type: "text", text: "pin this " }, { type: "emote", text: "Kappa", emote: { id: "25" } }] }, starts_at: new Date().toISOString(), ends_at: b.duration ? new Date(Date.now() + b.duration * 1000).toISOString() : null, updated_at: new Date().toISOString() };
-      if (b.action === "unpin") pinState = null;
       return j({ ok: true, message: "did " + b.action });
     }
-    if (u.pathname === "/api/chat/pin") { log.pinGets.push(u.searchParams.get("broadcaster_id")); return j({ ok: true, pin: u.searchParams.get("broadcaster_id") === "999" ? pinState : null }); }
+    if (u.pathname === "/api/chat/pin") { log.pinGets.push(u.searchParams.get("broadcaster_id")); return j({ ok: false, error: "gone" }); }
     if (u.pathname === "/api/chat/send" && slowSend) await sleep(slowSend);
     if (u.pathname === "/api/chat/send") { log.sent.push(body().message); sendCounter++; if (cycle.enabled) { cycle.lastColor = "#" + (0x100000 + log.sent.length * 77777).toString(16).slice(-6).toUpperCase(); cycle.changes++; } return j({ ok: true, messageId: "sent-" + sendCounter }); }
     if (u.pathname === "/api/chat/badges") return j({});
@@ -183,7 +180,7 @@ s = await state();
 check("switching clears unread, updates hash", s.tabs === "UwoSlab*[MOD] | OtherChan" && s.hash === "#uwoslab", s.tabs + " " + s.hash);
 check("mod hint in placeholder", s.placeholder.includes("/ban"), s.placeholder);
 const modBtns = await page.$$eval('li[data-id="u2"] .actions button', (bs) => bs.map((b) => b.textContent));
-check("mod actions on others' messages", modBtns.join(",") === "Reply,Pin,Delete,Timeout,Ban", modBtns.join(","));
+check("mod actions on others' messages", modBtns.join(",") === "Reply,Delete,Timeout,Ban", modBtns.join(","));
 
 await page.tap('li[data-id="u2"] .body');
 await sleep(100);
@@ -250,39 +247,9 @@ await page.reload();
 await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length === 2, null, { timeout: 5000 });
 s = await state();
 check("reload restores tabs", s.tabs.replace("*", "") === "UwoSlab[MOD] | OtherChan", s.tabs);
-// ---- pinned messages ----
-await page.click(".tab:first-child .tab-name");
-sockets.at(-1).send(chat("999", "pin1", "PinMe", "333", "pin this Kappa", { fragments: [{ type: "text", text: "pin this " }, { type: "emote", text: "Kappa", emote: { id: "25" } }] }));
-await page.waitForSelector('li[data-id="pin1"]');
-await page.tap('li[data-id="pin1"] .body');
-await page.click('li[data-id="pin1"] .actions button:has-text("Pin")');
-const durations = await page.$$eval('li[data-id="pin1"] .actions button', (bs) => bs.map((b) => b.textContent));
-check("pin duration menu", durations.join(",") === "1m,5m,10m,30m,Until stream ends,Cancel", durations.join(","));
-await page.click('li[data-id="pin1"] .actions button:has-text("5m")');
-await page.waitForSelector("#pinned:not([hidden])", { timeout: 3000 });
-const pinMod = log.mods.at(-1);
-check("pin API call with duration", pinMod.action === "pin" && pinMod.message_id === "pin1" && pinMod.duration === 300 && pinMod.broadcaster_id === "999", JSON.stringify(pinMod));
-const pinText = await page.textContent("#pinned");
-check("pinned banner shows sender, text, who pinned, time left", /Pinned by testuser · 5 min left/.test(pinText) && pinText.includes("PinMe: pin this") && !!(await page.$('#pinned img[alt="Kappa"]')), pinText);
-check("pinned message flagged in chat", await page.$eval('li[data-id="pin1"]', (l) => l.classList.contains("pinned-msg")));
-await page.screenshot({ path: dir + "/t6-pin.png" });
-await page.click("#pinned .dismiss");
-check("dismiss hides banner", await page.$eval("#pinned", (b) => b.hidden));
-await page.reload();
-await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length === 2, null, { timeout: 5000 });
-await sleep(400);
-check("dismissed pin stays hidden after reload", await page.$eval("#pinned", (b) => b.hidden));
-// a different pin shows up again
-pinState = { ...pinState, message_id: "pin2", starts_at: new Date(Date.now() + 1000).toISOString(), ends_at: null, message: { text: "new pin", fragments: [{ type: "text", text: "new pin" }] } };
-await page.click(".tab:nth-child(2) .tab-name"); await page.click(".tab:first-child .tab-name");
-await page.waitForSelector("#pinned:not([hidden])", { timeout: 3000 });
-check("new pin appears despite earlier dismiss", (await page.textContent("#pinned")).includes("new pin") && !(await page.textContent("#pinned")).includes("min left"));
-await page.click('#pinned button:has-text("Unpin")');
-await page.waitForFunction(() => document.getElementById("pinned").hidden, null, { timeout: 3000 });
-check("unpin from banner", log.mods.at(-1).action === "unpin" && log.mods.at(-1).message_id === "pin2");
-await page.click(".tab:nth-child(2) .tab-name");
-await sleep(200);
-check("non-mod tab: no pin fetch, no Pin button", !log.pinGets.includes("888") && (await page.$$(".messages:not([hidden]) .actions button:has-text('Pin')")).length === 0, JSON.stringify(log.pinGets));
+
+// Pinned messages were removed: no Pin action, no polling.
+check("no pinned-message requests", log.pinGets.length === 0, JSON.stringify(log.pinGets));
 
 // ---- color cycling: per message ----
 const hdr = await page.evaluate(() => { const h = document.querySelector("header"); const open = h.querySelector("form button").getBoundingClientRect(), gear = document.getElementById("settings-btn").getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), sameRow: Math.abs(open.top - gear.top) < 8 && gear.left > open.right, swatchInHeader: !!h.querySelector(".swatch") }; });

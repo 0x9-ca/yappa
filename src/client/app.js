@@ -38,7 +38,7 @@ let sending = false;
   try {
     const data = JSON.parse(decodeURIComponent(m[1]));
     if (safeGet("settings") == null && safeGet("tabs") == null) {
-      for (const k of ["settings", "tabs", "lastChannel", "recentEmotes", "dismissedPins"]) {
+      for (const k of ["settings", "tabs", "lastChannel", "recentEmotes"]) {
         if (typeof data[k] === "string" && data[k].length < 100000) safeSet(k, data[k]);
       }
     }
@@ -189,7 +189,7 @@ function openTab(name, focus = true) {
     tab = {
       login: name, broadcaster: null, isMod: null, subIds: [], badges: {}, ext: new Map(), cheermotes: null,
       twitchEmotes: null, unread: 0, mentioned: false, joined: false, chatters: new Map(), loadedExtras: false,
-      seen: new Set(), lastTs: 0, pin: null,
+      seen: new Set(), lastTs: 0,
       list: el("ul", "messages"), tabEl: null,
     };
     tab.list.hidden = true;
@@ -269,12 +269,10 @@ function activate(tab) {
   history.replaceState(null, "", "#" + tab.login);
   saveTabs();
   updateComposer();
-  renderPin();
   renderInfo();
   renderVideo();
   show("modes-panel", false);
   applyFilter();
-  if (tab.isMod && tab.joined) refreshPin(tab);
   if (!$("picker").hidden) renderPicker();
 }
 
@@ -288,7 +286,7 @@ function closeTab(tab, opts = {}) {
     active = null;
     const next = tabs.values().next().value;
     if (next) activate(next);
-    else { history.replaceState(null, "", "/"); updateComposer(); renderPin(); renderInfo(); renderVideo(); }
+    else { history.replaceState(null, "", "/"); updateComposer(); renderInfo(); renderVideo(); }
   }
   if (!opts.keepSaved) saveTabs();
   ircPart(tab.login);
@@ -477,7 +475,6 @@ async function subscribeTab(tab) {
     (r.isMod && !rejoin ? " You're a moderator here" + (r.automod ? "; AutoMod queue is on." : ".") : ""));
   if (tab === active) { updateComposer(); renderInfo(); }
   refreshStreamsSoon();
-  if (tab.isMod) refreshPin(tab);
   if (!tab.loadedExtras) {
     tab.loadedExtras = true;
     await loadTabExtras(tab);
@@ -1031,12 +1028,6 @@ function renderMessage(tab, ev, opts = {}) {
 
   const actions = el("div", "actions");
   actions.appendChild(actionButton("Reply", () => setReply({ id: ev.message_id, user: ev.chatter_user_name, text: ev.message.text })));
-  if (tab.isMod && ev.message_id && !opts.historical) {
-    const pinBtn = el("button", null, "Pin");
-    pinBtn.type = "button";
-    pinBtn.addEventListener("click", (e) => { e.stopPropagation(); showPinDurations(tab, li, actions, ev.message_id); });
-    actions.appendChild(pinBtn);
-  }
   const target = !mine && tab.broadcaster && ev.chatter_user_id !== tab.broadcaster.id;
   if (tab.isMod && target) {
     actions.appendChild(actionButton("Delete", () => modAction(tab, { action: "delete", message_id: ev.message_id })));
@@ -1050,7 +1041,6 @@ function renderMessage(tab, ev, opts = {}) {
   li.appendChild(actions);
   if (!li.classList.contains("ignored")) attachClipCards(tab, li, body);
   if (ev.first || ev.message_type === "user_intro" || firstMsgIds.has(ev.message_id)) addFlag(li, "first", "First-time chatter");
-  if (tab.pin && tab.pin.message_id === ev.message_id) addFlag(li, "pinned-msg", "Pinned");
 
   if (opts.before) {
     insertBefore(tab, li, opts.before);
@@ -1175,114 +1165,6 @@ async function modAction(tab, req) {
   sysLine(tab, r.ok ? r.message : "Mod action failed: " + r.error, r.ok ? "ok" : "err");
 }
 
-// ---------- pinned messages (moderators only: Twitch has no public read API) ----------
-
-const PIN_DURATIONS = [["1m", 60], ["5m", 300], ["10m", 600], ["30m", 1800], ["Until stream ends", 0]];
-const PIN_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 3a1 1 0 0 1 .7 1.7L15 6.4V10l2.6 2.6A1 1 0 0 1 17 14.3h-4V21l-1 1-1-1v-6.7H7a1 1 0 0 1-.7-1.7L9 10V6.4L7.3 4.7A1 1 0 0 1 8 3z"/></svg>';
-
-function showPinDurations(tab, li, actions, messageId) {
-  const saved = [...actions.childNodes];
-  actions.classList.add("durations");
-  actions.replaceChildren(el("span", "sys", "Pin for"));
-  actions.firstChild.style.padding = "3px 6px";
-  for (const [label, secs] of PIN_DURATIONS) {
-    actions.appendChild(actionButton(label, async () => {
-      restore();
-      await modAction(tab, { action: "pin", message_id: messageId, ...(secs ? { duration: secs } : {}) });
-      refreshPin(tab);
-    }));
-  }
-  actions.appendChild(actionButton("Cancel", restore));
-  li.classList.add("selected");
-  function restore() {
-    actions.classList.remove("durations");
-    actions.replaceChildren(...saved);
-  }
-}
-
-function dismissedPins() {
-  try { return new Set(JSON.parse(safeGet("dismissedPins") || "[]")); } catch { return new Set(); }
-}
-
-function pinKey(pin) { return pin.message_id + "@" + pin.starts_at; }
-
-async function refreshPin(tab) {
-  if (!tab || !tab.isMod || !tab.broadcaster) return;
-  const r = await api("/api/chat/pin?broadcaster_id=" + encodeURIComponent(tab.broadcaster.id));
-  if (!r.ok) return;
-  const prev = tab.pin;
-  tab.pin = r.pin;
-  if (prev && (!r.pin || prev.message_id !== r.pin.message_id)) {
-    const old = tab.list.querySelector('.msg[data-id="' + CSS.escape(prev.message_id) + '"]');
-    if (old) removeFlag(old, "pinned-msg");
-  }
-  if (r.pin) {
-    const li = tab.list.querySelector('.msg[data-id="' + CSS.escape(r.pin.message_id) + '"]');
-    if (li) addFlag(li, "pinned-msg", "Pinned");
-  }
-  if (tab === active) renderPin();
-}
-
-function renderPin() {
-  const box = $("pinned");
-  const tab = active;
-  const pin = tab && tab.pin;
-  const expired = pin && pin.ends_at && Date.parse(pin.ends_at) <= Date.now();
-  if (!pin || expired || dismissedPins().has(pinKey(pin))) { box.hidden = true; return; }
-
-  const head = el("div", "pin-head");
-  head.insertAdjacentHTML("beforeend", PIN_ICON);
-  let who = "Pinned by " + pin.pinned_by_user_name;
-  if (pin.ends_at) {
-    const mins = Math.max(1, Math.round((Date.parse(pin.ends_at) - Date.now()) / 60000));
-    who += " · " + mins + " min left";
-  }
-  head.appendChild(el("span", "who", who));
-  if (tab.isMod) {
-    head.appendChild(actionButton("Unpin", async () => {
-      await modAction(tab, { action: "unpin", message_id: pin.message_id });
-      refreshPin(tab);
-    }));
-    head.lastChild.className = "ghost";
-  }
-  const dismiss = el("button", "dismiss", "×");
-  dismiss.type = "button";
-  dismiss.title = "Hide this pinned message (just for you)";
-  dismiss.setAttribute("aria-label", dismiss.title);
-  dismiss.addEventListener("click", () => {
-    const set = dismissedPins();
-    set.add(pinKey(pin));
-    safeSet("dismissedPins", JSON.stringify([...set].slice(-200)));
-    renderPin();
-  });
-  head.appendChild(dismiss);
-
-  const body = el("div", "pin-body");
-  // Use the sender's color if their message is on screen; pins don't include it.
-  const shown = tab.list.querySelector('.msg[data-id="' + CSS.escape(pin.message_id) + '"] .name');
-  const name = el("span", "name", pin.sender_user_name);
-  name.style.color = shown ? shown.style.color : userColor({ chatter_user_id: pin.sender_user_id });
-  body.append(name, document.createTextNode(": "));
-  renderFragments(tab, body, pin.message.fragments, false);
-  body.addEventListener("click", () => box.classList.toggle("expanded"));
-
-  box.classList.remove("expanded");
-  box.replaceChildren(head, body);
-  box.hidden = false;
-}
-
-// No EventSub event exists for pins, so poll the visible tab when we moderate it.
-setInterval(() => {
-  if (!document.hidden && active && active.isMod && active.joined) refreshPin(active);
-  else if (active) renderPin(); // keeps "min left" and expiry current
-}, 15000);
-
-function removeFlag(li, kind) {
-  li.classList.remove(kind);
-  const f = li.querySelector(".flag." + kind);
-  if (f) (f.parentElement.children.length === 1 ? f.parentElement : f).remove();
-}
-
 function parseDuration(s) {
   const m = /^(\d+)([smhdw]?)$/i.exec(s || "");
   if (!m) return null;
@@ -1312,15 +1194,11 @@ function runCommand(tab, text) {
       modAction(tab, { action: "timeout", login: user, duration, reason: rest.join(" ") });
       return true;
     }
-    case "unpin":
-      if (!tab.pin) sysLine(tab, "Nothing is pinned.", "err");
-      else modAction(tab, { action: "unpin", message_id: tab.pin.message_id }).then(() => refreshPin(tab));
-      return true;
     case "clear":
       if (confirm("Clear all of #" + tab.broadcaster.name + "'s chat?")) modAction(tab, { action: "clear" });
       return true;
     case "help":
-      sysLine(tab, "Commands: /ban <user> [reason] · /unban <user> · /timeout <user> [10m] [reason] · /untimeout <user> · /unpin · /clear");
+      sysLine(tab, "Commands: /ban <user> [reason] · /unban <user> · /timeout <user> [10m] [reason] · /untimeout <user> · /clear");
       return true;
     default:
       sysLine(tab, "Unknown command /" + cmd + ". Try /help.", "err");
@@ -2492,6 +2370,7 @@ if (vv) {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 applySettings();
+try { localStorage.removeItem("dismissedPins"); } catch {} // left over from the removed pinned-message feature
 loadExtGlobal();
 refreshStatus();
 // Everything that changes the status from here refreshes it (sending, the cycle toggle,

@@ -42,7 +42,6 @@ Tokens never reach the browser.
 - **The message box is `contenteditable`** (so finished emote names render as images). Always go through the `composer` API (`getText`, `setText(text, caret)`, `caret`, `focus`, `setEnabled`); never `.value`.
 - **Layout runs on phones first.** The document never scrolls (only message lists do), and the app is sized to `visualViewport` via `--app-height`. Percent heights inside the footer resolve against the footer; use `--app-height`.
 - **Twitch API limits:**
-  - Pinned messages are moderator-only, with no EventSub event, so the client polls.
   - Hex chat colors need Turbo/Prime, and chat color is account-wide.
   - The embed iframe doesn't allow picture-in-picture by default; the client patches `allow` when creating the player.
   - `channel.raid` fires only once a raid completes.

@@ -15,15 +15,12 @@ import {
   updateChatSettings,
   getUser,
   getModeratedChannelIds,
-  getPinnedMessage,
   getUserEmotes,
   refreshToken,
   revokeToken,
-  pinMessage,
   sendChatMessage,
   setChatColor,
   unbanUser,
-  unpinMessage,
   validateToken,
 } from "./twitch";
 
@@ -234,7 +231,7 @@ export class ColorLoop extends DurableObject<Env> {
   /** Moderator actions. Target users can be given by id or login. */
   async chatMod(
     broadcasterId: string,
-    action: "delete" | "clear" | "ban" | "timeout" | "unban" | "pin" | "unpin",
+    action: "delete" | "clear" | "ban" | "timeout" | "unban",
     target: { userId?: string; login?: string; messageId?: string; duration?: number; reason?: string },
   ): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
     try {
@@ -243,19 +240,6 @@ export class ColorLoop extends DurableObject<Env> {
           if (!target.messageId) return { ok: false as const, error: "Missing message." };
           await deleteChatMessages(this.env, t.accessToken, broadcasterId, t.userId, target.messageId);
           return { ok: true as const, message: "Message deleted." };
-        }
-        if (action === "pin" || action === "unpin") {
-          if (!target.messageId) return { ok: false as const, error: "Missing message." };
-          if (action === "unpin") {
-            await unpinMessage(this.env, t.accessToken, broadcasterId, t.userId, target.messageId);
-            return { ok: true as const, message: "Message unpinned." };
-          }
-          const duration = target.duration ? Math.round(Math.min(1800, Math.max(30, target.duration))) : undefined;
-          await pinMessage(this.env, t.accessToken, broadcasterId, t.userId, target.messageId, duration);
-          return {
-            ok: true as const,
-            message: duration ? `Message pinned for ${Math.round(duration / 60)} min.` : "Message pinned until the stream ends.",
-          };
         }
         if (action === "clear") {
           await deleteChatMessages(this.env, t.accessToken, broadcasterId, t.userId);
@@ -325,16 +309,6 @@ export class ColorLoop extends DurableObject<Env> {
         emotes.push({ id: e.id, name: e.name, group, animated: e.format.includes("animated") });
       }
       return { ok: true, emotes };
-    } catch (err) {
-      return { ok: false, error: (err as Error).message };
-    }
-  }
-
-  /** The pinned message in a channel the user moderates. */
-  async chatPinned(broadcasterId: string): Promise<{ ok: true; pin: unknown } | { ok: false; error: string }> {
-    try {
-      const pin = await this.withToken((t) => getPinnedMessage(this.env, t.accessToken, broadcasterId, t.userId));
-      return { ok: true, pin };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }

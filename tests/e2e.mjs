@@ -511,11 +511,11 @@ const src = await page.getAttribute("#video iframe", "src");
 check("player for the live tab, with parent=", src.includes("channel=uwoslab") && src.includes("parent=yappa.test"), src);
 await page.screenshot({ path: dir + "/t11-video-phone.png" });
 const vbox = await page.$eval("#video", (v) => { const r = v.getBoundingClientRect(); return { w: r.width, h: r.height }; });
-check("phone: video full width and at least 300px tall (Twitch's embed minimum)", vbox.w >= 388 && vbox.h >= 300 && vbox.h <= 760 * 0.45, JSON.stringify(vbox));
+check("phone: video full width and exactly 16:9, so no letterbox bars", vbox.w >= 388 && Math.abs(vbox.w / vbox.h - 16 / 9) < 0.02, JSON.stringify(vbox));
 await page.setViewportSize({ width: 430, height: 932 });
 await sleep(200);
 const vbig = await page.$eval("#video iframe", (v) => { const r = v.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
-check("430px-wide phone: player meets 400×300", vbig.w >= 400 && vbig.h >= 300, JSON.stringify(vbig));
+check("430px-wide phone: the player fills a 16:9 box too", vbig.w >= 400 && Math.abs(vbig.w / vbig.h - 16 / 9) < 0.02, JSON.stringify(vbig));
 await page.setViewportSize({ width: 390, height: 760 });
 await sleep(200);
 await page.click(".tab:nth-child(2) .tab-name");
@@ -641,7 +641,7 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.evaluate(() => setPlayer("embed"));
   await page.waitForSelector("#video iframe", { timeout: 5000 });
   check("Back to Twitch's player", await page.evaluate(() => !document.querySelector("#video video") && JSON.parse(localStorage.getItem("settings")).player === "embed"));
-  check("Embed keeps its 300px minimum height", (await page.$eval("#video", (v) => Math.round(v.getBoundingClientRect().height))) >= 300);
+  check("Embed is the same plain 16:9 as native", await page.$eval("#video", (v) => { const r = v.getBoundingClientRect(); return Math.abs(r.width / r.height - 16 / 9) < 0.02; }));
   await page.evaluate(() => { tabs.get("otherchan").stream = null; });
   // The real hls.js must load under the page's CSP (script-src 'self', no eval, no blob: workers).
   const real = await page.evaluate(() => new Promise((resolve) => {

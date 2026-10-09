@@ -191,6 +191,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
     case "POST /api/cycle/bump":
       return json({ ok: true, cycle: await stub.cycleBump() });
 
+    case "GET /api/chat/clip": {
+      const id = url.searchParams.get("id") ?? "";
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(id)) return json({ ok: false, error: "Bad clip id." }, 400);
+      const result = await stub.clip(id);
+      return json(result, result.ok ? 200 : 502);
+    }
+
     case "GET /api/chat/pin": {
       const id = url.searchParams.get("broadcaster_id");
       if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);

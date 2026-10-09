@@ -28,7 +28,7 @@ await page.addInitScript(() => {
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 page.on("dialog", (d) => d.accept());
 page.on("response", (r) => { if (r.status() === 404) errors.push("404 " + r.url()); });
-const log = { subs: [], unsubs: [], mods: [], sent: [], cycle: [], pinGets: [], settings: [], automod: [], bumps: 0, player: [] };
+const log = { subs: [], unsubs: [], mods: [], sent: [], cycle: [], pinGets: [], settings: [], automod: [], bumps: 0, player: [], clips: [] };
 const chatSettings = { slow_mode: true, slow_mode_wait_time: 10, follower_mode: false, follower_mode_duration: null, subscriber_mode: false, emote_mode: false, unique_chat_mode: false };
 let pinState = null;
 let sendCounter = 0;
@@ -52,6 +52,11 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/api/chat/user") return j({ ok: true, user: { id: u.searchParams.get("user_id"), login: "spammer", display_name: "Spammer", description: "I sell followers", profile_image_url: "https://img.test/a.png", broadcaster_type: "", created_at: "2020-01-02T00:00:00Z" }, followedAt: "2024-05-06T00:00:00Z" });
     if (u.pathname === "/api/chat/automod") { log.automod.push(body()); return j({ ok: true }); }
     if (u.pathname === "/api/chat/cheermotes") return j([{ prefix: "Cheer", tiers: [{ min_bits: 1, color: "#979797", images: { dark: { animated: { "2": "https://img.test/cheer1.gif" } } } }, { min_bits: 100, color: "#9c3ee8", images: { dark: { animated: { "2": "https://img.test/cheer100.gif" } } } }] }]);
+    if (u.pathname === "/api/chat/clip") {
+      const id = u.searchParams.get("id"); log.clips.push(id);
+      if (id === "MissingClip") return j({ ok: true, clip: null });
+      return j({ ok: true, clip: { id, url: "https://clips.twitch.tv/" + id, title: id === "SecondSlug" ? "Second clip" : "An incredible play nobody saw coming and a very long title that wraps", broadcaster: "UwoSlab", creator: "Clipper", views: 12345, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting" } });
+    }
     if (u.pathname === "/api/cycle/bump") { log.bumps++; return j({ ok: true, cycle }); }
     if (u.pathname === "/api/chat/unsubscribe") { log.unsubs.push(...body().ids); return j({ ok: true }); }
     if (u.pathname === "/api/chat/mod") {
@@ -559,6 +564,38 @@ await page.click('#picker-list button[data-name="uwoHype"]');
 check("picker inserts an image", await page.evaluate(() => !!document.querySelector('#message img[data-name="uwoHype"]') && composer.getText() === "uwoHype "));
 await page.keyboard.press("Escape");
 await page.evaluate(() => composer.setText(""));
+
+// =============== links + clip cards ===============
+await page.click(".tab:first-child .tab-name");
+cur().send(chat("999", "lnk1", "Linker", "801", "see https://example.com/page?x=1). and twitch.tv/foo, but hi.there ok.so stays text"));
+await page.waitForSelector('li[data-id="lnk1"]');
+const links = await page.$$eval('li[data-id="lnk1"] a.link', (as) => as.map((a) => [a.textContent, a.href, a.target, a.rel]));
+check("links: full URL + bare domain, trailing punctuation excluded, plain words untouched",
+  JSON.stringify(links.map((l) => l.slice(0, 2))) === '[["https://example.com/page?x=1","https://example.com/page?x=1"],["twitch.tv/foo","https://twitch.tv/foo"]]' &&
+  links.every((l) => l[2] === "_blank" && l[3].includes("noopener")) &&
+  (await page.textContent('li[data-id="lnk1"] .body')).includes("x=1). and twitch.tv/foo, but hi.there ok.so"), JSON.stringify(links));
+const selectedAfterLinkClick = await page.evaluate(() => {
+  const a = document.querySelector('li[data-id="lnk1"] a.link');
+  addEventListener("click", (e) => e.preventDefault(), { once: true }); // don't actually navigate in the test
+  a.click();
+  return a.closest(".msg").classList.contains("selected");
+});
+check("clicking a link doesn't select the message", !selectedAfterLinkClick);
+cur().send(chat("999", "clip1", "Clipper", "802", "lol https://clips.twitch.tv/FunnyClipSlug-AbC123 and https://www.twitch.tv/uwoslab/clip/SecondSlug?filter=clips"));
+cur().send(chat("999", "clip2", "Again", "803", "reposting clips.twitch.tv/FunnyClipSlug-AbC123"));
+cur().send(chat("999", "clip3", "Nope", "804", "https://clips.twitch.tv/MissingClip"));
+await page.waitForFunction(() => document.querySelectorAll('li[data-id="clip1"] .clip-card').length === 2, null, { timeout: 3000 });
+const cards = await page.$$eval('li[data-id="clip1"] .clip-card', (cs) => cs.map((c) => ({ href: c.href, target: c.target, text: c.textContent, img: c.querySelector("img").src })));
+check("clip cards: both URL styles, thumbnail + duration + metadata",
+  cards[0].href === "https://clips.twitch.tv/FunnyClipSlug-AbC123" && cards[0].target === "_blank" && cards[0].img.endsWith("clip-FunnyClipSlug-AbC123.jpg") &&
+  cards[0].text.includes("0:27") && cards[0].text.includes("UwoSlab · Just Chatting") && cards[0].text.includes("Clipped by Clipper · 12.3k views · 3d ago") &&
+  cards[1].text.includes("Second clip"), JSON.stringify(cards));
+await sleep(200);
+check("repeated clip fetched once; missing clip shows no card",
+  log.clips.filter((x) => x === "FunnyClipSlug-AbC123").length === 1 && (await page.$$('li[data-id="clip2"] .clip-card')).length === 1 && (await page.$$('li[data-id="clip3"] .clip-card')).length === 0,
+  JSON.stringify(log.clips));
+await page.evaluate(() => document.querySelector('li[data-id="clip1"]').scrollIntoView());
+await page.screenshot({ path: dir + "/t16-clips.png" });
 
 // =============== raids ===============
 const raid = (fromId, fromName, to, viewers) => msg("notification", { subscription: { type: "channel.raid" }, event: { from_broadcaster_user_id: fromId, from_broadcaster_user_login: fromName.toLowerCase(), from_broadcaster_user_name: fromName, to_broadcaster_user_id: ids[to] || "1", to_broadcaster_user_login: to, to_broadcaster_user_name: to === "targetchan" ? "TargetChan" : to, viewers } });

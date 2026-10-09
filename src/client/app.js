@@ -799,9 +799,109 @@ function appendText(tab, parent, text, hasBits) {
       if (m && cheerFor(tab, m[1], Number(m[2]))) { appendCheer(tab, parent, m[1], Number(m[2]), part); continue; }
     }
     const e = /\s/.test(part) ? null : findExt(tab, part);
+    const link = !e && !/\s/.test(part) ? parseLink(part) : null;
+    if (link) {
+      appendLink(parent, link);
+      continue;
+    }
     if (e) appendEmote(parent, emoteImg(e.url, part, e.source), e.zeroWidth);
     else if (parent.lastChild && parent.lastChild.nodeType === 3) parent.lastChild.textContent += part;
     else parent.appendChild(document.createTextNode(part));
+  }
+}
+
+// ---------- links + Twitch clip cards ----------
+
+// A full http(s) URL, or a bare domain like twitch.tv/foo (as Twitch's own chat links them).
+const LINK_RE = /^(?:https?:\/\/\S+|(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?::\d+)?(?:[/?#]\S*)?)$/i;
+
+// Bare domains only link with a real, common TLD, so chat like "hi.there" stays text.
+const BARE_TLDS = new Set(("com net org io gg tv me co uk us ca de fr nl eu au nz jp kr ru br it es se no fi pl ch at be dk ie in " +
+  "app dev xyz info ly gl to fm sh ai live link gov edu club online site store shop news wiki art page blog games stream").split(" "));
+
+function parseLink(word) {
+  // Leave trailing punctuation out of the link, and a ")" unless the URL opened one.
+  let core = word, trail = "";
+  while (/[.,!?:;'"\])]$/.test(core)) {
+    const ch = core.slice(-1);
+    if (ch === ")" && (core.match(/\(/g) || []).length >= (core.match(/\)/g) || []).length) break;
+    trail = ch + trail;
+    core = core.slice(0, -1);
+  }
+  if (!core || !LINK_RE.test(core)) return null;
+  try {
+    const bare = !/^https?:\/\//i.test(core);
+    const u = new URL(bare ? "https://" + core : core);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (bare && !BARE_TLDS.has(u.hostname.split(".").pop().toLowerCase())) return null;
+    return { href: u.href, text: core, trail };
+  } catch { return null; }
+}
+
+function appendLink(parent, link) {
+  const a = el("a", "link", link.text);
+  a.href = link.href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer nofollow";
+  parent.appendChild(a);
+  if (link.trail) parent.appendChild(document.createTextNode(link.trail));
+}
+
+/** Clip slug from clips.twitch.tv/<slug> or twitch.tv/<channel>/clip/<slug>, else null. */
+function clipIdFrom(href) {
+  let u;
+  try { u = new URL(href); } catch { return null; }
+  const host = u.hostname.toLowerCase();
+  const parts = u.pathname.split("/").filter(Boolean);
+  let id = null;
+  if (host === "clips.twitch.tv") id = parts[0] === "embed" ? u.searchParams.get("clip") : parts[0];
+  else if (/^(www\.|m\.)?twitch\.tv$/.test(host) && parts[1] === "clip") id = parts[2];
+  return id && /^[A-Za-z0-9_-]{1,100}$/.test(id) ? id : null;
+}
+
+const clipCache = new Map(); // id -> Promise<clip | null>
+function fetchClip(id) {
+  if (!clipCache.has(id)) {
+    clipCache.set(id, api("/api/chat/clip?id=" + encodeURIComponent(id)).then((r) => {
+      if (!r.ok) clipCache.delete(id); // retry later if it was an error, not a missing clip
+      return r.ok ? r.clip : null;
+    }));
+  }
+  return clipCache.get(id);
+}
+
+function fmtDuration(secs) {
+  const s = Math.round(secs);
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+/** Adds a thumbnail + metadata card under a message for each Twitch clip it links (max 2). */
+function attachClipCards(tab, li, body) {
+  const ids = [...new Set([...body.querySelectorAll("a.link")].map((a) => clipIdFrom(a.href)).filter(Boolean))].slice(0, 2);
+  for (const id of ids) {
+    fetchClip(id).then((clip) => {
+      if (!clip || !li.isConnected) return;
+      const stick = tab === active && nearBottom(tab);
+      const card = el("a", "clip-card");
+      card.href = clip.url;
+      card.target = "_blank";
+      card.rel = "noopener noreferrer";
+      const thumb = el("span", "thumb");
+      const img = document.createElement("img");
+      img.src = clip.thumbnail;
+      img.alt = "";
+      img.loading = "lazy";
+      thumb.append(img, el("span", "dur", fmtDuration(clip.duration)));
+      const meta = el("span", "clip-meta");
+      meta.append(
+        el("span", "clip-title", clip.title),
+        el("span", null, clip.broadcaster + (clip.game ? " · " + clip.game : "")),
+        el("span", null, "Clipped by " + clip.creator + " · " + compactCount(clip.views) + " views · " + since(clip.createdAt) + " ago"),
+      );
+      card.append(thumb, meta);
+      li.insertBefore(card, li.querySelector(".actions"));
+      if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+    });
   }
 }
 
@@ -911,6 +1011,7 @@ function renderMessage(tab, ev, opts = {}) {
     }, true));
   }
   li.appendChild(actions);
+  if (!li.classList.contains("ignored")) attachClipCards(tab, li, body);
   if (ev.first || ev.message_type === "user_intro" || firstMsgIds.has(ev.message_id)) addFlag(li, "first", "First-time chatter");
   if (tab.pin && tab.pin.message_id === ev.message_id) addFlag(li, "pinned-msg", "Pinned");
 
@@ -972,6 +1073,7 @@ function handleEvent(type, ev, ts) {
 
 // Touch devices have no hover, so tapping a message toggles its action bar.
 $("chat").addEventListener("click", (e) => {
+  if (e.target.closest("a")) return; // links open in a new tab; don't also select the message
   const li = e.target.closest(".msg");
   const wasSelected = li && li.classList.contains("selected");
   document.querySelectorAll(".msg.selected").forEach((n) => n.classList.remove("selected"));

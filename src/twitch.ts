@@ -510,3 +510,28 @@ export async function getCheermotes(env: Env, accessToken: string, broadcasterId
   const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Cheermotes");
   return ((await res.json()) as { data: Cheermote[] }).data;
 }
+
+export interface Clip {
+  id: string;
+  url: string;
+  broadcaster_name: string;
+  creator_name: string;
+  title: string;
+  view_count: number;
+  created_at: string;
+  thumbnail_url: string;
+  duration: number;
+  game_id: string;
+}
+
+export async function getClip(env: Env, accessToken: string, id: string): Promise<Clip | null> {
+  const url = `${API_BASE}/clips?id=${encodeURIComponent(id)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Clips");
+  return ((await res.json()) as { data: Clip[] }).data[0] ?? null;
+}
+
+export async function getGameName(env: Env, accessToken: string, id: string): Promise<string | null> {
+  const url = `${API_BASE}/games?id=${encodeURIComponent(id)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Games");
+  return ((await res.json()) as { data: { name: string }[] }).data[0]?.name ?? null;
+}

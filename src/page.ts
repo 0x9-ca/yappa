@@ -119,6 +119,17 @@ export function renderPage(user: string): string {
     <div id="sheet-body"></div>
   </div>
 </div>
+<!-- Twitch's chat embed (experimental). Closing only hides it: the iframes stay loaded so you
+     stay signed in, since reloading one repeats Twitch's sign-in and storage-permission steps. -->
+<div class="sheet-backdrop" id="embed-modal" hidden>
+  <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="embed-title">
+    <button class="icon-btn sheet-close" id="embed-close" type="button" aria-label="Minimize" title="Minimize (keeps you signed in)">×</button>
+    <h2 id="embed-title"></h2>
+    <div id="embed-frames"></div>
+    <div class="hint" id="embed-note"></div>
+    <div class="row embed-actions"><button class="ghost small" id="embed-reload" type="button">Reload</button><button class="small" id="embed-go" type="button"></button></div>
+  </div>
+</div>
 <!-- Parked here while Settings is closed; the settings sheet shows it. -->
 <div hidden id="stash">
   <div class="cycler" id="cycler" title="Your current chat color">

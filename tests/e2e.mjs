@@ -699,7 +699,7 @@ await page.setViewportSize({ width: 390, height: 760 });
   // Default: the gem button still hands off to Twitch.
   await page.evaluate(() => { launchers.app = (u) => __calls.push(["app", u]); });
   await page.tap("#twitch-btn");
-  check("default: gem button does not open the embed", !(await page.$("#sheet .chat-embed")) && (await page.evaluate(() => __calls.length)) === 1);
+  check("default: gem button does not open the embed", await page.$eval("#embed-modal", (m) => m.hidden) && (await page.evaluate(() => __calls.length)) === 1);
   await sleep(400); // let that tap's website-fallback timer run out
   await page.evaluate(() => { __calls.length = 0; });
   await page.click("#settings-btn");
@@ -708,23 +708,49 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.click("#sheet-close");
   check("saved", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).bitsButton === "embed");
   await page.tap("#twitch-btn");
-  await page.waitForSelector("#sheet .chat-embed");
-  const emb = await page.evaluate(() => { const f = document.querySelector("#sheet .chat-embed"); const r = f.getBoundingClientRect(); return { src: f.src, h: Math.round(r.height), w: Math.round(r.width), title: document.querySelector("#sheet h2").textContent }; });
+  await page.waitForSelector("#embed-modal:not([hidden]) .chat-embed:not([hidden])");
+  const emb = await page.evaluate(() => { const f = document.querySelector("#embed-modal .chat-embed:not([hidden])"); const r = f.getBoundingClientRect(); return { src: f.src, h: Math.round(r.height), w: Math.round(r.width), title: document.getElementById("embed-title").textContent }; });
   check("embed window: Twitch's official chat embed, parent= this site, dark", emb.src === "https://www.twitch.tv/embed/uwoslab/chat?parent=yappa.test&darkpopout" && emb.title === "Twitch chat: UwoSlab", JSON.stringify(emb));
   check("embed window is big enough to use on a phone", emb.h >= 300 && emb.w >= 330, JSON.stringify(emb));
   await sleep(300);
   check("the embed page actually loaded", log.chatEmbeds.includes("/embed/uwoslab/chat?parent=yappa.test&darkpopout"), JSON.stringify(log.chatEmbeds));
   await page.screenshot({ path: dir + "/t27-chat-embed.png" });
   check("light theme: no darkpopout", await page.evaluate(() => { document.documentElement.dataset.theme = "light"; const u = chatEmbedUrl("x"); document.documentElement.dataset.theme = "dark"; return u === "https://www.twitch.tv/embed/x/chat?parent=yappa.test"; }));
-  // Escape hatch to the real thing, and closing removes the iframe.
-  await page.tap('#sheet button:has-text("Open the app")');
-  check("'Open the app' closes the window and hands off to Twitch", !(await page.$("#sheet .chat-embed")) && JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]', JSON.stringify(await page.evaluate(() => __calls)));
+
+  // Minimizing keeps the same loaded iframe, so Twitch's sign-in and storage grant survive.
+  await page.evaluate(() => { document.querySelector("#embed-modal .chat-embed").__marker = "loaded-once"; });
+  const loadsBefore = (await page.evaluate(() => 0)) + log.chatEmbeds.length;
+  await page.click("#embed-close");
+  check("× minimizes: window hidden, iframe still in the page", await page.$eval("#embed-modal", (m) => m.hidden) && (await page.$$("#embed-frames iframe")).length === 1);
   await page.tap("#twitch-btn");
-  await page.waitForSelector("#sheet .chat-embed");
-  await page.click("#sheet-close");
-  check("closing removes the embed (and the wide layout)", !(await page.$("#sheet .chat-embed")) && await page.evaluate(() => !document.getElementById("sheet").classList.contains("wide")));
-  await sleep(400); // the pending website-fallback timer from the escape hatch
-  await page.evaluate(() => { settings.bitsButton = "twitch"; saveSettings(); __calls.length = 0; });
+  await page.waitForSelector("#embed-modal:not([hidden])");
+  await sleep(300);
+  check("reopening shows the same loaded iframe (no reload)", await page.evaluate(() => document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker === "loaded-once") && log.chatEmbeds.length === loadsBefore, String(log.chatEmbeds.length - loadsBefore));
+  await page.keyboard.press("Escape");
+  check("Escape also just minimizes", await page.$eval("#embed-modal", (m) => m.hidden) && (await page.$$("#embed-frames iframe")).length === 1);
+  // Another channel gets its own frame; the first stays loaded but hidden.
+  await page.click(".tab:nth-child(2) .tab-name");
+  await page.tap("#twitch-btn");
+  await page.waitForSelector("#embed-modal:not([hidden])");
+  const two = await page.evaluate(() => [...document.querySelectorAll("#embed-frames iframe")].map((f) => f.src.split("/embed/")[1].split("/")[0] + (f.hidden ? ":hidden" : ":shown")));
+  check("each channel keeps its own frame; only the current one is shown", JSON.stringify(two) === '["uwoslab:hidden","otherchan:shown"]', JSON.stringify(two));
+  await page.click("#embed-close");
+  // Only the last few stay loaded.
+  await page.evaluate(() => { for (const l of ["fakea", "fakeb", "fakec"]) openChatEmbed({ login: l }); hideChatEmbed(); });
+  const kept = await page.evaluate(() => [...embedFrames.keys()].join(","));
+  check("at most 3 chats stay loaded (oldest dropped)", kept === "fakea,fakeb,fakec" && (await page.$$("#embed-frames iframe")).length === 3, kept);
+  // Closing a channel's tab drops its chat; Reload recreates the current one.
+  await page.evaluate(() => { dropChatEmbed("fakea"); dropChatEmbed("fakeb"); dropChatEmbed("fakec"); openChatEmbed({ login: "uwoslab" }); });
+  await page.evaluate(() => { document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker = "old"; });
+  await page.click("#embed-reload");
+  await sleep(200);
+  check("Reload makes a fresh frame", await page.evaluate(() => document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker === undefined && embedFrames.size === 1));
+  check("Firefox gets a tracking-protection hint; Chrome doesn't", (await page.evaluate(() => chatEmbedNote("Mozilla/5.0 (Android 16; Mobile; rv:157.0) Gecko/157.0 Firefox/157.0").includes("Enhanced Tracking Protection") && !chatEmbedNote("Mozilla/5.0 Chrome/126 Mobile Safari/537.36").includes("Enhanced Tracking Protection"))));
+  // The escape hatch to the real thing.
+  await page.tap("#embed-go");
+  check("'Open the app' minimizes and hands off to Twitch", await page.$eval("#embed-modal", (m) => m.hidden) && JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]', JSON.stringify(await page.evaluate(() => __calls)));
+  await sleep(400); // the pending website-fallback timer
+  await page.evaluate(() => { for (const l of [...embedFrames.keys()]) dropChatEmbed(l); settings.bitsButton = "twitch"; saveSettings(); __calls.length = 0; });
 }
 
 // =============== Twitch player script blocked (Firefox tracking protection, ad blockers) ===============

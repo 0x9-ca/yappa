@@ -174,6 +174,8 @@ cycleBtn.addEventListener("click", async () => {
 
 async function logout() {
   for (const t of [...tabs.values()]) closeTab(t, { keepSaved: true });
+  hideChatEmbed();
+  for (const login of [...embedFrames.keys()]) dropChatEmbed(login);
   dropSocket();
   await api("/auth/logout", {});
   status = null;
@@ -311,6 +313,7 @@ function activate(tab) {
 function closeTab(tab, opts = {}) {
   if (!tabs.has(tab.login)) return;
   tabs.delete(tab.login);
+  dropChatEmbed(tab.login);
   tab.list.remove();
   tab.tabEl.wrap.remove();
   if (tab.subIds.length) api("/api/chat/unsubscribe", { ids: tab.subIds });
@@ -1797,17 +1800,48 @@ function chatEmbedUrl(login) {
   return "https://www.twitch.tv/embed/" + encodeURIComponent(login) + "/chat?" + params.toString().replace(/darkpopout=($|&)/, "darkpopout$1");
 }
 
+const embedFrames = new Map(); // channel login -> iframe, oldest first; kept loaded while minimized
+const EMBED_KEEP = 3;           // each loaded chat uses memory and a connection, so keep only a few
+
+const chatEmbedNote = (userAgent) =>
+  "Twitch's own chat embed, so Bits and channel points work here. The × only minimizes it: it stays loaded so you stay signed in." +
+  (/Firefox\//.test(userAgent) ? " Asked to sign in or allow storage every time? Turn off Enhanced Tracking Protection for this site (shield icon in the address bar)." : "");
+
 function openChatEmbed(tab) {
-  const frame = document.createElement("iframe");
-  frame.className = "chat-embed";
-  frame.title = "Twitch chat for " + tab.login;
-  frame.src = chatEmbedUrl(tab.login);
-  const row = el("div", "row");
-  const note = el("div", "hint", "Twitch's own chat embed. If Bits or channel points aren't here, or it isn't signed in, use Twitch itself.");
-  row.append(note, btn(coarse ? "Open the app" : "Open pop-out", () => { closeSheet(); openOnTwitch(tab); }, "small"));
-  openSheet(el("h2", null, "Twitch chat: " + (tab.broadcaster ? tab.broadcaster.name : tab.login)), frame, row);
-  $("sheet").classList.add("wide");
+  const login = tab.login;
+  let frame = embedFrames.get(login);
+  if (frame) {
+    embedFrames.delete(login); // move to the newest position
+  } else {
+    frame = document.createElement("iframe");
+    frame.className = "chat-embed";
+    frame.title = "Twitch chat for " + login;
+    frame.src = chatEmbedUrl(login);
+    $("embed-frames").appendChild(frame);
+  }
+  embedFrames.set(login, frame);
+  while (embedFrames.size > EMBED_KEEP) dropChatEmbed(embedFrames.keys().next().value);
+  for (const [l, f] of embedFrames) f.hidden = l !== login;
+  $("embed-title").textContent = "Twitch chat: " + (tab.broadcaster ? tab.broadcaster.name : login);
+  $("embed-note").textContent = chatEmbedNote(navigator.userAgent);
+  $("embed-go").textContent = coarse ? "Open the app" : "Open pop-out";
+  $("embed-go").onclick = () => { hideChatEmbed(); openOnTwitch(tab); };
+  $("embed-reload").onclick = () => { dropChatEmbed(login); openChatEmbed(tab); };
+  show("embed-modal", true);
 }
+
+function hideChatEmbed() { show("embed-modal", false); }
+
+/** Throws a loaded chat away (the channel's tab was closed, or it's the least recently used). */
+function dropChatEmbed(login) {
+  const frame = embedFrames.get(login);
+  if (frame) frame.remove();
+  embedFrames.delete(login);
+}
+
+$("embed-close").addEventListener("click", hideChatEmbed);
+$("embed-modal").addEventListener("click", (e) => { if (e.target === $("embed-modal")) hideChatEmbed(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("embed-modal").hidden) hideChatEmbed(); });
 $("emote-search").addEventListener("input", renderPicker);
 $("emote-search").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closePicker(); composer.focus(); }
@@ -2752,7 +2786,7 @@ function openSheet(...children) {
   $("sheet-body").replaceChildren(...children);
   show("sheet", true);
 }
-function closeSheet() { show("sheet", false); $("sheet-body").replaceChildren(); $("sheet").classList.remove("wide"); }
+function closeSheet() { show("sheet", false); $("sheet-body").replaceChildren(); }
 $("sheet-close").addEventListener("click", closeSheet);
 $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet").hidden) closeSheet(); });
@@ -3081,7 +3115,7 @@ function openSettings() {
     el("h3", null, "Bits and channel points"),
     bitsSeg,
     el("div", "hint", "What the gem button next to the emote button does. Twitch: opens twitch.tv, as the pop-out chat on computers or the Twitch app on phones. " +
-      "Chat embed (experimental): Twitch's chat in a window here; Twitch has said it may not offer Bits or channel points, and it needs your twitch.tv login to be shared with this site."),
+      "Chat embed (experimental): Twitch's chat in a window here, with Bits and channel points. It needs your twitch.tv login to be shared with this site; closing the window keeps it loaded in the background (up to 3 channels) so you stay signed in."),
     el("h3", null, "Appearance"),
     themeSeg,
     el("h3", null, "Chat text size"),

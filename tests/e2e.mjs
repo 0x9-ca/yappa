@@ -309,7 +309,7 @@ await page.click("#sheet-close");
 // ---- first-time chatters, history, deletions ----
 await page.click(".tab:first-child .tab-name");
 s = await state();
-check("history loaded above join line", s.visibleMsgs.length && (await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent)).then((t) => t.findIndex((x) => x.includes(" from history")) < t.findIndex((x) => x.includes("Joined #UwoSlab")) && t.findIndex((x) => x.includes(" from history")) > t.findIndex((x) => x.includes("via recent-messages.robotty.de")))));
+check("history loaded above join line", s.visibleMsgs.length && (await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent)).then((t) => t.findIndex((x) => x.includes(" from history")) < t.findIndex((x) => x.includes("Joined #UwoSlab")) && t.findIndex((x) => x.includes(" from history")) > t.findIndex((x) => x.includes("start of chat history")))));
 check("history emote parsed from IRC tags", await page.$eval('li[data-id="h1"]', (l) => !!l.querySelector('img[alt="Kappa"]')));
 check("first-time flag from history", await page.$eval('li[data-id="h2"]', (l) => l.classList.contains("first") && l.textContent.includes("First-time chatter")));
 check("anon IRC joined channels", ircSockets.length >= 1 && /JOIN #uwoslab/.test(ircSockets.at(-1).joined) && /NICK justinfan/.test(ircSockets.at(-1).joined), ircSockets.at(-1)?.joined);
@@ -817,7 +817,7 @@ followingMode = "ok";
   await page.waitForSelector('li[data-id="deep249"]');
   await sleep(300);
   const first = await page.evaluate(() => ({ msgs: active.list.querySelectorAll(".msg").length, divider: active.list.querySelector(".history-divider").textContent, atBottom: nearBottom(active) }));
-  check("first load: newest 100, divider invites scrolling up, scrolled to the bottom", first.msgs === 100 && first.divider.includes("scroll up for more") && first.atBottom && log.history[n0] === "deepchan?limit=100", JSON.stringify(first));
+  check("first load: newest 100, divider invites scrolling up, scrolled to the bottom", first.msgs === 100 && first.divider.includes("scroll up for older messages") && first.atBottom && log.history[n0] === "deepchan?limit=100", JSON.stringify(first));
   const anchorTop = await page.evaluate(() => { const l = active.list; l.scrollTop = 0; return null; });
   await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 200, null, { timeout: 5000 });
   await sleep(200);
@@ -838,6 +838,39 @@ followingMode = "ok";
   check("no more requests once history is exhausted", log.history.length === reqs);
   await page.screenshot({ path: dir + "/t22-history-top.png" });
   await page.evaluate(() => closeTab(tabs.get("deepchan")));
+}
+// =============== light theme ===============
+{
+  check("dark by default, applied before app.js", (await page.evaluate(() => document.documentElement.dataset.theme)) === "dark");
+  cur().send(chat("999", "yellow1", "Sunny", "702", "bright name", { color: "#FFFF00" }));
+  await page.waitForSelector('li[data-id="yellow1"]');
+  await page.click("#settings-btn");
+  await page.click('#sheet-body .seg button:has-text("Light")');
+  const lt = await page.evaluate(() => ({
+    theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.querySelector(".app")).backgroundColor,
+    meta: document.querySelector('meta[name="theme-color"]').content, saved: JSON.parse(localStorage.getItem("settings")).theme,
+    yellow: document.querySelector('li[data-id="yellow1"] .name').style.color,
+  }));
+  const lum = (rgb) => { const [r, g, b] = rgb.match(/\d+/g).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  check("Light: white panels, saved, browser bar color", lt.theme === "light" && lt.bg === "rgb(255, 255, 255)" && lt.meta === "#ffffff" && lt.saved === "light", JSON.stringify(lt));
+  check("Light: bright names darkened enough to read on white", lum(lt.yellow) <= 0.31 && lum(lt.yellow) > 0.2, lt.yellow);
+  await page.click("#sheet-close");
+  await page.screenshot({ path: dir + "/t23-light.png" });
+  await page.click("#settings-btn");
+  await page.screenshot({ path: dir + "/t24-light-settings.png" });
+  await page.click("#sheet-close");
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length >= 1, null, { timeout: 5000 });
+  check("Light survives reload (set before first paint by theme.js)", (await page.evaluate(() => document.documentElement.dataset.theme)) === "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.evaluate(() => { settings.theme = "system"; saveSettings(); });
+  const sysDark = await page.evaluate(() => document.documentElement.dataset.theme);
+  await page.emulateMedia({ colorScheme: "light" });
+  await sleep(100);
+  check("Match device follows the system setting live", sysDark === "dark" && (await page.evaluate(() => document.documentElement.dataset.theme)) === "light");
+  await page.emulateMedia({ colorScheme: null });
+  await page.evaluate(() => { settings.theme = "dark"; saveSettings(); });
+  check("back to Dark restores real name colors", (await page.evaluate(() => { const n = document.querySelector(".name[data-color='#FFFF00']"); return !n || n.style.color === "rgb(255, 255, 0)"; })));
 }
 // Deleted-before-load messages from history are flagged like live deletions.
 check("history marks messages deleted before they were loaded", await page.evaluate(() => {

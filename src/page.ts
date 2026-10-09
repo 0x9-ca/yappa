@@ -23,6 +23,7 @@ export function renderPage(user: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${APP_NAME}</title>
 <meta name="theme-color" content="${THEME_COLOR}">
+<script src="${versioned("/theme.js")}"></script>
 <!-- Access protects the manifest too, so the browser must send cookies when fetching it. -->
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" type="image/png" sizes="32x32" href="${versioned("/icons/favicon-32.png")}">

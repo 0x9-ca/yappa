@@ -48,7 +48,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, twitchControls: false, history: null };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, twitchControls: false, history: null, theme: "dark" };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -62,7 +62,25 @@ function loadSettings() {
   return s;
 }
 function saveSettings() { safeSet("settings", JSON.stringify(settings)); applySettings(); }
-function applySettings() { document.querySelector(".app").style.setProperty("--chat-font", settings.fontSize + "px"); }
+function applySettings() {
+  document.querySelector(".app").style.setProperty("--chat-font", settings.fontSize + "px");
+  applyTheme();
+}
+
+// ---------- theme ----------
+
+const prefersLight = matchMedia("(prefers-color-scheme: light)");
+const isLightTheme = () => document.documentElement.dataset.theme === "light";
+
+/** Sets <html data-theme> ("system" follows the device) and re-colors names for it. */
+function applyTheme() {
+  const want = settings.theme === "system" ? (prefersLight.matches ? "light" : "dark") : settings.theme === "light" ? "light" : "dark";
+  const changed = document.documentElement.dataset.theme !== want; // theme.js set it at load
+  document.documentElement.dataset.theme = want;
+  document.querySelector('meta[name="theme-color"]').content = want === "light" ? "#ffffff" : "#18181b";
+  if (changed) for (const n of document.querySelectorAll(".name[data-color]")) paintName(n, n.dataset.color);
+}
+prefersLight.addEventListener("change", () => { if (settings.theme === "system") applyTheme(); });
 
 // ---------- utilities ----------
 
@@ -680,8 +698,8 @@ function placeHistoryDivider(tab) {
   if (!first) { if (d) d.remove(); return; }
   if (!d) d = el("li", "sys history-divider");
   d.textContent = tab.historyDone
-    ? "— start of chat history (about the past 24 hours), via recent-messages.robotty.de —"
-    : "— chat history via recent-messages.robotty.de · scroll up for more —";
+    ? "— start of chat history —"
+    : "↑ scroll up for older messages";
   d.dataset.ts = first.dataset.ts;
   if (d.nextElementSibling !== first) tab.list.insertBefore(d, first);
 }
@@ -1089,11 +1107,7 @@ function userColor(ev) {
   return DEFAULT_COLORS[Math.abs(h) % DEFAULT_COLORS.length];
 }
 
-function isDark(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.06;
-}
+function isDark(hex) { return luminance(hex) < 0.06; }
 
 function emoteImg(src, name, source) {
   const img = document.createElement("img");
@@ -1258,10 +1272,37 @@ function timeLabel(ts) {
 
 function nameNode(ev) {
   const color = userColor(ev);
-  const name = el("span", "name" + (isDark(color) ? " dark" : ""), ev.chatter_user_name);
-  name.style.color = color;
+  const name = el("span", "name", ev.chatter_user_name);
+  paintName(name, color);
   name.title = color + (ev.color ? "" : " (no color set; default)");
   return name;
+}
+
+/** Colors a name for the current theme, remembering the chatter's real color for re-themes. */
+function paintName(node, color) {
+  node.dataset.color = color;
+  node.style.color = readableColor(color);
+  node.classList.toggle("dark", !isLightTheme() && isDark(color));
+}
+
+function luminance(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * On the light theme, darkens bright names (yellow, lime…) just enough to read on white
+ * (about 3:1 contrast). The dark theme keeps the real color; very dark names get a glow there.
+ */
+function readableColor(hex) {
+  if (!isLightTheme() || !/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  let n = parseInt(hex.slice(1), 16);
+  let [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255];
+  for (let i = 0; i < 30 && luminance("#" + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)) > 0.3; i++) {
+    r = Math.floor(r * 0.92); g = Math.floor(g * 0.92); b = Math.floor(b * 0.92);
+  }
+  return "#" + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
 }
 
 function actionButton(label, onClick, danger) {
@@ -2764,6 +2805,13 @@ function openSettings() {
     seg.appendChild(b);
   }
 
+  const themeSeg = el("div", "seg");
+  for (const [label, value] of [["Dark", "dark"], ["Light", "light"], ["Match device", "system"]]) {
+    const b = btn(label, () => { settings.theme = value; saveSettings(); themeSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
+    if ((settings.theme || "dark") === value) b.classList.add("on");
+    themeSeg.appendChild(b);
+  }
+
   const hiddenList = el("div");
   const renderHidden = () => {
     hiddenList.replaceChildren();
@@ -2819,6 +2867,8 @@ function openSettings() {
     el("div", "hint", "Matching messages are highlighted in orange (and alert you, if on). Phrases match whole words, ignoring case."),
     rulesList,
     addRule,
+    el("h3", null, "Appearance"),
+    themeSeg,
     el("h3", null, "Chat text size"),
     seg,
     el("h3", null, "Hidden users"),

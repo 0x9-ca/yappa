@@ -41,6 +41,7 @@ Tokens never reach the browser.
 - **Token refreshes are single-flight** (`ColorLoop.refresh`). Twitch can rotate the refresh token, so two concurrent refreshes could spend it twice and log the user out.
 - **Message lists are kept in time order.** Every `<li>` has `data-ts` (set in `append`, or from the event). History merges in with `insertByTime`, so don't insert list items any other way.
 - **The message box is `contenteditable`** (so finished emote names render as images). Always go through the `composer` API (`getText`, `setText(text, caret)`, `caret`, `focus`, `setEnabled`); never `.value`.
+- **Two themes.** Colors are CSS variables on `:root` (dark), overridden by `:root[data-theme="light"]`. Use a variable for any new color, unless it sits on the video (always dark) or is white text on the accent color. `src/client/theme.js` sets `data-theme` in `<head>` before first paint; `applyTheme` in app.js keeps it current. Chat names go through `paintName`, which darkens bright names on the light theme.
 - **Layout runs on phones first.** The document never scrolls (only message lists do), and the app is sized to `visualViewport` via `--app-height`. Percent heights inside the footer resolve against the footer; use `--app-height`.
 - **Twitch API limits:**
   - Hex chat colors need Turbo/Prime, and chat color is account-wide.

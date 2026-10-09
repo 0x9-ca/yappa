@@ -44,6 +44,7 @@ Tokens never reach the browser.
 - **Twitch API limits:**
   - Hex chat colors need Turbo/Prime, and chat color is account-wide.
   - The embed iframe doesn't allow picture-in-picture by default; the client patches `allow` when creating the player.
+  - The player is a cross-origin iframe, so its UI can't be restyled. On touch devices it runs with `controls: false` and the client draws its own controls (`buildVideoControls`) via the embed API. Some things (mature-content warnings) need a tap inside Twitch's player, hence the "Use Twitch's player controls" escape hatch (`settings.twitchControls`).
   - `channel.raid` fires only once a raid completes.
 
 ## Testing

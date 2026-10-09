@@ -15,6 +15,8 @@ import {
   updateChatSettings,
   getUser,
   getModeratedChannelIds,
+  getFollowedChannels,
+  getFollowedStreams,
   getUserEmotes,
   refreshToken,
   revokeToken,
@@ -60,6 +62,11 @@ export interface Status {
   cycle: Cycle;
 }
 
+interface Following {
+  channels: { id: string; login: string; name: string }[];
+  live: { id: string; login: string; name: string; title: string; game: string; viewers: number; startedAt: string }[];
+}
+
 function randomHexColor(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(3));
   return "#" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
@@ -72,6 +79,8 @@ export class ColorLoop extends DurableObject<Env> {
   private refreshing: Promise<Tokens> | undefined;
   /** Recent message ids that already advanced the color (from any device running the app). */
   private colored = new Set<string>();
+  /** Followed channels, briefly cached: the list is fetched whenever the channel box is focused. */
+  private following: { at: number; data: Following } | undefined;
 
   private async getTokens(): Promise<Tokens | undefined> {
     return this.ctx.storage.get<Tokens>("tokens");
@@ -125,6 +134,7 @@ export class ColorLoop extends DurableObject<Env> {
     const tok = await exchangeCode(this.env, code, redirectUri);
     const info = await validateToken(tok.access_token);
     this.moderated = undefined; // it may be a different Twitch account
+    this.following = undefined;
     await this.ctx.storage.put<Tokens>("tokens", {
       accessToken: tok.access_token,
       refreshToken: tok.refresh_token,
@@ -376,7 +386,34 @@ export class ColorLoop extends DurableObject<Env> {
 
 
 
+  /** Channels the user follows, and which of them are live (for the channel picker). */
+  async followed(): Promise<({ ok: true } & Following) | { ok: false; error: string; needsScope?: boolean }> {
+    const tokens = await this.getTokens();
+    if (!tokens?.scopes?.includes("user:read:follows")) return { ok: false, error: "Missing user:read:follows", needsScope: true };
+    if (this.following && Date.now() - this.following.at < 2 * 60_000) return { ok: true, ...this.following.data };
+    try {
+      const data = await this.withToken(async (t) => {
+        const [channels, live] = await Promise.all([
+          getFollowedChannels(this.env, t.accessToken, t.userId),
+          getFollowedStreams(this.env, t.accessToken, t.userId),
+        ]);
+        return {
+          channels: channels.map((c) => ({ id: c.broadcaster_id, login: c.broadcaster_login, name: c.broadcaster_name })),
+          live: live.map((s) => ({
+            id: s.user_id, login: s.user_login, name: s.user_name, title: s.title, game: s.game_name,
+            viewers: s.viewer_count, startedAt: s.started_at,
+          })),
+        };
+      });
+      this.following = { at: Date.now(), data };
+      return { ok: true, ...data };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
   async disconnectTwitch(): Promise<void> {
+    this.following = undefined;
     this.moderated = undefined;
     await this.setCycle(false);
     const tokens = await this.getTokens();

@@ -12,6 +12,7 @@ export const OPTIONAL_SCOPES = [
   "moderator:read:followers",
   "moderator:manage:automod",
   "moderator:manage:chat_settings",
+  "user:read:follows",
 ];
 
 export class TwitchError extends Error {
@@ -466,4 +467,42 @@ export async function getGameName(env: Env, accessToken: string, id: string): Pr
   const url = `${API_BASE}/games?id=${encodeURIComponent(id)}`;
   const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Games");
   return ((await res.json()) as { data: { name: string }[] }).data[0]?.name ?? null;
+}
+
+/** Pages through a Helix list endpoint (100 per page, at most maxPages pages). */
+async function allPages<T>(env: Env, accessToken: string, url: URL, what: string, maxPages: number): Promise<T[]> {
+  const out: T[] = [];
+  let cursor: string | undefined;
+  url.searchParams.set("first", "100");
+  for (let page = 0; page < maxPages; page++) {
+    if (cursor) url.searchParams.set("after", cursor);
+    const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), what);
+    const body = (await res.json()) as { data: T[]; pagination?: { cursor?: string } };
+    out.push(...body.data);
+    cursor = body.pagination?.cursor;
+    if (!cursor) break;
+  }
+  return out;
+}
+
+/** Channels the user follows, most recently followed first. Needs user:read:follows. */
+export function getFollowedChannels(
+  env: Env,
+  accessToken: string,
+  userId: string,
+): Promise<{ broadcaster_id: string; broadcaster_login: string; broadcaster_name: string }[]> {
+  const url = new URL(`${API_BASE}/channels/followed`);
+  url.searchParams.set("user_id", userId);
+  return allPages(env, accessToken, url, "Get Followed Channels", 20);
+}
+
+/** Live streams among the channels the user follows. Needs user:read:follows. */
+export function getFollowedStreams(
+  env: Env,
+  accessToken: string,
+  userId: string,
+): Promise<(StreamInfo & { user_login: string; user_name: string })[]> {
+  const url = new URL(`${API_BASE}/streams/followed`);
+  url.searchParams.set("user_id", userId);
+  return allPages(env, accessToken, url, "Get Followed Streams", 5);
 }

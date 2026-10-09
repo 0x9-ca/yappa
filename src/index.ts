@@ -117,6 +117,9 @@ async function handle(request: Request, env: Env): Promise<Response> {
       await stub.disconnectTwitch();
       return json({ ok: true });
 
+    case "GET /api/following":
+      return json(await stub.followed());
+
     case "GET /api/status":
       return json(await stub.status());
 

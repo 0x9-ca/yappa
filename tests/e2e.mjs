@@ -39,7 +39,8 @@ let sendCounter = 0;
 const cycle = { enabled: false, changes: 0, lastColor: "#30E51E" };
 let statusCalls = 0;
 let statusDown = false, slowSend = 0;
-const ids = { uwoslab: "999", otherchan: "888", targetchan: "777" };
+const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
+let followingMode = "ok";
 const svg = (h) => `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><circle cx="28" cy="28" r="26" fill="hsl(${h},70%,55%)"/></svg>`;
 await ctx.route("**/*", async (route) => {
   const u = new URL(route.request().url());
@@ -51,9 +52,17 @@ await ctx.route("**/*", async (route) => {
     if (f) return route.fulfill({ body: f.type === "image/png" ? Buffer.from(f.body, "base64") : f.body, contentType: f.type });
     if (u.pathname === "/api/cycle") { cycle.enabled = body().enabled; if (cycle.enabled) { cycle.lastColor = "#11AA22"; cycle.changes++; } log.cycle.push(cycle.enabled); return j({ ok: true, cycle }); }
     if (u.pathname === "/api/netfail") return route.abort();
+    if (u.pathname === "/api/following") {
+      log.following = (log.following || 0) + 1;
+      if (followingMode === "scope") return j({ ok: false, error: "Missing user:read:follows", needsScope: true });
+      return j({ ok: true,
+        live: [{ id: "777", login: "targetchan", name: "TargetChan", title: "speedrun attempts", game: "Celeste", viewers: 4321, startedAt: new Date().toISOString() },
+               { id: "999", login: "uwoslab", name: "UwoSlab", title: "Building a chat app", game: "Software and Game Development", viewers: 1234, startedAt: new Date().toISOString() }],
+        channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "uwoslab", name: "UwoSlab" }] });
+    }
     if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
     if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", missingScopes: [], missingOptionalScopes: [] }, cycle }); }
-    if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan" }[b.channel] }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
+    if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan", alphachan: "AlphaChan" }[b.channel] || b.channel }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
     if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: new Date(Date.now() - 3 * 3600e3).toISOString() }]);
     if (u.pathname === "/api/chat/settings") { const b = body(); log.settings.push(b); Object.assign(chatSettings, b); delete chatSettings.broadcaster_id; return j({ ok: true, settings: chatSettings }); }
     if (u.pathname === "/api/chat/user") return j({ ok: true, user: { id: u.searchParams.get("user_id"), login: "spammer", display_name: "Spammer", description: "I sell followers", profile_image_url: "https://img.test/a.png", broadcaster_type: "", created_at: "2020-01-02T00:00:00Z" }, followedAt: "2024-05-06T00:00:00Z" });
@@ -101,12 +110,23 @@ await ctx.route("**/*", async (route) => {
       f.src = "https://player.twitch.tv/?channel=" + opts.channel + "&parent=" + opts.parent[0];
       document.getElementById(id).appendChild(f);
       this.setChannel = (c) => { __player.calls.push(["setChannel", c]); f.src = "https://player.twitch.tv/?channel=" + c + "&parent=" + opts.parent[0]; };
-      this.play = () => __player.calls.push(["play"]);
-      this.pause = () => __player.calls.push(["pause"]);
-      this.setMuted = (m) => __player.calls.push(["setMuted", m]);
-      this.addEventListener = (ev, fn) => { __player.handlers[ev] = fn; };
+      const st = { paused: false, muted: !!opts.muted, volume: 0.5, quality: "auto" };
+      const listeners = {};
+      const fire = (ev) => (listeners[ev] || []).forEach((fn) => fn());
+      __player.state = st;
+      this.play = () => { __player.calls.push(["play"]); st.paused = false; fire("play"); fire("playing"); };
+      this.pause = () => { __player.calls.push(["pause"]); st.paused = true; fire("pause"); };
+      this.setMuted = (m) => { __player.calls.push(["setMuted", m]); st.muted = m; };
+      this.isPaused = () => st.paused;
+      this.getMuted = () => st.muted;
+      this.getVolume = () => st.volume;
+      this.setVolume = (v) => { st.volume = v; };
+      this.getQuality = () => st.quality;
+      this.getQualities = () => [{ group: "chunked", name: "1080p60" }, { group: "720p60", name: "720p60" }, { group: "480p30", name: "480p" }];
+      this.setQuality = (q) => { __player.calls.push(["setQuality", q]); st.quality = q; };
+      this.addEventListener = (ev, fn) => { __player.handlers[ev] = fn; (listeners[ev] = listeners[ev] || []).push(fn); };
     } };
-    Twitch.Player.PLAYBACK_BLOCKED = "playbackBlocked";` });
+    Object.assign(Twitch.Player, { PLAYBACK_BLOCKED: "playbackBlocked", PLAY: "play", PLAYING: "playing", PAUSE: "pause", ENDED: "ended", OFFLINE: "offline", ONLINE: "online" });` });
   if (u.host === "player.twitch.tv") { log.player.push(u.search); return route.fulfill({ body: "<body style='margin:0;background:#111;color:#9147ff;display:grid;place-items:center;height:100vh;font:20px sans-serif'>▶ " + u.searchParams.get("channel") + "</body>", contentType: "text/html" }); }
   if (u.host === "api.betterttv.net") {
     if (u.pathname === "/3/cached/emotes/global") return j([{ id: "bg1", code: "OMEGALUL" }]);
@@ -467,6 +487,7 @@ await page.waitForSelector("#video:not([hidden]) iframe");
 const pc = () => page.evaluate(() => __player.calls);
 let calls = await pc();
 check("one player created with autoplay + parent", calls.filter((c) => c[0] === "new").length === 1 && calls[0][1].autoplay === true && calls[0][1].parent[0] === "yappa.test" && calls[0][1].channel === "uwoslab", JSON.stringify(calls[0]));
+check("phone: Twitch's own controls off (we draw touch controls)", calls[0][1].controls === false && !!(await page.$("#video .vctl")), JSON.stringify(calls[0][1]));
 check("starts muted only if the page hasn't been interacted with yet", typeof calls[0][1].muted === "boolean", String(calls[0][1].muted));
 // another live tab: same player, setChannel (keeps unmuted state)
 await page.evaluate(() => { tabs.get("otherchan").stream = { user_id: "888", title: "x", game_name: "y", viewer_count: 5, started_at: new Date().toISOString() }; });
@@ -516,6 +537,59 @@ const lay = await page.evaluate(() => {
 check("wide: video left, 380px chat column right", lay.vRight <= lay.cLeft + 1 && lay.cW === 380 && Math.abs(lay.fRatio - 16 / 9) < 0.05 && lay.docW === 1280, JSON.stringify(lay));
 await page.screenshot({ path: dir + "/t12-video-wide.png" });
 await page.setViewportSize({ width: 390, height: 760 });
+
+// ---- touch controls (phones) ----
+await page.evaluate(() => __player.state.muted = true);
+await page.evaluate(() => hideVideoControls());
+await page.tap("#video .vctl");
+await sleep(250);
+check("tap shows the controls", await page.$eval("#video .vctl", (v) => v.classList.contains("shown")));
+const vstate = await page.evaluate(() => ({ live: document.querySelector(".vctl-live").textContent, mute: document.querySelector(".vctl-mute").getAttribute("aria-label"), q: document.querySelector(".vctl-quality").textContent }));
+check("controls show LIVE + viewers, muted state, quality", vstate.live === "LIVE · 1.2k" && vstate.mute === "Unmute" && vstate.q === "Auto", JSON.stringify(vstate));
+await page.screenshot({ path: dir + "/t17-video-controls.png" });
+const tb = await page.$eval("#video .vctl-mute", (b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); });
+check("touch targets at least 44px", tb >= 44, String(tb));
+await page.tap("#video .vctl-mute");
+await sleep(350);
+check("tap unmute → setMuted(false), icon flips", (await pc()).at(-1)[1] === false && (await page.getAttribute("#video .vctl-mute", "aria-label")) === "Mute");
+await page.tap("#video .vctl-play");
+await sleep(350);
+check("tap pause → pause(), shows play button, controls stay", (await pc()).at(-1)[0] === "pause" && (await page.getAttribute("#video .vctl-play", "aria-label")) === "Play");
+await sleep(3300);
+check("controls don't auto-hide while paused", await page.$eval("#video .vctl", (v) => v.classList.contains("shown")));
+await page.tap("#video .vctl-play");
+await sleep(3500);
+check("controls auto-hide while playing", !(await page.$eval("#video .vctl", (v) => v.classList.contains("shown"))));
+await page.tap("#video .vctl");
+await page.tap("#video .vctl-quality");
+await sleep(100);
+const qopts = await page.$$eval("#video .vctl-menu button", (bs) => bs.map((b) => b.textContent));
+check("quality menu lists Auto + qualities + Twitch-controls escape", JSON.stringify(qopts) === '["Auto","1080p60 (source)","720p60","480p","Use Twitch\'s player controls"]', JSON.stringify(qopts));
+await page.screenshot({ path: dir + "/t18-video-quality.png" });
+await page.tap('#video .vctl-menu button:has-text("720p60")');
+await sleep(400);
+check("pick quality → setQuality, label updates", (await pc()).at(-1)[1] === "720p60" && (await page.textContent("#video .vctl-quality")) === "720p60", await page.textContent("#video .vctl-quality"));
+await page.tap("#video .vctl-full");
+await sleep(400);
+const fs1 = await page.evaluate(() => ({ fs: !!document.fullscreenElement, theater: document.querySelector(".app").classList.contains("theater"), h: Math.round(document.getElementById("video").getBoundingClientRect().height) }));
+check("fullscreen button fills the screen", (fs1.fs || fs1.theater) && fs1.h >= 700, JSON.stringify(fs1));
+await page.screenshot({ path: dir + "/t19-video-full.png" });
+await page.tap("#video .vctl");
+await page.tap("#video .vctl-full");
+await sleep(400);
+check("and back", await page.evaluate(() => !document.fullscreenElement && !document.querySelector(".app").classList.contains("theater")));
+// Escape hatch: Twitch's own controls, and back from Settings.
+await page.tap("#video .vctl");
+await page.tap("#video .vctl-quality");
+await page.tap('#video .vctl-menu button:has-text("Twitch")');
+await sleep(300);
+calls = await pc();
+check("switch to Twitch controls rebuilds the player with controls", calls.filter((c) => c[0] === "new").at(-1)[1].controls === true && !(await page.$("#video .vctl")));
+await page.click("#settings-btn");
+await page.click('#sheet-body .row:has-text("Simple video controls") input');
+await page.click("#sheet-close");
+await sleep(300);
+check("Settings switches back to touch controls", (await pc()).filter((c) => c[0] === "new").at(-1)[1].controls === false && !!(await page.$("#video .vctl")) && JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).twitchControls === false);
 
 // =============== composer: emote images ===============
 await page.evaluate(() => composer.setText(""));
@@ -644,6 +718,41 @@ await page.evaluate(() => { __player.calls.length = 0; });
 await page.evaluate(() => refreshStreams());
 await sleep(200);
 check("stream refresh doesn't call play() again", !(await page.evaluate(() => __player.calls.some((c) => c[0] === "play"))), JSON.stringify(await page.evaluate(() => __player.calls)));
+
+// =============== followed channels (channel box dropdown) ===============
+await page.evaluate(() => { following = null; }); // start from a cold cache
+const followFetches = log.following || 0;
+await page.tap("#channel");
+await page.waitForSelector("#follow-list .fl-row");
+const fl = await page.$$eval("#follow-list > *", (ns) => ns.map((n) => n.textContent));
+check("focusing the channel box lists followed channels: live first by viewers, then A–Z", JSON.stringify(fl) === JSON.stringify(["Live now", "TargetChanCeleste · speedrun attempts4.3kopen", "UwoSlabSoftware and Game Development · Building a chat app1.2kopen", "Offline", "AlphaChan", "ZetaChan"]), JSON.stringify(fl));
+const flBox = await page.$eval("#follow-list", (b) => { const r = b.getBoundingClientRect(), h = document.querySelector("header").getBoundingClientRect(); return { top: Math.round(r.top - h.bottom), w: Math.round(r.width) }; });
+check("dropdown sits under the header, full width on phones", flBox.top <= 0 && flBox.w >= 360, JSON.stringify(flBox));
+await page.screenshot({ path: dir + "/t20-following.png" });
+await page.type("#channel", "zet");
+check("typing filters the list", JSON.stringify(await page.$$eval("#follow-list .fl-row", (r) => r.map((x) => x.textContent))) === '["ZetaChan"]');
+await page.fill("#channel", "");
+await page.type("#channel", "alp");
+await page.tap('#follow-list .fl-row:has-text("AlphaChan")');
+await page.waitForFunction(() => location.hash === "#alphachan");
+check("tapping a channel opens it and closes the list", await page.$eval("#follow-list", (b) => b.hidden) && (await page.inputValue("#channel")) === "" && log.subs.some((x) => x.startsWith("alphachan@")));
+await page.focus("#channel");
+await page.waitForSelector("#follow-list .fl-row");
+await page.keyboard.press("ArrowDown");
+await page.keyboard.press("ArrowDown");
+await page.keyboard.press("Enter");
+await page.waitForFunction(() => location.hash === "#uwoslab");
+check("arrow keys + Enter pick a channel", await page.$eval("#follow-list", (b) => b.hidden));
+check("list is cached briefly (one fetch for two opens)", log.following - followFetches === 1, String(log.following - followFetches));
+await page.evaluate(() => closeTab(tabs.get("alphachan")));
+followingMode = "scope";
+await page.evaluate(() => { following = null; });
+await page.focus("#channel");
+await page.waitForSelector("#follow-list .fl-note a");
+check("without the follows permission: reconnect prompt", (await page.textContent("#follow-list")).includes("Reconnect Twitch to see channels you follow"));
+await page.keyboard.press("Escape");
+check("Escape closes the list", await page.$eval("#follow-list", (b) => b.hidden));
+followingMode = "ok";
 
 // =============== moving to a new address ===============
 {

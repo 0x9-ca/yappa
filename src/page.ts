@@ -47,12 +47,13 @@ export function renderPage(user: string): string {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         </button>
       </div>
+      <div class="follow-list" id="follow-list" role="listbox" aria-label="Channels you follow" hidden></div>
     </header>
     <nav class="tabs" id="tabs" aria-label="Open channels" hidden></nav>
     <div id="banners">
       <div class="banner error" id="error" hidden></div>
       <div class="banner info" id="reauth" hidden>Twitch needs extra permissions to read and send chat. <a href="/auth/login">Reconnect Twitch</a></div>
-      <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes and mod tools.</div>
+      <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels and mod tools.</div>
       <div class="banner info" id="cycle-status" hidden></div>
     </div>
   </div>

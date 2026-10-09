@@ -657,6 +657,14 @@ await page.setViewportSize({ width: 390, height: 760 });
 
 // =============== Open on Twitch (Bits and channel points) ===============
 {
+  const m = await page.evaluate(() => Object.fromEntries(["emote-btn", "twitch-btn", "message"].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return [id, { w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10, top: Math.round(r.top * 10) / 10, bottom: Math.round(r.bottom * 10) / 10 }]; })));
+  check("emote and gem buttons are the same size, and aligned with each other and the message box",
+    m["emote-btn"].w === m["twitch-btn"].w && m["emote-btn"].h === m["twitch-btn"].h && m["emote-btn"].w === 38 && m["emote-btn"].h === 38 &&
+    m["emote-btn"].top === m["twitch-btn"].top && m["emote-btn"].bottom === m["twitch-btn"].bottom && m["emote-btn"].top === m["message"].top, JSON.stringify(m));
+  const gap = await page.evaluate(() => { const a = document.getElementById("emote-btn").getBoundingClientRect(), b = document.getElementById("twitch-btn").getBoundingClientRect(), c = document.getElementById("message").getBoundingClientRect(); return [Math.round(b.left - a.right), Math.round(c.left - b.right)]; });
+  check("even spacing between the buttons and the message box", gap[0] === gap[1], JSON.stringify(gap));
+}
+{
   await page.click(".tab:first-child .tab-name");
   const btn = await page.$eval("#twitch-btn", (b) => ({ disabled: b.disabled, label: b.getAttribute("aria-label"), next: b.previousElementSibling.id, w: Math.round(b.getBoundingClientRect().width) }));
   check("button sits right after the emote button, small, labelled", !btn.disabled && btn.next === "emote-btn" && btn.w < 44 && btn.label.includes("Bits and channel points"), JSON.stringify(btn));

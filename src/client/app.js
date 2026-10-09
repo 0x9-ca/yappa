@@ -71,6 +71,10 @@ function normalizeChannel(v) {
 
 // ---------- status / color cycling ----------
 
+// The color controls live in the Settings sheet, which detaches them when it closes,
+// so keep direct references rather than looking them up by id.
+const cyclerEl = $("cycler"), swatchEl = $("swatch"), colorEl = $("color"), cycleBtn = $("cycle");
+
 async function refreshStatus() {
   let s;
   try { s = await api("/api/status"); } catch { return; }
@@ -82,7 +86,6 @@ async function refreshStatus() {
   show("chat", !!tw);
   show("footer", !!tw);
   show("account", !!tw);
-  show("cycler", !!tw);
   show("tabs", !!tw && tabs.size > 0);
   show("reauth", !!tw && tw.missingScopes.length > 0);
   const missingOptional = tw && tw.missingScopes.length === 0 ? tw.missingOptionalScopes || [] : [];
@@ -95,22 +98,22 @@ async function refreshStatus() {
 
 function renderCycle(cycle) {
   cycle = cycle || { enabled: false, changes: 0 };
-  $("swatch").style.background = cycle.lastColor || "transparent";
-  $("color").textContent = cycle.lastColor ? cycle.lastColor + " - " + cycle.changes : "—";
-  $("cycle").textContent = cycle.enabled ? "Stop cycling" : "Cycle color";
-  $("cycle").className = cycle.enabled ? "stop" : "ghost";
-  $("cycler").title = cycle.enabled ? "Your color changes every time you send a message" : "Your current chat color";
+  swatchEl.style.background = cycle.lastColor || "transparent";
+  colorEl.textContent = cycle.lastColor ? cycle.lastColor + " - " + cycle.changes : "—";
+  cycleBtn.textContent = cycle.enabled ? "Stop cycling" : "Cycle color";
+  cycleBtn.className = cycle.enabled ? "stop" : "ghost";
+  cyclerEl.title = cycle.enabled ? "Your color changes every time you send a message" : "Your current chat color";
   const note = cycle.lastError ? (cycle.enabled ? "Color cycling error: " : "Color cycling turned off: ") + cycle.lastError : "";
   $("cycle-status").textContent = note;
   show("cycle-status", !!note && !!me);
 }
 
-$("cycle").addEventListener("click", async () => {
+cycleBtn.addEventListener("click", async () => {
   setError("");
   const enabled = !(status && status.cycle && status.cycle.enabled);
-  $("cycle").disabled = true;
+  cycleBtn.disabled = true;
   const r = await api("/api/cycle", { enabled });
-  $("cycle").disabled = false;
+  cycleBtn.disabled = false;
   if (!r.ok) setError(r.error);
   refreshStatus();
 });
@@ -1928,8 +1931,16 @@ function openSettings() {
   acctBtns.append(reconnect, btn("Disconnect", () => { if (confirm("Disconnect your Twitch account?")) { closeSheet(); logout(); } }, "stop"));
   account.append(who, acctBtns);
 
+  const color = el("div", "row");
+  const colorLabel = el("label");
+  colorLabel.append(el("div", null, "Change my color every message"), el("div", "hint", "A new random color for each message you send. Shows your current color and how many times it has changed."));
+  color.append(colorLabel);
+
   openSheet(
     el("h2", null, "Settings"),
+    el("h3", null, "Chat color"),
+    color,
+    cyclerEl,
     el("h3", null, "Account"),
     account,
     el("h3", null, "Alerts"),

@@ -222,3 +222,4 @@ button.small { padding: 3px 9px; font-size: 12px; }
   /* Largest 16:9 box that fits the column. */
   .app.with-video .video iframe { width: min(100%, calc((var(--app-height, 100dvh)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
 }
+.sheet .cycler { padding: 2px 0 6px; }

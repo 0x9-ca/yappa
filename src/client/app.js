@@ -43,7 +43,7 @@ let sending = false;
       }
     }
   } catch {}
-  history.replaceState(null, "", "/");
+  history.replaceState(null, "", "/" + location.search);
 })();
 
 const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, twitchControls: false };

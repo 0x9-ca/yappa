@@ -15,7 +15,8 @@ export function renderMoved(appHost: string): string {
 <script>
   var data = {};
   try { ${JSON.stringify(MIGRATED_KEYS)}.forEach(function (k) { var v = localStorage.getItem(k); if (v != null) data[k] = v; }); } catch (e) {}
-  var url = ${target} + (Object.keys(data).length ? "#import=" + encodeURIComponent(JSON.stringify(data)) : location.hash);
+  // Keep the query: it can carry a sign-in error (e.g. Twitch redirected to the old address).
+  var url = ${target} + location.search + (Object.keys(data).length ? "#import=" + encodeURIComponent(JSON.stringify(data)) : location.hash);
   document.getElementById("go").href = url;
   location.replace(url);
 </script>`;

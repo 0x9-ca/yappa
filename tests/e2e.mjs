@@ -767,6 +767,11 @@ followingMode = "ok";
   await p2.waitForFunction(() => document.querySelectorAll(".tab").length === 2, null, { timeout: 5000 });
   const moved = await p2.evaluate(() => ({ hash: location.hash, rules: settings.rules, tabs: localStorage.getItem("tabs"), active: active && active.login }));
   check("old address carries tabs and settings to the new one", moved.hash === "#otherchan" && moved.rules[0].phrase === "moved" && moved.tabs === '["otherchan","uwoslab"]' && moved.active === "otherchan", JSON.stringify(moved));
+  // A sign-in error that lands on the old address survives the hop to the new one.
+  await p2.goto("https://old.test/?error=" + encodeURIComponent("The provided redirect_uri does not match"));
+  await p2.waitForURL("https://yappa.test/**");
+  await p2.waitForSelector("#error:not([hidden])");
+  check("sign-in error on the old address is shown at the new one", (await p2.textContent("#error")) === "The provided redirect_uri does not match");
   // An import link never overwrites a browser that already has data.
   await p2.goto("https://yappa.test/?reload#import=" + encodeURIComponent(JSON.stringify({ settings: JSON.stringify({ rules: [{ phrase: "evil", user: "" }] }) })));
   await p2.waitForFunction(() => typeof settings !== "undefined");

@@ -48,7 +48,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, twitchControls: false, history: null, theme: "dark" };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark" };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -2134,7 +2134,6 @@ async function renderVideo() {
   $("video-btn").setAttribute("aria-pressed", String(!!settings.video));
   $("video-btn").title = settings.video ? "Hide the stream" + (tab && !tab.stream ? " (offline right now)" : "") : "Show the stream";
   if (!want) {
-    document.querySelector(".app").classList.remove("theater");
     box.hidden = true;
     if (player) try { player.pause(); } catch {}
     return;
@@ -2142,7 +2141,6 @@ async function renderVideo() {
   const wasHidden = box.hidden;
   if (!pipWindow) box.hidden = false;
   const channel = tab.login;
-  syncVideoControls();
   if (player) {
     // Only (re)start playback on a change, so a stream you paused stays paused.
     const changed = playerChannel !== channel;
@@ -2155,8 +2153,6 @@ async function renderVideo() {
   const host = el("div", "player-host");
   host.id = "player-host";
   box.replaceChildren(host);
-  // Phones get our own touch controls (built below) instead of Twitch's small ones.
-  const custom = coarse && !settings.twitchControls;
   // Twitch's iframe only allows "autoplay; fullscreen". Add picture-in-picture so the
   // browser's own PiP (media controls, Android leaving a fullscreen video) is permitted.
   const setAttr = Element.prototype.setAttribute;
@@ -2172,7 +2168,6 @@ async function renderVideo() {
       parent: [location.hostname], // Twitch requires the embedding site's hostname
       autoplay: true,
       muted: !canPlaySound(),
-      controls: !custom,
     });
   } finally {
     Element.prototype.setAttribute = setAttr;
@@ -2182,169 +2177,7 @@ async function renderVideo() {
     player.setMuted(true);
     player.play();
   });
-  if (custom) buildVideoControls(box, player);
 }
-
-/** Throws the player away and builds a new one (e.g. to switch between control styles). */
-function resetPlayer() {
-  if (pipWindow) pipWindow.close();
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  document.querySelector(".app").classList.remove("theater");
-  player = null;
-  playerChannel = null;
-  vctl = null;
-  videoBox.replaceChildren();
-  renderVideo();
-}
-
-// ---------- touch controls for the player (phones) ----------
-
-// Twitch's own controls are small and fiddly on a phone, so there the player runs with
-// controls=false and this overlay drives it through the embed API. Tap the video to show
-// the controls; they fade out after a few seconds while playing.
-const VICON = {
-  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
-  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
-  sound: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
-  muted: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="m16 9 6 6M22 9l-6 6"/></svg>',
-  full: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
-  unfull: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
-};
-const VCTL_HIDE_MS = 3000;
-let vctl = null;
-
-function buildVideoControls(box, p) {
-  const root = el("div", "vctl");
-  const vbtn = (cls, label, onClick) => {
-    const b = el("button", "vbtn " + cls);
-    b.type = "button";
-    b.setAttribute("aria-label", label);
-    b.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onClick();
-      showVideoControls();
-      // The player reports its new state asynchronously (and mute has no event).
-      setTimeout(syncVideoControls, 250);
-    });
-    return b;
-  };
-  const live = el("span", "vctl-live");
-  const quality = vbtn("vctl-quality", "Video quality", () => toggleQualityMenu());
-  const top = el("div", "vctl-top");
-  top.append(live, quality);
-  const play = vbtn("vctl-play", "Play or pause", () => (p.isPaused() ? p.play() : p.pause()));
-  const stuck = btn("Not playing? Use Twitch's controls", () => useTwitchControls(), "small vctl-stuck");
-  stuck.hidden = true;
-  const mid = el("div", "vctl-mid");
-  mid.append(play, stuck);
-  const mute = vbtn("vctl-mute", "Mute or unmute", () => {
-    const unmute = p.getMuted();
-    p.setMuted(!unmute);
-    if (unmute && !p.getVolume()) p.setVolume(0.5);
-  });
-  const full = vbtn("vctl-full", "Fullscreen", () => toggleVideoFullscreen());
-  const bottom = el("div", "vctl-bottom");
-  bottom.append(mute, el("span", "grow"), full);
-  const menu = el("div", "vctl-menu");
-  menu.hidden = true;
-  menu.addEventListener("click", (e) => e.stopPropagation());
-  root.append(top, mid, bottom, menu);
-  // Tapping the video itself toggles the controls.
-  root.addEventListener("click", () => {
-    if (!menu.hidden) { menu.hidden = true; return; }
-    root.classList.contains("shown") && !p.isPaused() ? hideVideoControls() : showVideoControls();
-  });
-  box.appendChild(root);
-  vctl = { root, p, live, quality, play, mute, full, menu, stuck, hideTimer: null, playing: false };
-
-  for (const ev of [Twitch.Player.PLAY, Twitch.Player.PLAYING, Twitch.Player.PAUSE, Twitch.Player.ENDED, Twitch.Player.OFFLINE, Twitch.Player.ONLINE]) {
-    p.addEventListener(ev, () => {
-      if (ev === Twitch.Player.PLAYING) { vctl.playing = true; stuck.hidden = true; }
-      syncVideoControls();
-    });
-  }
-  // Mature-content warnings and some errors need a tap inside Twitch's player itself.
-  setTimeout(() => { if (vctl && vctl.p === p && !vctl.playing) { stuck.hidden = false; showVideoControls(); } }, 8000);
-  showVideoControls();
-}
-
-function syncVideoControls() {
-  if (!vctl) return;
-  const { p, live, quality, play, mute, full } = vctl;
-  const st = active && active.stream;
-  live.textContent = st ? "LIVE · " + compactCount(st.viewer_count) : "";
-  live.hidden = !st;
-  const paused = p.isPaused();
-  play.innerHTML = paused ? VICON.play : VICON.pause;
-  play.setAttribute("aria-label", paused ? "Play" : "Pause");
-  const muted = p.getMuted() || !p.getVolume();
-  mute.innerHTML = muted ? VICON.muted : VICON.sound;
-  mute.setAttribute("aria-label", muted ? "Unmute" : "Mute");
-  mute.classList.toggle("attention", muted);
-  const isFull = !!document.fullscreenElement || document.querySelector(".app").classList.contains("theater");
-  full.innerHTML = isFull ? VICON.unfull : VICON.full;
-  full.setAttribute("aria-label", isFull ? "Exit fullscreen" : "Fullscreen");
-  quality.textContent = qualityLabel(p.getQuality());
-  if (paused) showVideoControls(); // never hide the play button while paused
-}
-
-function showVideoControls() {
-  if (!vctl) return;
-  vctl.root.classList.add("shown");
-  clearTimeout(vctl.hideTimer);
-  vctl.hideTimer = setTimeout(() => { if (vctl && !vctl.p.isPaused() && vctl.menu.hidden && vctl.stuck.hidden) hideVideoControls(); }, VCTL_HIDE_MS);
-}
-
-function hideVideoControls() {
-  if (!vctl) return;
-  clearTimeout(vctl.hideTimer);
-  vctl.root.classList.remove("shown");
-}
-
-function qualityLabel(q) {
-  return !q || q === "auto" ? "Auto" : q === "chunked" ? "Source" : String(q).replace(/^(\d+p)30$/, "$1");
-}
-
-function toggleQualityMenu() {
-  const { p, menu } = vctl;
-  if (!menu.hidden) { menu.hidden = true; return; }
-  const current = p.getQuality() || "auto";
-  const options = [{ group: "auto", name: "Auto" }, ...(p.getQualities() || []).filter((q) => q && q.group && q.group !== "auto")];
-  menu.replaceChildren(el("div", "vctl-menu-title", "Quality"));
-  for (const q of options) {
-    const b = btn(q.group === "chunked" ? (q.name || "Source") + " (source)" : q.name || qualityLabel(q.group), () => {
-      p.setQuality(q.group);
-      menu.hidden = true;
-      setTimeout(syncVideoControls, 300);
-    }, "vctl-opt" + (q.group === current ? " on" : ""));
-    menu.appendChild(b);
-  }
-  menu.appendChild(btn("Use Twitch's player controls", () => useTwitchControls(), "vctl-opt subtle"));
-  menu.hidden = false;
-}
-
-function useTwitchControls() {
-  settings.twitchControls = true;
-  saveSettings();
-  resetPlayer();
-  if (active) sysLine(active, "Using Twitch's player controls. You can switch back in Settings.");
-}
-
-/** Real fullscreen (turning the phone sideways) where supported; else the video fills the app. */
-function toggleVideoFullscreen() {
-  const app = document.querySelector(".app");
-  if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
-  if (app.classList.contains("theater")) { app.classList.remove("theater"); syncVideoControls(); return; }
-  if (document.fullscreenEnabled && videoBox.requestFullscreen) {
-    videoBox.requestFullscreen()
-      .then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock("landscape").catch(() => {}))
-      .catch(() => { app.classList.add("theater"); syncVideoControls(); });
-  } else {
-    app.classList.add("theater");
-    syncVideoControls();
-  }
-}
-document.addEventListener("fullscreenchange", () => syncVideoControls());
 
 // ---------- picture-in-picture (Document PiP: desktop Chrome/Edge) ----------
 
@@ -2885,11 +2718,6 @@ function openSettings() {
     cyclerEl,
     el("h3", null, "Account"),
     account,
-    ...(coarse ? [
-      el("h3", null, "Video"),
-      row("Simple video controls", checkbox(!settings.twitchControls, (c) => { settings.twitchControls = !c.checked; saveSettings(); resetPlayer(); }),
-        "Big touch controls on the stream. Turn off to use Twitch's own player controls."),
-    ] : []),
     el("h3", null, "Chat history"),
     historyRow,
     el("h3", null, "Raids"),

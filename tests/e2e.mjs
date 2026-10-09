@@ -502,7 +502,8 @@ await page.waitForSelector("#video:not([hidden]) iframe");
 const pc = () => page.evaluate(() => __player.calls);
 let calls = await pc();
 check("one player created with autoplay + parent", calls.filter((c) => c[0] === "new").length === 1 && calls[0][1].autoplay === true && calls[0][1].parent[0] === "yappa.test" && calls[0][1].channel === "uwoslab", JSON.stringify(calls[0]));
-check("phone: Twitch's own controls off (we draw touch controls)", calls[0][1].controls === false && !!(await page.$("#video .vctl")), JSON.stringify(calls[0][1]));
+// Twitch's embed rules: only Twitch's own player UI, never covered by other elements.
+check("player uses Twitch's own controls, nothing drawn over it", calls[0][1].controls === undefined && (await page.$$("#video > :not(.player-host)")).length === 0, JSON.stringify(calls[0][1]));
 check("starts muted only if the page hasn't been interacted with yet", typeof calls[0][1].muted === "boolean", String(calls[0][1].muted));
 // another live tab: same player, setChannel (keeps unmuted state)
 await page.evaluate(() => { tabs.get("otherchan").stream = { user_id: "888", title: "x", game_name: "y", viewer_count: 5, started_at: new Date().toISOString() }; });
@@ -552,59 +553,6 @@ const lay = await page.evaluate(() => {
 check("wide: video left, 380px chat column right", lay.vRight <= lay.cLeft + 1 && lay.cW === 380 && Math.abs(lay.fRatio - 16 / 9) < 0.05 && lay.docW === 1280, JSON.stringify(lay));
 await page.screenshot({ path: dir + "/t12-video-wide.png" });
 await page.setViewportSize({ width: 390, height: 760 });
-
-// ---- touch controls (phones) ----
-await page.evaluate(() => __player.state.muted = true);
-await page.evaluate(() => hideVideoControls());
-await page.tap("#video .vctl");
-await sleep(250);
-check("tap shows the controls", await page.$eval("#video .vctl", (v) => v.classList.contains("shown")));
-const vstate = await page.evaluate(() => ({ live: document.querySelector(".vctl-live").textContent, mute: document.querySelector(".vctl-mute").getAttribute("aria-label"), q: document.querySelector(".vctl-quality").textContent }));
-check("controls show LIVE + viewers, muted state, quality", vstate.live === "LIVE · 1.2k" && vstate.mute === "Unmute" && vstate.q === "Auto", JSON.stringify(vstate));
-await page.screenshot({ path: dir + "/t17-video-controls.png" });
-const tb = await page.$eval("#video .vctl-mute", (b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); });
-check("touch targets at least 44px", tb >= 44, String(tb));
-await page.tap("#video .vctl-mute");
-await sleep(350);
-check("tap unmute → setMuted(false), icon flips", (await pc()).at(-1)[1] === false && (await page.getAttribute("#video .vctl-mute", "aria-label")) === "Mute");
-await page.tap("#video .vctl-play");
-await sleep(350);
-check("tap pause → pause(), shows play button, controls stay", (await pc()).at(-1)[0] === "pause" && (await page.getAttribute("#video .vctl-play", "aria-label")) === "Play");
-await sleep(3300);
-check("controls don't auto-hide while paused", await page.$eval("#video .vctl", (v) => v.classList.contains("shown")));
-await page.tap("#video .vctl-play");
-await sleep(3500);
-check("controls auto-hide while playing", !(await page.$eval("#video .vctl", (v) => v.classList.contains("shown"))));
-await page.tap("#video .vctl");
-await page.tap("#video .vctl-quality");
-await sleep(100);
-const qopts = await page.$$eval("#video .vctl-menu button", (bs) => bs.map((b) => b.textContent));
-check("quality menu lists Auto + qualities + Twitch-controls escape", JSON.stringify(qopts) === '["Auto","1080p60 (source)","720p60","480p","Use Twitch\'s player controls"]', JSON.stringify(qopts));
-await page.screenshot({ path: dir + "/t18-video-quality.png" });
-await page.tap('#video .vctl-menu button:has-text("720p60")');
-await sleep(400);
-check("pick quality → setQuality, label updates", (await pc()).at(-1)[1] === "720p60" && (await page.textContent("#video .vctl-quality")) === "720p60", await page.textContent("#video .vctl-quality"));
-await page.tap("#video .vctl-full");
-await sleep(400);
-const fs1 = await page.evaluate(() => ({ fs: !!document.fullscreenElement, theater: document.querySelector(".app").classList.contains("theater"), h: Math.round(document.getElementById("video").getBoundingClientRect().height) }));
-check("fullscreen button fills the screen", (fs1.fs || fs1.theater) && fs1.h >= 700, JSON.stringify(fs1));
-await page.screenshot({ path: dir + "/t19-video-full.png" });
-await page.tap("#video .vctl");
-await page.tap("#video .vctl-full");
-await sleep(400);
-check("and back", await page.evaluate(() => !document.fullscreenElement && !document.querySelector(".app").classList.contains("theater")));
-// Escape hatch: Twitch's own controls, and back from Settings.
-await page.tap("#video .vctl");
-await page.tap("#video .vctl-quality");
-await page.tap('#video .vctl-menu button:has-text("Twitch")');
-await sleep(300);
-calls = await pc();
-check("switch to Twitch controls rebuilds the player with controls", calls.filter((c) => c[0] === "new").at(-1)[1].controls === true && !(await page.$("#video .vctl")));
-await page.click("#settings-btn");
-await page.click('#sheet-body .row:has-text("Simple video controls") input');
-await page.click("#sheet-close");
-await sleep(300);
-check("Settings switches back to touch controls", (await pc()).filter((c) => c[0] === "new").at(-1)[1].controls === false && !!(await page.$("#video .vctl")) && JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).twitchControls === false);
 
 // =============== recent emotes: only what works in this channel ===============
 await page.click(".tab:first-child .tab-name");

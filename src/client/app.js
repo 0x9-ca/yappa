@@ -7,6 +7,7 @@ const MAX_MESSAGES = 500;
 const MAX_TABS = 20;
 const DEFAULT_COLORS = ["#FF0000", "#0000FF", "#008000", "#B22222", "#FF7F50", "#9ACD32", "#FF4500", "#2E8B57", "#DAA520", "#D2691E", "#5F9EA0", "#1E90FF", "#FF69B4", "#8A2BE2", "#00FF7F"];
 const coarse = matchMedia("(pointer: coarse)").matches;
+const APP_TITLE = document.title; // set server-side from the app name
 
 let status = null;
 let me = null;                 // { userId, login }
@@ -369,7 +370,7 @@ window.addEventListener("online", onResume);
 window.addEventListener("focus", onResume);
 
 function updateTitle() {
-  document.title = (hiddenUnread ? "(" + (hiddenUnread > 99 ? "99+" : hiddenUnread) + ") " : "") + "Twitch Chat";
+  document.title = (hiddenUnread ? "(" + (hiddenUnread > 99 ? "99+" : hiddenUnread) + ") " : "") + APP_TITLE;
   if (navigator.setAppBadge) {
     (hiddenUnread ? navigator.setAppBadge(hiddenUnread) : navigator.clearAppBadge()).catch(() => {});
   }

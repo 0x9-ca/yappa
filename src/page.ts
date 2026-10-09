@@ -19,7 +19,7 @@ export function renderPage(user: string): string {
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Chat">
+<meta name="apple-mobile-web-app-title" content="${APP_NAME}">
 <link rel="stylesheet" href="${versioned("/app.css")}">
 </head>
 <body>

@@ -10,7 +10,7 @@ import iconMaskable512 from "./client/icons/icon-maskable-512.png";
 const IMMUTABLE = "private, max-age=31536000, immutable";
 const REVALIDATE = "no-cache";
 
-export const APP_NAME = "Twitch Chat";
+export const APP_NAME = "Yappa";
 export const THEME_COLOR = "#18181b";
 
 /** Short FNV-1a hash, used to bust caches when an asset changes. */
@@ -38,7 +38,7 @@ export function versioned(path: keyof typeof icons | "/app.css" | "/app.js"): st
 const manifest = JSON.stringify({
   id: "/",
   name: APP_NAME,
-  short_name: "Chat",
+  short_name: APP_NAME,
   description: "Twitch chat with tabs, 7TV emotes, mod tools and chat color cycling.",
   start_url: "/",
   scope: "/",

@@ -12,7 +12,6 @@ import {
   getUser,
   getModeratedChannelIds,
   getUserEmotes,
-  isLive,
   refreshToken,
   revokeToken,
   sendChatMessage,
@@ -21,12 +20,8 @@ import {
   validateToken,
 } from "./twitch";
 
-const TICK_MS = 10_000;
 // Twitch requires apps to re-validate held tokens at least hourly.
 const VALIDATE_EVERY_MS = 55 * 60_000;
-// Stream status can briefly flicker; require several offline checks in a row.
-const OFFLINE_TICKS_BEFORE_STOP = 3;
-const ERROR_TICKS_BEFORE_STOP = 6;
 const CHAT_EVENTS = [
   "channel.chat.message",
   "channel.chat.notification",
@@ -45,24 +40,17 @@ interface Tokens {
   scopes?: string[];
 }
 
-interface Run {
-  id: string;
-  channel: string;
-  running: boolean;
-  startedAt: number;
-  stoppedAt?: number;
-  stoppedReason?: string;
+/** "Change my chat color every time I send a message." */
+interface Cycle {
+  enabled: boolean;
   lastColor?: string;
-  lastTickAt?: number;
   changes: number;
-  offlineStreak: number;
-  errorStreak: number;
   lastError?: string;
 }
 
 export interface Status {
   twitch: { login: string; userId: string; missingScopes: string[]; missingOptionalScopes: string[] } | null;
-  run: Omit<Run, "id" | "offlineStreak" | "errorStreak"> | null;
+  cycle: Cycle;
 }
 
 function randomHexColor(): string {
@@ -70,7 +58,7 @@ function randomHexColor(): string {
   return "#" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
 }
 
-/** One instance per Access user. Holds Twitch tokens and drives the color loop via alarms. */
+/** One instance per Access user. Holds Twitch tokens and the color-cycling setting. */
 export class ColorLoop extends DurableObject<Env> {
   private moderated: { at: number; ids: Set<string> } | undefined;
 
@@ -78,8 +66,8 @@ export class ColorLoop extends DurableObject<Env> {
     return this.ctx.storage.get<Tokens>("tokens");
   }
 
-  private async getRun(): Promise<Run | undefined> {
-    return this.ctx.storage.get<Run>("run");
+  private async getCycle(): Promise<Cycle> {
+    return (await this.ctx.storage.get<Cycle>("cycle")) ?? { enabled: false, changes: 0 };
   }
 
   /**
@@ -93,13 +81,8 @@ export class ColorLoop extends DurableObject<Env> {
   }
 
   async status(): Promise<Status> {
-    let [tokens, run] = await Promise.all([this.getTokens(), this.getRun()]);
+    let [tokens, cycle] = await Promise.all([this.getTokens(), this.getCycle()]);
     if (tokens && !tokens.scopes) tokens = await this.backfillScopes(tokens);
-    let publicRun: Status["run"] = null;
-    if (run) {
-      const { id, offlineStreak, errorStreak, ...rest } = run;
-      publicRun = rest;
-    }
     return {
       twitch: tokens
         ? {
@@ -109,7 +92,7 @@ export class ColorLoop extends DurableObject<Env> {
             missingOptionalScopes: OPTIONAL_SCOPES.filter((s) => !tokens.scopes?.includes(s)),
           }
         : null,
-      run: publicRun,
+      cycle,
     };
   }
 
@@ -248,7 +231,10 @@ export class ColorLoop extends DurableObject<Env> {
       const res = await this.withToken((t) =>
         sendChatMessage(this.env, t.accessToken, broadcasterId, t.userId, message, replyParentId),
       );
-      return res.is_sent ? { ok: true } : { ok: false, error: res.drop_reason?.message ?? "Message was not sent." };
+      if (!res.is_sent) return { ok: false, error: res.drop_reason?.message ?? "Message was not sent." };
+      // Pick the next color now, so Twitch has applied it well before the next message.
+      if ((await this.getCycle()).enabled) await this.changeColor();
+      return { ok: true };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
@@ -292,100 +278,43 @@ export class ColorLoop extends DurableObject<Env> {
   }
 
   async disconnectTwitch(): Promise<void> {
-    await this.stop("Twitch disconnected");
+    await this.setCycle(false);
     const tokens = await this.getTokens();
     await this.ctx.storage.delete("tokens");
     if (tokens) await revokeToken(this.env, tokens.accessToken).catch(() => {});
   }
 
-  async start(channel: string): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (!(await this.getTokens())) return { ok: false, error: "Connect your Twitch account first." };
+  /** Turning cycling on picks a color immediately, so the very next message is already new. */
+  async setCycle(enabled: boolean): Promise<Cycle> {
+    const cycle = { ...(await this.getCycle()), enabled, lastError: undefined };
+    await this.ctx.storage.put("cycle", cycle);
+    if (enabled) await this.changeColor();
+    return this.getCycle();
+  }
 
+  private async changeColor(): Promise<void> {
+    const color = randomHexColor();
+    let error: string | undefined;
     try {
-      const live = await this.withToken((t) => isLive(this.env, t.accessToken, channel));
-      if (!live) return { ok: false, error: `${channel} is not live right now.` };
+      await this.withToken((t) => setChatColor(this.env, t.accessToken, t.userId, color));
     } catch (err) {
-      return { ok: false, error: (err as Error).message };
+      error = (err as Error).message;
     }
-
-    await this.ctx.storage.put<Run>("run", {
-      id: crypto.randomUUID(),
-      channel,
-      running: true,
-      startedAt: Date.now(),
-      changes: 0,
-      offlineStreak: 0,
-      errorStreak: 0,
-    });
-    await this.ctx.storage.setAlarm(Date.now());
-    return { ok: true };
+    const cycle = await this.getCycle();
+    if (error) {
+      // 400 usually means no Turbo/Prime (hex colors not allowed); 401 means the grant
+      // was revoked. Neither fixes itself, so switch cycling off and say why.
+      const permanent = /\((400|401)\)/.test(error);
+      await this.ctx.storage.put("cycle", { ...cycle, lastError: error, enabled: permanent ? false : cycle.enabled });
+      return;
+    }
+    await this.ctx.storage.put("cycle", { ...cycle, lastColor: color, changes: cycle.changes + 1, lastError: undefined });
   }
 
-  async stop(reason = "Stopped by you"): Promise<void> {
-    await this.ctx.storage.deleteAlarm();
-    const run = await this.getRun();
-    if (run?.running) {
-      await this.ctx.storage.put<Run>("run", {
-        ...run,
-        running: false,
-        stoppedAt: Date.now(),
-        stoppedReason: reason,
-      });
-    }
-  }
-
+  /** Clears the timer-based loop from earlier versions, which may still have an alarm set. */
   async alarm(): Promise<void> {
-    const run = await this.getRun();
-    if (!run?.running) return;
-
-    // Schedule the next tick up front so a thrown error can't kill the loop.
-    await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
-
-    const update: Partial<Run> = { lastTickAt: Date.now() };
-    let stopReason: string | undefined;
-
-    try {
-      const live = await this.withToken((t) => isLive(this.env, t.accessToken, run.channel));
-      if (!live) {
-        update.offlineStreak = run.offlineStreak + 1;
-        if (update.offlineStreak >= OFFLINE_TICKS_BEFORE_STOP) stopReason = `${run.channel} went offline`;
-      } else {
-        update.offlineStreak = 0;
-        const color = randomHexColor();
-        await this.withToken((t) => setChatColor(this.env, t.accessToken, t.userId, color));
-        update.lastColor = color;
-        update.changes = run.changes + 1;
-      }
-      update.errorStreak = 0;
-      update.lastError = undefined;
-    } catch (err) {
-      update.lastError = (err as Error).message;
-      update.errorStreak = run.errorStreak + 1;
-      // 400 from Update User Chat Color usually means no Turbo/Prime (hex not allowed);
-      // 401 after a refresh attempt means the grant was revoked. Neither will recover.
-      if (err instanceof TwitchError && (err.status === 400 || err.status === 401)) {
-        stopReason = update.lastError;
-      } else if (update.errorStreak >= ERROR_TICKS_BEFORE_STOP) {
-        stopReason = `Too many errors in a row: ${update.lastError}`;
-      }
-    }
-
-    // Re-read: the user may have stopped or restarted while we were awaiting Twitch.
-    const current = await this.getRun();
-    if (!current?.running || current.id !== run.id) return;
-
-    console.log(
-      JSON.stringify({ tick: run.channel, color: update.lastColor, offlineStreak: update.offlineStreak, error: update.lastError, stopReason }),
-    );
-
-    const next: Run = { ...current, ...update };
-    if (stopReason) {
-      next.running = false;
-      next.stoppedAt = Date.now();
-      next.stoppedReason = stopReason;
-      await this.ctx.storage.deleteAlarm();
-    }
-    await this.ctx.storage.put<Run>("run", next);
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.delete("run");
   }
 
   /**

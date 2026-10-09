@@ -1,8 +1,8 @@
 # yappa
 
 Web Twitch chat client (EventSub WebSocket + Helix, with 7TV emotes) that can also
-change your chat color to a random hex color
-every 10 seconds while the channel is live. Gated by Cloudflare Access.
+change your chat color to a random hex color every time you send a message. Gated by
+Cloudflare Access.
 
 ## Setup
 
@@ -28,8 +28,8 @@ every 10 seconds while the channel is live. Gated by Cloudflare Access.
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
   `/untimeout`, `/clear`) in channels you moderate.
 - Client code lives in `src/client/` and is bundled as text modules (see `rules` in `wrangler.jsonc`).
-- Start requires the channel to be live. The loop stops when the channel has been offline
-  for 3 consecutive checks (~30s), when you click Stop, or on unrecoverable errors.
+- Color cycling picks a new color when switched on and again after every message sent
+  through the app, so each message comes out a different color.
 - Twitch only allows hex colors for **Turbo or Prime** accounts; otherwise the
-  first color change fails with a 400 error and the loop stops.
+  first color change fails with a 400 error and cycling switches off.
 - Chat color is account-wide on Twitch, so it changes in every channel, not only the selected one.

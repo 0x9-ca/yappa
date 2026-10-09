@@ -87,17 +87,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
     case "GET /api/status":
       return json(await stub.status());
 
-    case "POST /api/start": {
-      const body = (await request.json().catch(() => ({}))) as { channel?: unknown };
-      const channel = parseChannel(body.channel);
-      if (!channel) return json({ ok: false, error: "Enter a valid channel name." }, 400);
-      const result = await stub.start(channel);
-      return json(result, result.ok ? 200 : 409);
+    case "POST /api/cycle": {
+      const body = (await request.json().catch(() => ({}))) as { enabled?: unknown };
+      return json({ ok: true, cycle: await stub.setCycle(body.enabled === true) });
     }
-
-    case "POST /api/stop":
-      await stub.stop();
-      return json({ ok: true });
 
     case "POST /api/chat/subscribe": {
       const body = (await request.json().catch(() => ({}))) as { channel?: unknown; session_id?: unknown };

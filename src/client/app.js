@@ -78,31 +78,29 @@ async function refreshStatus() {
   show("reauth-optional", missingOptional.length > 0);
   if (tw) $("login").textContent = tw.login;
 
-  const run = s.run;
-  const running = !!(run && run.running);
-  $("swatch").style.background = run && run.lastColor ? run.lastColor : "transparent";
-  $("color").textContent = run && run.lastColor ? run.lastColor + " - " + run.changes : "—";
-  $("cycle").textContent = running ? "Stop cycling" : "Cycle color";
-  $("cycle").className = running ? "stop" : "ghost";
-  $("cycler").title = running ? "Cycling while " + run.channel + " is live" : "Your current chat color";
-  let note = "";
-  if (running && run.lastError) note = "Color cycling error: " + run.lastError;
-  else if (run && run.stoppedReason && Date.now() - run.stoppedAt < 10 * 60000) note = "Color cycling stopped: " + run.stoppedReason;
-  $("cycle-status").textContent = note;
-  show("cycle-status", !!note && !!tw);
+  renderCycle(s.cycle);
+  if (first && tw && tw.missingScopes.length === 0) restoreTabs(null);
+}
 
-  if (first && tw && tw.missingScopes.length === 0) restoreTabs(running ? run.channel : null);
+function renderCycle(cycle) {
+  cycle = cycle || { enabled: false, changes: 0 };
+  $("swatch").style.background = cycle.lastColor || "transparent";
+  $("color").textContent = cycle.lastColor ? cycle.lastColor + " - " + cycle.changes : "—";
+  $("cycle").textContent = cycle.enabled ? "Stop cycling" : "Cycle color";
+  $("cycle").className = cycle.enabled ? "stop" : "ghost";
+  $("cycler").title = cycle.enabled ? "Your color changes every time you send a message" : "Your current chat color";
+  const note = cycle.lastError ? (cycle.enabled ? "Color cycling error: " : "Color cycling turned off: ") + cycle.lastError : "";
+  $("cycle-status").textContent = note;
+  show("cycle-status", !!note && !!me);
 }
 
 $("cycle").addEventListener("click", async () => {
   setError("");
-  const running = status && status.run && status.run.running;
-  if (running) await api("/api/stop", {});
-  else {
-    if (!active) return setError("Open a channel first.");
-    const r = await api("/api/start", { channel: active.login });
-    if (!r.ok) setError(r.error);
-  }
+  const enabled = !(status && status.cycle && status.cycle.enabled);
+  $("cycle").disabled = true;
+  const r = await api("/api/cycle", { enabled });
+  $("cycle").disabled = false;
+  if (!r.ok) setError(r.error);
   refreshStatus();
 });
 
@@ -1216,6 +1214,7 @@ $("send-form").addEventListener("submit", async (e) => {
     input.value = "";
     setReply(null);
     closePicker();
+    if (status && status.cycle && status.cycle.enabled) refreshStatus(); // show the new color now
   } else {
     $("send-error").textContent = r.error;
     show("send-error", true);

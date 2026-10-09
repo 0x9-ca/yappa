@@ -126,7 +126,8 @@ footer form { display: flex; gap: 8px; }
 .composer .ce-emote::selection { color: transparent; }
 footer form { align-items: flex-end; }
 #send-error { color: var(--err-text); font-size: 12px; margin-top: 6px; }
-/* The two icon buttons beside the message box: identical squares, as tall as the box. */
+/* The buttons around the message box are all as tall as the box (38px). */
+#send { height: 38px; padding-top: 0; padding-bottom: 0; }
 #emote-btn, #twitch-btn { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; }
 #emote-btn svg, #twitch-btn svg { width: 18px; height: 18px; }
 

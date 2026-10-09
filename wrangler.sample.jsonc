@@ -1,21 +1,24 @@
+// Template for wrangler.jsonc. That file is not in git (it holds your own hostnames and IDs).
+// Copy this to wrangler.jsonc, replace every YOUR-… placeholder and example.com hostname,
+// then run `npm run types`. When the structure below changes (bindings, rules, migrations,
+// vars), change it in both files.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "yappa",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-15",
   "observability": { "enabled": true },
-  // old.example.com is the old address; it hands browsers over to APP_HOST (see src/moved.ts).
-  "routes": [
-    { "pattern": "yappa.example.com", "custom_domain": true },
-    { "pattern": "old.example.com", "custom_domain": true }
-  ],
+  // The app's hostname. To keep an old address working, add it here too: it forwards
+  // browsers to APP_HOST (see src/moved.ts).
+  "routes": [{ "pattern": "yappa.example.com", "custom_domain": true }],
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
-    // Your Zero Trust team domain, e.g. "https://myteam.cloudflareaccess.com"
+    // Your Zero Trust team domain
     "ACCESS_TEAM_DOMAIN": "https://YOUR-TEAM.cloudflareaccess.com",
     // Application Audience (AUD) tag of the existing Access application
     "ACCESS_AUD": "YOUR-ACCESS-APPLICATION-AUD-TAG",
+    // Client ID of your Twitch app (the client secret is a Worker secret, below)
     "TWITCH_CLIENT_ID": "YOUR-TWITCH-CLIENT-ID",
     // The app's address. Opening the app on any other hostname moves you here, bringing
     // along this browser's tabs and settings. Empty = no redirect.

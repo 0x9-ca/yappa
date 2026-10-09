@@ -12,7 +12,7 @@ The Worker is still named `yappa` (the project started as a chat-color prank).
 - `npm run check`: type-check the Worker (`tsc --noEmit`). Client JS isn't type-checked; run `node --check src/client/app.js`.
 - `npm run test:e2e`: end-to-end UI test in headless Chromium (see Testing). Run it before every deploy.
 - `npm run deploy`: `wrangler deploy` to the custom domain. Deploying is how changes reach the user; there is no staging.
-- `npm run types`: regenerate `worker-configuration.d.ts` after changing `wrangler.jsonc` bindings or vars.
+- `npm run types`: regenerate `worker-configuration.d.ts` after changing `wrangler.jsonc` bindings or vars. That file is gitignored (it embeds the config values), so run it after cloning too; `npm run check` needs it.
 
 ## Architecture
 
@@ -64,5 +64,7 @@ Tokens never reach the browser.
 ## Rules
 
 - **Never put the user's real name or Twitch login anywhere in the repo:** code, placeholders, examples, test data, comments or commit messages. Use neutral stand-ins (`testuser`, "your nickname"). Grep diffs for it (as a whole word) before committing.
+- **`wrangler.jsonc`, `worker-configuration.d.ts` and `.claude/` are gitignored**: they hold the real hostnames, Access team domain and AUD tag, and the Twitch client ID. The tracked template is `wrangler.sample.jsonc` (placeholders). Whenever you change the structure of `wrangler.jsonc` (bindings, rules, migrations, vars), make the same change in the sample, and never put real values in it. Grep diffs for those values as well as the name.
+- Commits are authored as `0x9-ca <git@0x9.ca>` (set in this repo's local git config).
 - Config (`wrangler.jsonc` vars): `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` (the existing Access app's audience tag) and `TWITCH_CLIENT_ID`. Secret: `TWITCH_CLIENT_SECRET`. Var `APP_HOST` is the canonical hostname. The Twitch app's redirect URL is `https://yappa.0x9.ca/auth/callback`. The OAuth redirect is built from the request's origin, so every hostname in use must be registered with Twitch and covered by the Access app (same AUD).
 - The GitHub remote is `origin` (`git@github.com:0x9-ca/yappa.git`, branch `main`). Commit freely, but only push when the user asks.

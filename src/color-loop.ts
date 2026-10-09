@@ -9,6 +9,13 @@ import {
   deleteSubscription,
   exchangeCode,
   getBadges,
+  getChatSettings,
+  getCheermotes,
+  getFollowedAt,
+  getStreamsByIds,
+  getUserById,
+  manageHeldMessage,
+  updateChatSettings,
   getUser,
   getModeratedChannelIds,
   getPinnedMessage,
@@ -31,7 +38,10 @@ const CHAT_EVENTS = [
   "channel.chat.message_delete",
   "channel.chat.clear",
   "channel.chat.clear_user_messages",
+  "channel.chat_settings.update",
 ];
+// Moderator-only; condition uses moderator_user_id rather than user_id.
+const AUTOMOD_EVENTS = ["automod.message.hold", "automod.message.update"];
 
 interface Tokens {
   accessToken: string;
@@ -140,6 +150,8 @@ export class ColorLoop extends DurableObject<Env> {
         broadcaster: { id: string; login: string; name: string };
         isMod: boolean | null;
         subscriptionIds: string[];
+        automod: boolean;
+        settings: unknown;
       }
     | { ok: false; error: string }
   > {
@@ -148,17 +160,35 @@ export class ColorLoop extends DurableObject<Env> {
         const user = await getUser(this.env, t.accessToken, channel);
         if (!user) return { ok: false as const, error: `No Twitch channel named ${channel}.` };
         const condition = { broadcaster_user_id: user.id, user_id: t.userId };
-        const [subscriptionIds, isMod] = await Promise.all([
+        const [subscriptionIds, isMod, settings] = await Promise.all([
           Promise.all(
             CHAT_EVENTS.map((type) => createWebSocketSubscription(this.env, t.accessToken, type, condition, sessionId)),
           ),
           this.isModerator(t, user.id),
+          getChatSettings(this.env, t.accessToken, user.id).catch(() => null),
         ]);
+        // AutoMod queue for channels we moderate (best effort: an old token may lack the scope).
+        let automod = false;
+        if (isMod && t.scopes?.includes("moderator:manage:automod")) {
+          try {
+            const modCondition = { broadcaster_user_id: user.id, moderator_user_id: t.userId };
+            subscriptionIds.push(
+              ...(await Promise.all(
+                AUTOMOD_EVENTS.map((type) =>
+                  createWebSocketSubscription(this.env, t.accessToken, type, modCondition, sessionId, "2"),
+                ),
+              )),
+            );
+            automod = true;
+          } catch {}
+        }
         return {
           ok: true as const,
           broadcaster: { id: user.id, login: user.login, name: user.display_name },
           isMod,
           subscriptionIds,
+          automod,
+          settings,
         };
       });
     } catch (err) {
@@ -242,7 +272,7 @@ export class ColorLoop extends DurableObject<Env> {
     broadcasterId: string,
     message: string,
     replyParentId?: string,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
     try {
       const res = await this.withToken((t) =>
         sendChatMessage(this.env, t.accessToken, broadcasterId, t.userId, message, replyParentId),
@@ -250,7 +280,7 @@ export class ColorLoop extends DurableObject<Env> {
       if (!res.is_sent) return { ok: false, error: res.drop_reason?.message ?? "Message was not sent." };
       // Pick the next color now, so Twitch has applied it well before the next message.
       if ((await this.getCycle()).enabled) await this.changeColor();
-      return { ok: true };
+      return { ok: true, messageId: res.message_id };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
@@ -293,6 +323,69 @@ export class ColorLoop extends DurableObject<Env> {
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
+  }
+
+  /** Profile + follow date for the user card. followedAt is undefined when we can't know. */
+  async userCard(
+    broadcasterId: string,
+    userId: string,
+  ): Promise<{ ok: true; user: unknown; followedAt?: string | null } | { ok: false; error: string }> {
+    try {
+      return await this.withToken(async (t) => {
+        const canSeeFollows = t.scopes?.includes("moderator:read:followers") && (await this.isModerator(t, broadcasterId));
+        const [user, followedAt] = await Promise.all([
+          getUserById(this.env, t.accessToken, userId),
+          canSeeFollows ? getFollowedAt(this.env, t.accessToken, broadcasterId, userId).catch(() => undefined) : undefined,
+        ]);
+        if (!user) return { ok: false as const, error: "User not found." };
+        return { ok: true as const, user, followedAt };
+      });
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  async automodAction(messageId: string, allow: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      await this.withToken((t) => manageHeldMessage(this.env, t.accessToken, t.userId, messageId, allow ? "ALLOW" : "DENY"));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  async updateSettings(
+    broadcasterId: string,
+    patch: Record<string, unknown>,
+  ): Promise<{ ok: true; settings: unknown } | { ok: false; error: string }> {
+    try {
+      const settings = await this.withToken((t) => updateChatSettings(this.env, t.accessToken, broadcasterId, t.userId, patch));
+      return { ok: true, settings };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  async streams(ids: string[]): Promise<unknown[]> {
+    try {
+      return await this.withToken((t) => getStreamsByIds(this.env, t.accessToken, ids));
+    } catch {
+      return [];
+    }
+  }
+
+  async cheermotes(broadcasterId: string): Promise<unknown[]> {
+    try {
+      return await this.withToken((t) => getCheermotes(this.env, t.accessToken, broadcasterId));
+    } catch {
+      return [];
+    }
+  }
+
+  /** The user chatted from somewhere else (e.g. the official app): next color, if cycling. */
+  async cycleBump(): Promise<Cycle> {
+    if ((await this.getCycle()).enabled) await this.changeColor();
+    return this.getCycle();
   }
 
   async chatBadges(broadcasterId: string): Promise<Record<string, { url: string; title: string }>> {

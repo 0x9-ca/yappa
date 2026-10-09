@@ -37,7 +37,9 @@ export function renderPage(user: string): string {
         <button class="ghost" id="cycle">Cycle color</button>
       </div>
       <div class="account" id="account" hidden>
-        <span id="login"></span> · <button class="link" id="logout">disconnect</button>
+        <button class="icon-btn" id="settings-btn" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
       </div>
     </header>
     <nav class="tabs" id="tabs" aria-label="Open channels" hidden></nav>
@@ -50,6 +52,20 @@ export function renderPage(user: string): string {
   </div>
 
   <div class="chat" id="chat" hidden>
+    <div class="infobar" id="infobar" hidden>
+      <span class="live" id="live"></span>
+      <span class="modes" id="modes"></span>
+      <button class="icon-btn" id="search-btn" type="button" title="Search chat" aria-label="Search chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      </button>
+      <button class="ghost small" id="modes-btn" type="button" hidden>Modes</button>
+    </div>
+    <div class="searchbar" id="searchbar" hidden>
+      <input id="search" placeholder="Filter: words, or from:name" autocomplete="off" spellcheck="false" aria-label="Filter chat">
+      <span class="search-count" id="search-count"></span>
+      <button class="icon-btn" id="search-close" type="button" aria-label="Close search">×</button>
+    </div>
+    <div class="panel" id="modes-panel" hidden></div>
     <div class="pinned" id="pinned" hidden></div>
     <div class="empty-chat" id="empty-chat">Open a channel above to start chatting.</div>
     <button class="more" id="more" hidden>More messages below</button>
@@ -78,6 +94,12 @@ export function renderPage(user: string): string {
     </form>
     <div id="send-error" hidden></div>
   </footer>
+</div>
+<div class="sheet-backdrop" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true">
+    <button class="icon-btn sheet-close" id="sheet-close" type="button" aria-label="Close">×</button>
+    <div id="sheet-body"></div>
+  </div>
 </div>
 <div hidden id="access-user">${escapeHtml(user)}</div>
 <script src="${versioned("/app.js")}"></script>

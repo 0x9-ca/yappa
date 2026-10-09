@@ -30,3 +30,19 @@ self.addEventListener("fetch", (event) => {
     ),
   );
 });
+
+// Mention/highlight notifications: focus the app and open the channel's tab.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const tab = event.notification.data && event.notification.data.tab;
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const client = all[0];
+    if (client) {
+      await client.focus();
+      if (tab) client.postMessage({ type: "open-tab", tab });
+    } else {
+      await self.clients.openWindow("/" + (tab ? "#" + tab : ""));
+    }
+  })());
+});

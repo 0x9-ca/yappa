@@ -148,6 +148,49 @@ async function handle(request: Request, env: Env): Promise<Response> {
       return json(await stub.chatEmotes(id));
     }
 
+    case "GET /api/chat/user": {
+      const b = url.searchParams.get("broadcaster_id"), u = url.searchParams.get("user_id");
+      if (!b || !u) return json({ ok: false, error: "Missing broadcaster_id or user_id." }, 400);
+      const result = await stub.userCard(b, u);
+      return json(result, result.ok ? 200 : 502);
+    }
+
+    case "POST /api/chat/automod": {
+      const body = (await request.json().catch(() => ({}))) as { msg_id?: unknown; allow?: unknown };
+      if (typeof body.msg_id !== "string") return json({ ok: false, error: "Missing msg_id." }, 400);
+      const result = await stub.automodAction(body.msg_id, body.allow === true);
+      return json(result, result.ok ? 200 : 502);
+    }
+
+    case "POST /api/chat/settings": {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      if (typeof body.broadcaster_id !== "string") return json({ ok: false, error: "Missing broadcaster_id." }, 400);
+      // Only pass through known setting fields with the right types.
+      const patch: Record<string, unknown> = {};
+      for (const k of ["slow_mode", "follower_mode", "subscriber_mode", "emote_mode", "unique_chat_mode"]) {
+        if (typeof body[k] === "boolean") patch[k] = body[k];
+      }
+      for (const k of ["slow_mode_wait_time", "follower_mode_duration"]) {
+        if (typeof body[k] === "number" && Number.isFinite(body[k])) patch[k] = body[k];
+      }
+      const result = await stub.updateSettings(body.broadcaster_id, patch);
+      return json(result, result.ok ? 200 : 502);
+    }
+
+    case "GET /api/streams": {
+      const ids = (url.searchParams.get("ids") ?? "").split(",").filter((x) => /^\d+$/.test(x)).slice(0, 100);
+      return json(await stub.streams(ids));
+    }
+
+    case "GET /api/chat/cheermotes": {
+      const id = url.searchParams.get("broadcaster_id");
+      if (!id) return json([], 400);
+      return json(await stub.cheermotes(id));
+    }
+
+    case "POST /api/cycle/bump":
+      return json({ ok: true, cycle: await stub.cycleBump() });
+
     case "GET /api/chat/pin": {
       const id = url.searchParams.get("broadcaster_id");
       if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);

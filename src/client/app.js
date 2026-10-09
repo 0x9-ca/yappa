@@ -19,12 +19,22 @@ let sockGen = 0;               // bumps whenever we deliberately drop the socket
 let retries = 0;
 let replyTo = null;
 let lastSent = "";
-let stvGlobal = new Map();     // 7TV emote name -> { url, zeroWidth }
+let extGlobal = new Map();     // 7TV/BTTV/FFZ global emotes: name -> { url, zeroWidth, source }
 let lastSocketMsgAt = 0;       // any frame (incl. keepalives) proves the socket is alive
 let keepaliveMs = 15000;
 let resumedAt = Date.now();    // when the page last became visible / unfrozen
 let reconnectTimer = null;
 let hiddenUnread = 0;
+const sentIds = new Set();     // message ids sent from this app (for color cycling from elsewhere)
+const inflightSends = new Set();
+
+const DEFAULT_SETTINGS = { notify: false, sound: false, highlights: "", fontSize: 14, hidden: [] };
+let settings = loadSettings();
+function loadSettings() {
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(safeGet("settings") || "{}") }; } catch { return { ...DEFAULT_SETTINGS }; }
+}
+function saveSettings() { safeSet("settings", JSON.stringify(settings)); applySettings(); }
+function applySettings() { document.querySelector(".app").style.setProperty("--chat-font", settings.fontSize + "px"); }
 
 // ---------- utilities ----------
 
@@ -77,7 +87,7 @@ async function refreshStatus() {
   show("reauth", !!tw && tw.missingScopes.length > 0);
   const missingOptional = tw && tw.missingScopes.length === 0 ? tw.missingOptionalScopes || [] : [];
   show("reauth-optional", missingOptional.length > 0);
-  if (tw) $("login").textContent = tw.login;
+  if (tw) $("settings-btn").title = "Settings (signed in to Twitch as " + tw.login + ")";
 
   renderCycle(s.cycle);
   if (first && tw && tw.missingScopes.length === 0) restoreTabs(null);
@@ -105,13 +115,13 @@ $("cycle").addEventListener("click", async () => {
   refreshStatus();
 });
 
-$("logout").addEventListener("click", async () => {
+async function logout() {
   for (const t of [...tabs.values()]) closeTab(t, { keepSaved: true });
   dropSocket();
   await api("/auth/logout", {});
   status = null;
   refreshStatus();
-});
+}
 
 // ---------- tabs ----------
 
@@ -140,7 +150,7 @@ function openTab(name, focus = true) {
   if (!tab) {
     if (tabs.size >= MAX_TABS) { setError("You can have up to " + MAX_TABS + " tabs open."); return null; }
     tab = {
-      login: name, broadcaster: null, isMod: null, subIds: [], badges: {}, stv: new Map(),
+      login: name, broadcaster: null, isMod: null, subIds: [], badges: {}, ext: new Map(), cheermotes: null,
       twitchEmotes: null, unread: 0, mentioned: false, joined: false, chatters: new Map(), loadedExtras: false,
       seen: new Set(), lastTs: 0, pin: null,
       list: el("ul", "messages"), tabEl: null,
@@ -174,7 +184,9 @@ function buildTabEl(tab) {
   mod.hidden = true;
   const unread = el("span", "unread");
   unread.hidden = true;
-  btn.append(dot, name, mod, unread);
+  const live = el("span", "live-pill");
+  live.hidden = true;
+  btn.append(dot, name, live, mod, unread);
   btn.addEventListener("click", () => activate(tab));
   const close = el("button", "tab-close", "×");
   close.type = "button";
@@ -182,7 +194,7 @@ function buildTabEl(tab) {
   close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(tab); });
   wrap.append(btn, close);
   $("tabs").appendChild(wrap);
-  tab.tabEl = { wrap, name, mod, unread };
+  tab.tabEl = { wrap, name, mod, unread, live };
   updateTabEl(tab);
 }
 
@@ -194,6 +206,9 @@ function updateTabEl(tab) {
   t.wrap.classList.toggle("mentioned", tab.mentioned);
   t.name.textContent = tab.broadcaster ? tab.broadcaster.name : tab.login;
   t.mod.hidden = !tab.isMod;
+  t.live.hidden = !tab.stream;
+  t.live.textContent = tab.stream ? compactCount(tab.stream.viewer_count) : "";
+  t.wrap.title = tab.stream ? tab.stream.title + " — " + (tab.stream.game_name || "No category") + " · " + tab.stream.viewer_count.toLocaleString() + " viewers" : "";
   t.unread.hidden = tab.unread === 0;
   t.unread.textContent = tab.unread > 99 ? "99+" : String(tab.unread);
 }
@@ -218,6 +233,9 @@ function activate(tab) {
   saveTabs();
   updateComposer();
   renderPin();
+  renderInfo();
+  show("modes-panel", false);
+  applyFilter();
   if (tab.isMod && tab.joined) refreshPin(tab);
   if (!$("picker").hidden) renderPicker();
 }
@@ -232,7 +250,7 @@ function closeTab(tab, opts = {}) {
     active = null;
     const next = tabs.values().next().value;
     if (next) activate(next);
-    else { history.replaceState(null, "", "/"); updateComposer(); renderPin(); }
+    else { history.replaceState(null, "", "/"); updateComposer(); renderPin(); renderInfo(); }
   }
   if (!opts.keepSaved) saveTabs();
   ircPart(tab.login);
@@ -402,10 +420,14 @@ async function subscribeTab(tab) {
   tab.isMod = r.isMod;
   tab.subIds = r.subscriptionIds || [];
   tab.joined = true;
+  tab.settings = r.settings || tab.settings || null;
+  tab.automod = !!r.automod;
   updateTabEl(tab);
   // Messages we missed (or, on first join, recent history) get inserted above this line.
-  const marker = sysLine(tab, (rejoin ? "Reconnected to #" : "Joined #") + r.broadcaster.name + "." + (r.isMod && !rejoin ? " You're a moderator here." : ""));
-  if (tab === active) updateComposer();
+  const marker = sysLine(tab, (rejoin ? "Reconnected to #" : "Joined #") + r.broadcaster.name + "." +
+    (r.isMod && !rejoin ? " You're a moderator here" + (r.automod ? "; AutoMod queue is on." : ".") : ""));
+  if (tab === active) { updateComposer(); renderInfo(); }
+  refreshStreams();
   if (tab.isMod) refreshPin(tab);
   if (!tab.loadedExtras) {
     tab.loadedExtras = true;
@@ -500,21 +522,25 @@ function ircToEvent(line) {
     message: { text, fragments },
     reply,
     first: tags["first-msg"] === "1",
+    bits: Number(tags.bits) || 0,
     historical: true,
   };
 }
 
 async function loadTabExtras(tab) {
   const id = tab.broadcaster.id;
-  const [badges, stv, emotes] = await Promise.all([
+  const [badges, ext, emotes, cheermotes] = await Promise.all([
     api("/api/chat/badges?broadcaster_id=" + encodeURIComponent(id)),
-    load7tvChannel(id),
+    loadExtChannel(id),
     api("/api/chat/emotes?broadcaster_id=" + encodeURIComponent(id)),
+    api("/api/chat/cheermotes?broadcaster_id=" + encodeURIComponent(id)),
   ]);
   tab.badges = badges || {};
-  tab.stv = stv;
+  tab.ext = ext;
   tab.twitchEmotes = emotes;
-  if (stv.size) sysLine(tab, "Loaded " + stv.size + " 7TV channel emotes.");
+  tab.cheermotes = new Map((Array.isArray(cheermotes) ? cheermotes : []).map((c) => [c.prefix.toLowerCase(), c]));
+  const counts = EXT_SOURCES.map((src) => [src, [...ext.values()].filter((e) => e.source === src).length]).filter(([, n]) => n);
+  if (counts.length) sysLine(tab, "Channel emotes: " + counts.map(([src, n]) => n + " " + src).join(" · ") + ".");
   if (tab === active && !$("picker").hidden) renderPicker();
 }
 
@@ -602,34 +628,82 @@ function addFlag(li, kind, label) {
   li.insertBefore(flag, li.firstChild);
 }
 
-// ---------- 7TV ----------
+// ---------- third-party emotes: 7TV, BTTV, FFZ ----------
 
-function parse7tv(emotes) {
+const EXT_SOURCES = ["7TV", "BTTV", "FFZ"]; // priority when names collide
+
+async function getJson(url) {
+  try {
+    const r = await fetch(url);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+function stvEmotes(list) {
+  return (list || []).filter((e) => e.data && e.data.host).map((e) => ({
+    name: e.name, url: "https:" + e.data.host.url + "/2x.webp", zeroWidth: (e.flags & 1) === 1, source: "7TV",
+  }));
+}
+function bttvEmotes(list) {
+  return (list || []).map((e) => ({ name: e.code, url: "https://cdn.betterttv.net/emote/" + e.id + "/2x.webp", zeroWidth: false, source: "BTTV" }));
+}
+function ffzEmotes(list) {
+  return (list || []).map((e) => ({ name: e.code, url: e.images["2x"] || e.images["1x"], zeroWidth: false, source: "FFZ" }));
+}
+
+/** Merges provider lists into one map, earlier providers winning name collisions. */
+function mergeExt(...lists) {
   const m = new Map();
-  for (const e of emotes || []) {
-    const host = e.data && e.data.host;
-    if (!host) continue;
-    m.set(e.name, { url: "https:" + host.url + "/2x.webp", zeroWidth: (e.flags & 1) === 1 });
-  }
+  for (const list of lists) for (const e of list) if (!m.has(e.name)) m.set(e.name, e);
   return m;
 }
 
-async function load7tvGlobal() {
-  try {
-    const r = await fetch("https://7tv.io/v3/emote-sets/global");
-    if (r.ok) stvGlobal = parse7tv((await r.json()).emotes);
-  } catch {}
+async function loadExtGlobal() {
+  const [stv, bttv, ffz] = await Promise.all([
+    getJson("https://7tv.io/v3/emote-sets/global"),
+    getJson("https://api.betterttv.net/3/cached/emotes/global"),
+    getJson("https://api.betterttv.net/3/cached/frankerfacez/emotes/global"),
+  ]);
+  extGlobal = mergeExt(stvEmotes(stv && stv.emotes), bttvEmotes(bttv), ffzEmotes(ffz));
 }
 
-async function load7tvChannel(twitchId) {
-  try {
-    const r = await fetch("https://7tv.io/v3/users/twitch/" + encodeURIComponent(twitchId));
-    if (r.ok) return parse7tv(((await r.json()).emote_set || {}).emotes);
-  } catch {}
-  return new Map();
+async function loadExtChannel(twitchId) {
+  const id = encodeURIComponent(twitchId);
+  const [stv, bttv, ffz] = await Promise.all([
+    getJson("https://7tv.io/v3/users/twitch/" + id),
+    getJson("https://api.betterttv.net/3/cached/users/twitch/" + id),
+    getJson("https://api.betterttv.net/3/cached/frankerfacez/users/twitch/" + id),
+  ]);
+  return mergeExt(
+    stvEmotes(stv && stv.emote_set && stv.emote_set.emotes),
+    bttvEmotes(bttv ? [...(bttv.channelEmotes || []), ...(bttv.sharedEmotes || [])] : []),
+    ffzEmotes(ffz),
+  );
 }
 
-function find7tv(tab, word) { return tab.stv.get(word) || stvGlobal.get(word); }
+function findExt(tab, word) { return tab.ext.get(word) || extGlobal.get(word); }
+
+// ---------- cheermotes ----------
+
+/** Picks the image and color for e.g. Cheer100 from the channel's cheermote tiers. */
+function cheerFor(tab, prefix, bits) {
+  const cm = tab.cheermotes && tab.cheermotes.get(prefix.toLowerCase());
+  if (!cm) return null;
+  let tier = null;
+  for (const t of cm.tiers) if (bits >= t.min_bits && (!tier || t.min_bits > tier.min_bits)) tier = t;
+  if (!tier) return null;
+  const imgs = tier.images.dark.animated;
+  return { url: imgs["2"] || imgs["1.5"] || imgs["1"], color: tier.color };
+}
+
+function appendCheer(tab, parent, prefix, bits, text) {
+  const c = cheerFor(tab, prefix, bits);
+  if (!c) { parent.appendChild(document.createTextNode(text)); return; }
+  appendEmote(parent, emoteImg(c.url, text, "Cheer"), false);
+  const amount = el("b", "cheer-bits", String(bits));
+  amount.style.color = c.color;
+  parent.appendChild(amount);
+}
 
 // ---------- rendering ----------
 
@@ -649,6 +723,7 @@ function append(tab, node, countsAsUnread) {
   const list = tab.list;
   const stick = tab !== active || nearBottom(tab);
   list.appendChild(node);
+  if (tab === active && filterText) filterNode(node);
   while (list.children.length > MAX_MESSAGES) list.firstChild.remove();
   if (countsAsUnread && document.hidden) { hiddenUnread++; updateTitle(); }
   if (tab === active) {
@@ -702,21 +777,28 @@ function appendEmote(parent, img, zeroWidth) {
   parent.appendChild(wrap);
 }
 
-function appendText(tab, parent, text) {
-  // Swap whitespace-separated words that match 7TV emote names.
+function appendText(tab, parent, text, hasBits) {
+  // Swap whitespace-separated words that match 7TV/BTTV/FFZ emote names (and, for
+  // messages with Bits, cheer words like Cheer100).
   for (const part of text.split(/(\s+)/)) {
     if (!part) continue;
-    const e = /\s/.test(part) ? null : find7tv(tab, part);
-    if (e) appendEmote(parent, emoteImg(e.url, part, "7TV"), e.zeroWidth);
+    if (hasBits && !/\s/.test(part)) {
+      const m = /^([a-z]+)(\d+)$/i.exec(part);
+      if (m && cheerFor(tab, m[1], Number(m[2]))) { appendCheer(tab, parent, m[1], Number(m[2]), part); continue; }
+    }
+    const e = /\s/.test(part) ? null : findExt(tab, part);
+    if (e) appendEmote(parent, emoteImg(e.url, part, e.source), e.zeroWidth);
     else if (parent.lastChild && parent.lastChild.nodeType === 3) parent.lastChild.textContent += part;
     else parent.appendChild(document.createTextNode(part));
   }
 }
 
-function renderFragments(tab, parent, fragments, skipPrefix) {
+function renderFragments(tab, parent, fragments, skipPrefix, hasBits) {
   let skip = skipPrefix;
   for (const f of fragments || []) {
-    if (f.type === "emote" && f.emote) {
+    if (f.type === "cheermote" && f.cheermote) {
+      appendCheer(tab, parent, f.cheermote.prefix, f.cheermote.bits, f.text);
+    } else if (f.type === "emote" && f.emote) {
       appendEmote(parent, emoteImg("https://static-cdn.jtvnw.net/emoticons/v2/" + f.emote.id + "/default/dark/2.0", f.text, "Twitch"), false);
     } else if (f.type === "mention") {
       if (skip && f.mention) { skip = false; continue; } // reply prefix "@user "
@@ -724,7 +806,7 @@ function renderFragments(tab, parent, fragments, skipPrefix) {
     } else {
       let t = f.text;
       if (skip && /^\s/.test(t)) { t = t.replace(/^\s+/, ""); skip = false; }
-      appendText(tab, parent, t);
+      appendText(tab, parent, t, hasBits);
     }
   }
 }
@@ -762,6 +844,8 @@ function renderMessage(tab, ev, opts = {}) {
   const li = el("li", "msg" + (opts.historical ? " historical" : ""));
   li.dataset.id = ev.message_id;
   li.dataset.user = ev.chatter_user_id;
+  li.dataset.login = ev.chatter_user_login || "";
+  if (isHidden(ev.chatter_user_id)) li.classList.add("ignored");
   if (ev.chatter_user_login) tab.chatters.set(ev.chatter_user_login, ev.chatter_user_name);
   if (tab.chatters.size > 1000) tab.chatters.delete(tab.chatters.keys().next().value);
 
@@ -777,16 +861,25 @@ function renderMessage(tab, ev, opts = {}) {
     img.alt = img.title = info.title;
     li.appendChild(img);
   }
-  li.appendChild(nameNode(ev));
+  const nm = nameNode(ev);
+  nm.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openUserCard(tab, { id: ev.chatter_user_id, login: ev.chatter_user_login, name: ev.chatter_user_name, color: nm.style.color });
+  });
+  li.appendChild(nm);
   const mine = me && ev.chatter_user_id === me.userId;
   if (mine) li.appendChild(el("span", "hex", ev.color || "default"));
   li.appendChild(document.createTextNode(": "));
   const body = el("span", "body");
-  renderFragments(tab, body, ev.message.fragments, !!ev.reply);
+  renderFragments(tab, body, ev.message.fragments, !!ev.reply, !!ev.bits);
   li.appendChild(body);
 
   const mentioned = me && (ev.message.fragments || []).some((f) => (f.type === "mention" && f.mention && f.mention.user_id === me.userId) || f.mentionsMe);
   if (mentioned) li.classList.add("mentioned");
+  const highlighted = !mentioned && !mine && matchesHighlight(ev.message.text);
+  if (highlighted) li.classList.add("highlighted");
+  if ((mentioned || highlighted) && !mine && !opts.historical && !opts.before && !li.classList.contains("ignored")) alertFor(tab, ev);
+  if (mine && !opts.historical && !opts.before) maybeBumpColor(ev.message_id);
 
   const actions = el("div", "actions");
   actions.appendChild(actionButton("Reply", () => setReply({ id: ev.message_id, user: ev.chatter_user_name, text: ev.message.text })));
@@ -814,9 +907,9 @@ function renderMessage(tab, ev, opts = {}) {
     insertBefore(tab, li, opts.before);
     if (!opts.historical && tab !== active) { tab.unread++; updateTabEl(tab); }
   } else {
-    append(tab, li, true);
+    append(tab, li, !li.classList.contains("ignored"));
   }
-  if (mentioned && tab !== active && !opts.historical) { tab.mentioned = true; updateTabEl(tab); }
+  if (mentioned && tab !== active && !opts.historical && !li.classList.contains("ignored")) { tab.mentioned = true; updateTabEl(tab); }
 }
 
 function renderNotification(tab, ev) {
@@ -840,6 +933,16 @@ function handleEvent(type, ev, ts) {
   const list = tab.list;
   switch (type) {
     case "channel.chat.message": return renderMessage(tab, ev);
+    case "channel.chat_settings.update":
+      tab.settings = {
+        slow_mode: ev.slow_mode, slow_mode_wait_time: ev.slow_mode_wait_time_seconds,
+        follower_mode: ev.follower_mode, follower_mode_duration: ev.follower_mode_duration_minutes,
+        subscriber_mode: ev.subscriber_mode, emote_mode: ev.emote_mode, unique_chat_mode: ev.unique_chat_mode,
+      };
+      if (tab === active) { renderInfo(); if (!$("modes-panel").hidden) renderModesPanel(); }
+      return;
+    case "automod.message.hold": return renderHeld(tab, ev);
+    case "automod.message.update": return resolveHeld(tab, ev);
     case "channel.chat.notification": return renderNotification(tab, ev);
     case "channel.chat.message_delete": {
       const li = list.querySelector('.msg[data-id="' + CSS.escape(ev.message_id) + '"]');
@@ -1039,8 +1142,8 @@ function allEmotes(tab) {
   if (tab && tab.twitchEmotes && tab.twitchEmotes.ok) {
     for (const g of TWITCH_GROUPS) for (const e of tab.twitchEmotes.emotes) if (e.group === g) push(e.name, twitchEmoteUrl(e), "Twitch");
   }
-  if (tab) for (const [name, e] of tab.stv) push(name, e.url, "7TV");
-  for (const [name, e] of stvGlobal) push(name, e.url, "7TV");
+  if (tab) for (const [name, e] of tab.ext) push(name, e.url, e.source);
+  for (const [name, e] of extGlobal) push(name, e.url, e.source);
   return out;
 }
 
@@ -1086,17 +1189,17 @@ function renderPicker() {
     items = items.filter((e) => match(e.name));
     if (items.length) sections.push([title, items]);
   };
-  const stv = (m) => [...m].map(([name, e]) => ({ name, url: e.url }));
+  const ext = (m, src) => [...m].filter(([, e]) => e.source === src).map(([name, e]) => ({ name, url: e.url }));
   const tw = (group) => tab && tab.twitchEmotes && tab.twitchEmotes.ok
     ? tab.twitchEmotes.emotes.filter((e) => e.group === group).map((e) => ({ name: e.name, url: twitchEmoteUrl(e) }))
     : [];
 
   if (!q) add("Recent", recentEmotes());
   add("Twitch · this channel", tw("This channel"));
-  if (tab) add("7TV · this channel", stv(tab.stv));
+  if (tab) for (const src of EXT_SOURCES) add(src + " · this channel", ext(tab.ext, src));
   add("Twitch · your other subs", tw("Other channels"));
   add("Twitch · global", tw("Twitch global"));
-  add("7TV · global", stv(stvGlobal));
+  for (const src of EXT_SOURCES) add(src + " · global", ext(extGlobal, src));
   add("Twitch · other", tw("Other"));
 
   let note = "";
@@ -1326,11 +1429,15 @@ $("send-form").addEventListener("submit", async (e) => {
   }
   $("send").disabled = true;
   show("send-error", false);
-  const r = await api("/api/chat/send", {
+  const pending = api("/api/chat/send", {
     broadcaster_id: tab.broadcaster.id,
     message: text,
     reply_parent_message_id: replyTo ? replyTo.id : undefined,
   });
+  inflightSends.add(pending);
+  const r = await pending;
+  inflightSends.delete(pending);
+  if (r.ok && r.messageId) sentIds.add(r.messageId);
   updateComposer();
   if (r.ok) {
     lastSent = text;
@@ -1344,6 +1451,462 @@ $("send-form").addEventListener("submit", async (e) => {
   }
   input.focus();
 });
+
+// ---------- live status ----------
+
+function compactCount(n) {
+  return n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+}
+
+function since(iso) {
+  const ms = Date.now() - Date.parse(iso);
+  const d = Math.floor(ms / 86400000), h = Math.floor(ms / 3600000) % 24, m = Math.floor(ms / 60000) % 60;
+  if (d >= 365) { const y = Math.floor(d / 365), mo = Math.floor((d % 365) / 30); return y + "y" + (mo ? " " + mo + "mo" : ""); }
+  if (d >= 30) return Math.floor(d / 30) + "mo";
+  if (d) return d + "d" + (h ? " " + h + "h" : "");
+  return h ? h + "h " + m + "m" : m + "m";
+}
+
+let streamsTimer = null;
+async function refreshStreams() {
+  clearTimeout(streamsTimer);
+  streamsTimer = setTimeout(refreshStreams, 60000);
+  const ids = [...tabs.values()].filter((t) => t.broadcaster).map((t) => t.broadcaster.id);
+  if (!ids.length || document.hidden) return;
+  const list = await api("/api/streams?ids=" + ids.join(","));
+  if (!Array.isArray(list)) return;
+  const byId = new Map(list.map((st) => [st.user_id, st]));
+  for (const t of tabs.values()) {
+    if (!t.broadcaster) continue;
+    t.stream = byId.get(t.broadcaster.id) || null;
+    updateTabEl(t);
+  }
+  renderInfo();
+}
+
+// ---------- info bar: live status + chat modes ----------
+
+function modeLabels(st) {
+  if (!st) return [];
+  const out = [];
+  if (st.slow_mode) out.push("Slow " + (st.slow_mode_wait_time || 30) + "s");
+  if (st.follower_mode) out.push(st.follower_mode_duration ? "Followers " + fmtMinutes(st.follower_mode_duration) : "Followers-only");
+  if (st.subscriber_mode) out.push("Sub-only");
+  if (st.emote_mode) out.push("Emote-only");
+  if (st.unique_chat_mode) out.push("Unique");
+  return out;
+}
+
+function fmtMinutes(m) {
+  if (m % 43200 === 0) return m / 43200 + "mo";
+  if (m % 10080 === 0) return m / 10080 + "w";
+  if (m % 1440 === 0) return m / 1440 + "d";
+  if (m % 60 === 0) return m / 60 + "h";
+  return m + "m";
+}
+
+function renderInfo() {
+  const tab = active;
+  if (!tab || !tab.broadcaster) { show("infobar", false); show("modes-panel", false); return; }
+  show("infobar", true);
+  const live = $("live");
+  live.replaceChildren();
+  const st = tab.stream;
+  if (st) {
+    live.className = "live on";
+    live.append(el("span", "dot"), el("b", null, compactCount(st.viewer_count)), el("span", "title", (st.game_name ? st.game_name + " · " : "") + st.title));
+    live.title = st.title + "\n" + (st.game_name || "No category") + " · " + st.viewer_count.toLocaleString() + " viewers · live for " + since(st.started_at);
+  } else {
+    live.className = "live";
+    live.textContent = "Offline";
+    live.title = "";
+  }
+  $("modes").replaceChildren(...modeLabels(tab.settings).map((l) => el("span", "chip", l)));
+  show("modes-btn", !!tab.isMod);
+}
+
+$("modes-btn").addEventListener("click", () => {
+  const panel = $("modes-panel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) renderModesPanel();
+});
+
+const SLOW_OPTIONS = [0, 3, 5, 10, 20, 30, 60, 120];
+const FOLLOW_OPTIONS = [[-1, "Off"], [0, "Any follower"], [10, "10 min"], [30, "30 min"], [60, "1 hour"], [1440, "1 day"], [10080, "1 week"], [43200, "1 month"], [129600, "3 months"]];
+
+function renderModesPanel() {
+  const tab = active;
+  const panel = $("modes-panel");
+  const st = (tab && tab.settings) || {};
+  const title = el("div", "panel-title");
+  title.append(el("span", null, "Chat modes for #" + tab.broadcaster.name), el("span"));
+  const close = el("button", "icon-btn", "×");
+  close.type = "button";
+  close.addEventListener("click", () => show("modes-panel", false));
+  title.lastChild.replaceWith(close);
+
+  const select = (options, value, onChange) => {
+    const sel = document.createElement("select");
+    for (const [v, label] of options) {
+      const o = document.createElement("option");
+      o.value = String(v);
+      o.textContent = label;
+      if (v === value) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener("change", () => onChange(Number(sel.value)));
+    return sel;
+  };
+  const toggle = (checked, onChange) => {
+    const c = document.createElement("input");
+    c.type = "checkbox";
+    c.checked = !!checked;
+    c.addEventListener("change", () => onChange(c.checked));
+    return c;
+  };
+  const update = async (patch) => {
+    const r = await api("/api/chat/settings", { broadcaster_id: tab.broadcaster.id, ...patch });
+    if (r.ok) { if (r.settings) tab.settings = r.settings; }
+    else sysLine(tab, "Couldn't change chat modes: " + r.error, "err");
+    if (tab === active) { renderInfo(); renderModesPanel(); }
+  };
+
+  panel.replaceChildren(
+    title,
+    el("span", null, "Slow mode"),
+    select(SLOW_OPTIONS.map((v) => [v, v ? v + "s" : "Off"]), st.slow_mode ? st.slow_mode_wait_time || 30 : 0,
+      (v) => update(v ? { slow_mode: true, slow_mode_wait_time: v } : { slow_mode: false })),
+    el("span", null, "Followers-only"),
+    select(FOLLOW_OPTIONS, st.follower_mode ? st.follower_mode_duration || 0 : -1,
+      (v) => update(v < 0 ? { follower_mode: false } : { follower_mode: true, follower_mode_duration: v })),
+    el("span", null, "Subscribers-only"), toggle(st.subscriber_mode, (on) => update({ subscriber_mode: on })),
+    el("span", null, "Emote-only"), toggle(st.emote_mode, (on) => update({ emote_mode: on })),
+    el("span", null, "Unique chat (no repeats)"), toggle(st.unique_chat_mode, (on) => update({ unique_chat_mode: on })),
+  );
+}
+
+// ---------- AutoMod queue (moderators) ----------
+
+function renderHeld(tab, ev) {
+  const li = el("li", "automod");
+  li.dataset.automodId = ev.message_id;
+  li.dataset.user = ev.user_id;
+  li.dataset.login = ev.user_login || "";
+  let why = "Held by AutoMod";
+  if (ev.automod && ev.automod.category) why += " · " + ev.automod.category + " (level " + ev.automod.level + ")";
+  else if (ev.blocked_term) why += " · blocked term";
+  li.appendChild(el("div", "am-head", why));
+  const body = el("div", "am-body");
+  const name = nameNode({ chatter_user_id: ev.user_id, chatter_user_name: ev.user_name, color: "" });
+  body.append(name, document.createTextNode(": "));
+  renderFragments(tab, body, ev.message && ev.message.fragments, false);
+  li.appendChild(body);
+  const actions = el("div", "am-actions");
+  const decide = async (allow) => {
+    actions.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    const r = await api("/api/chat/automod", { msg_id: ev.message_id, allow });
+    if (!r.ok) {
+      actions.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      sysLine(tab, "AutoMod action failed: " + r.error, "err");
+    }
+  };
+  const allow = el("button", "allow small", "Allow");
+  allow.type = "button";
+  allow.addEventListener("click", () => decide(true));
+  const deny = el("button", "deny small", "Deny");
+  deny.type = "button";
+  deny.addEventListener("click", () => decide(false));
+  actions.append(allow, deny);
+  li.appendChild(actions);
+  append(tab, li, true);
+  if (tab !== active) { tab.mentioned = true; updateTabEl(tab); }
+}
+
+function resolveHeld(tab, ev) {
+  const li = tab.list.querySelector('.automod[data-automod-id="' + CSS.escape(ev.message_id) + '"]');
+  if (!li) return;
+  const by = ev.moderator_user_name ? " by " + ev.moderator_user_name : "";
+  const label = { approved: "Allowed" + by, denied: "Denied" + by, expired: "Expired (no decision)" }[ev.status] || ev.status;
+  li.classList.add("resolved");
+  li.querySelector(".am-actions").replaceChildren(el("span", null, label));
+}
+
+// ---------- search / filter ----------
+
+let filterText = "";
+
+function filterNode(node) {
+  if (!filterText) { node.classList.remove("filtered"); return; }
+  const from = /^from:@?(\S+)\s*(.*)$/i.exec(filterText);
+  const login = (node.dataset && node.dataset.login) || "";
+  const text = node.textContent.toLowerCase();
+  let ok;
+  if (from) ok = login.startsWith(from[1].toLowerCase()) && (!from[2] || text.includes(from[2].toLowerCase()));
+  else ok = text.includes(filterText.toLowerCase());
+  node.classList.toggle("filtered", !ok);
+}
+
+function applyFilter() {
+  for (const t of tabs.values()) for (const n of t.list.children) if (t !== active || !filterText) n.classList.remove("filtered");
+  if (!active || !filterText) { $("search-count").textContent = ""; return; }
+  let shown = 0;
+  for (const n of active.list.children) { filterNode(n); if (!n.classList.contains("filtered")) shown++; }
+  $("search-count").textContent = shown + " match" + (shown === 1 ? "" : "es");
+  active.list.scrollTop = active.list.scrollHeight;
+}
+
+$("search-btn").addEventListener("click", () => {
+  const bar = $("searchbar");
+  bar.hidden = !bar.hidden;
+  if (!bar.hidden) $("search").focus();
+  else { $("search").value = ""; filterText = ""; applyFilter(); }
+});
+$("search").addEventListener("input", () => { filterText = $("search").value.trim(); applyFilter(); });
+$("search").addEventListener("keydown", (e) => { if (e.key === "Escape") $("search-close").click(); });
+$("search-close").addEventListener("click", () => { $("search").value = ""; filterText = ""; applyFilter(); show("searchbar", false); });
+
+// ---------- sheet (user cards, settings) ----------
+
+function openSheet(...children) {
+  $("sheet-body").replaceChildren(...children);
+  show("sheet", true);
+}
+function closeSheet() { show("sheet", false); $("sheet-body").replaceChildren(); }
+$("sheet-close").addEventListener("click", closeSheet);
+$("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet").hidden) closeSheet(); });
+
+function btn(label, onClick, cls) {
+  const b = el("button", cls || "ghost", label);
+  b.type = "button";
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// ---------- user cards ----------
+
+const TIMEOUTS = [["1m", 60], ["10m", 600], ["1h", 3600], ["1d", 86400]];
+
+async function openUserCard(tab, u) {
+  const head = el("div", "card-head");
+  const avatar = document.createElement("img");
+  avatar.alt = "";
+  const names = el("div");
+  const nm = el("div", "card-name", u.name);
+  nm.style.color = u.color || "";
+  names.append(nm, el("div", "hint", "@" + (u.login || u.name.toLowerCase())));
+  head.append(avatar, names);
+
+  const meta = el("div", "card-meta", "Loading…");
+  const desc = el("div", "card-desc");
+
+  const actions = el("div", "card-actions");
+  actions.appendChild(btn("@ Mention", () => { closeSheet(); insertEmote("@" + u.name); }));
+  const hidden = isHidden(u.id);
+  actions.appendChild(btn(hidden ? "Show their messages" : "Hide their messages", () => { setHidden(u, !hidden); closeSheet(); }));
+  const isMe = me && u.id === me.userId;
+  const isBroadcaster = tab.broadcaster && u.id === tab.broadcaster.id;
+  if (tab.isMod && !isMe && !isBroadcaster) {
+    for (const [label, secs] of TIMEOUTS) {
+      actions.appendChild(btn("Timeout " + label, () => { modAction(tab, { action: "timeout", user_id: u.id, login: u.login, duration: secs }); closeSheet(); }));
+    }
+    actions.appendChild(btn("Unban", () => { modAction(tab, { action: "unban", user_id: u.id, login: u.login }); closeSheet(); }));
+    actions.appendChild(btn("Ban", () => {
+      if (confirm("Ban " + u.name + " from #" + tab.broadcaster.name + "?")) { modAction(tab, { action: "ban", user_id: u.id, login: u.login }); closeSheet(); }
+    }, "stop"));
+  }
+
+  // Their recent messages in this tab.
+  const msgs = el("ul", "card-msgs");
+  const theirs = [...tab.list.querySelectorAll('.msg[data-user="' + CSS.escape(u.id) + '"]')].slice(-20).reverse();
+  for (const li of theirs) {
+    const row = el("li");
+    const time = li.querySelector(".time");
+    row.appendChild(el("span", "time", time ? time.textContent : ""));
+    const body = li.querySelector(".body");
+    if (body) row.appendChild(body.cloneNode(true));
+    if (li.classList.contains("deleted")) row.appendChild(el("span", "hint", " (deleted)"));
+    msgs.appendChild(row);
+  }
+  openSheet(head, meta, desc, actions, el("h3", null, "Recent messages here (" + theirs.length + ")"), theirs.length ? msgs : el("div", "hint", "None in this session."));
+
+  const r = await api("/api/chat/user?broadcaster_id=" + encodeURIComponent(tab.broadcaster.id) + "&user_id=" + encodeURIComponent(u.id));
+  if (!r.ok) { meta.textContent = r.error; return; }
+  avatar.src = r.user.profile_image_url;
+  meta.replaceChildren(el("div", null, "Account created " + new Date(r.user.created_at).toLocaleDateString() + " (" + since(r.user.created_at) + " ago)"));
+  if (r.followedAt) meta.appendChild(el("div", null, "Following since " + new Date(r.followedAt).toLocaleDateString() + " (" + since(r.followedAt) + ")"));
+  else if (r.followedAt === null) meta.appendChild(el("div", null, "Not following"));
+  if (r.user.broadcaster_type) meta.appendChild(el("div", null, r.user.broadcaster_type[0].toUpperCase() + r.user.broadcaster_type.slice(1)));
+  desc.textContent = r.user.description || "";
+}
+
+// ---------- hidden users ----------
+
+function isHidden(id) { return settings.hidden.some((h) => h.id === id); }
+
+function setHidden(u, hide) {
+  settings.hidden = settings.hidden.filter((h) => h.id !== u.id);
+  if (hide) settings.hidden.push({ id: u.id, name: u.name });
+  saveSettings();
+  document.querySelectorAll('.msg[data-user="' + CSS.escape(u.id) + '"]').forEach((n) => n.classList.toggle("ignored", hide));
+  if (active) sysLine(active, (hide ? "Hiding" : "Showing") + " messages from " + u.name + ".");
+}
+
+// ---------- highlights, notifications, sound ----------
+
+function highlightWords() {
+  return settings.highlights.split(",").map((w) => w.trim()).filter(Boolean);
+}
+
+function matchesHighlight(text) {
+  const words = highlightWords();
+  if (!words.length || !text) return false;
+  return words.some((w) => new RegExp("(^|[^\\p{L}\\p{N}_])" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^\\p{L}\\p{N}_])", "iu").test(text));
+}
+
+let audioCtx = null;
+function ping() {
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    const t = audioCtx.currentTime;
+    for (const [f, at] of [[880, 0], [1320, 0.09]]) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(0.15, t + at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.18);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t + at);
+      o.stop(t + at + 0.2);
+    }
+  } catch {}
+}
+// Browsers only allow audio after a user gesture; unlock it on the first one.
+document.addEventListener("pointerdown", () => { if (settings.sound && !audioCtx) { try { audioCtx = new AudioContext(); } catch {} } }, { once: true });
+
+function alertFor(tab, ev) {
+  const away = document.hidden || tab !== active;
+  if (!away) return;
+  if (settings.sound) ping();
+  if (!settings.notify || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const title = ev.chatter_user_name + " in #" + (tab.broadcaster ? tab.broadcaster.name : tab.login);
+  const opts = { body: ev.message.text, tag: ev.message_id, icon: "/icons/icon-192.png", data: { tab: tab.login } };
+  // Android requires notifications to come from the service worker.
+  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.ready.then((reg) => reg.showNotification(title, opts)).catch(() => {});
+  } else {
+    try { new Notification(title, opts).onclick = () => { window.focus(); openTab(tab.login); }; } catch {}
+  }
+}
+
+if (navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data && e.data.type === "open-tab" && e.data.tab) openTab(e.data.tab);
+  });
+}
+
+// ---------- color cycling for messages sent from other apps ----------
+
+// Messages sent from here already advance the color server-side. For our own messages
+// that arrive without having been sent from this app (e.g. the official Twitch app),
+// ask the server for the next color. Wait for in-flight sends so we can tell them apart.
+function maybeBumpColor(messageId) {
+  if (!status || !status.cycle || !status.cycle.enabled) return;
+  setTimeout(async () => {
+    await Promise.all([...inflightSends]);
+    if (sentIds.has(messageId)) return;
+    const r = await api("/api/cycle/bump", {});
+    if (r.ok && status) { status.cycle = r.cycle; renderCycle(r.cycle); }
+  }, 1500);
+}
+
+// ---------- settings ----------
+
+$("settings-btn").addEventListener("click", openSettings);
+
+function openSettings() {
+  const row = (labelText, control, hint) => {
+    const r = el("div", "row");
+    const l = el("label");
+    l.append(el("div", null, labelText));
+    if (hint) l.appendChild(el("div", "hint", hint));
+    r.append(l, control);
+    return r;
+  };
+  const checkbox = (checked, onChange) => {
+    const c = document.createElement("input");
+    c.type = "checkbox";
+    c.checked = checked;
+    c.addEventListener("change", () => onChange(c));
+    return c;
+  };
+
+  const notifyHint = typeof Notification === "undefined" ? "Not supported in this browser." :
+    Notification.permission === "denied" ? "Blocked in your browser settings for this site." :
+    "For @mentions, highlight words and AutoMod while you're in another tab or app.";
+  const notify = checkbox(settings.notify && typeof Notification !== "undefined" && Notification.permission === "granted", async (c) => {
+    if (c.checked && typeof Notification !== "undefined" && Notification.permission !== "granted") {
+      const p = await Notification.requestPermission();
+      if (p !== "granted") { c.checked = false; return; }
+    }
+    settings.notify = c.checked;
+    saveSettings();
+  });
+  const sound = checkbox(settings.sound, (c) => {
+    settings.sound = c.checked;
+    saveSettings();
+    if (c.checked) ping();
+  });
+
+  const words = document.createElement("input");
+  words.type = "text";
+  words.placeholder = "e.g. your nickname, giveaway, !discord";
+  words.value = settings.highlights;
+  words.addEventListener("change", () => { settings.highlights = words.value; saveSettings(); });
+
+  const seg = el("div", "seg");
+  for (const [label, px] of [["S", 13], ["M", 14], ["L", 16], ["XL", 18]]) {
+    const b = btn(label, () => { settings.fontSize = px; saveSettings(); seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
+    if (settings.fontSize === px) b.classList.add("on");
+    seg.appendChild(b);
+  }
+
+  const hiddenList = el("div");
+  const renderHidden = () => {
+    hiddenList.replaceChildren();
+    if (!settings.hidden.length) { hiddenList.appendChild(el("div", "hint", "Nobody. Tap a name in chat to hide someone.")); return; }
+    for (const h of settings.hidden) {
+      hiddenList.appendChild(row(h.name, btn("Show", () => { setHidden(h, false); renderHidden(); })));
+    }
+  };
+  renderHidden();
+
+  const account = el("div", "row");
+  const who = el("label");
+  who.append(el("div", null, "Signed in to Twitch as " + (me ? me.login : "—")));
+  who.appendChild(el("div", "hint", "Reconnect to grant new permissions after an update."));
+  const acctBtns = el("div", "seg");
+  const reconnect = el("a", "btn", "Reconnect");
+  reconnect.href = "/auth/login";
+  acctBtns.append(reconnect, btn("Disconnect", () => { if (confirm("Disconnect your Twitch account?")) { closeSheet(); logout(); } }, "stop"));
+  account.append(who, acctBtns);
+
+  openSheet(
+    el("h2", null, "Settings"),
+    el("h3", null, "Account"),
+    account,
+    el("h3", null, "Alerts"),
+    row("Notifications", notify, notifyHint),
+    row("Sound", sound, "A short chime for mentions and highlights when you're looking elsewhere."),
+    el("h3", null, "Highlight words"),
+    words,
+    el("div", "hint", "Comma-separated. Matching messages are highlighted in orange (and alert you, if on)."),
+    el("h3", null, "Chat text size"),
+    seg,
+    el("h3", null, "Hidden users"),
+    hiddenList,
+  );
+}
 
 // ---------- mobile viewport ----------
 
@@ -1365,6 +1928,7 @@ if (vv) {
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
-load7tvGlobal();
+applySettings();
+loadExtGlobal();
 refreshStatus();
 setInterval(refreshStatus, 5000);

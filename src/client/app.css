@@ -51,6 +51,7 @@ header form input { flex: 1; }
 
 /* Messages */
 .chat { position: relative; overflow: hidden; display: flex; flex-direction: column; }
+.chat { font-size: var(--chat-font, 14px); }
 .messages { list-style: none; margin: 0; padding: 8px 0; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .empty-chat { flex: 1; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
 
@@ -79,6 +80,7 @@ header form input { flex: 1; }
 .emote-wrap { display: inline-grid; vertical-align: middle; margin: -4px 0; }
 .emote-wrap > img { grid-area: 1/1; justify-self: center; align-self: center; height: 28px; }
 .msg .mention { font-weight: 700; }
+.cheer-bits { font-weight: 700; margin: 0 2px 0 1px; }
 .msg.mentioned { background: var(--mention); }
 .msg.historical { opacity: .7; }
 /* Flagged messages keep their content; the tint, edge and label say what happened. */
@@ -140,3 +142,71 @@ footer form input { flex: 1; padding: 9px 10px; }
 
 .connect { display: grid; place-items: center; text-align: center; padding: 24px; }
 .connect p { color: var(--muted); max-width: 320px; }
+
+/* Small icon buttons */
+.icon-btn { background: none; color: var(--muted); padding: 4px 6px; border-radius: 6px; display: inline-grid; place-items: center; font-size: 18px; line-height: 1; font-weight: 400; }
+.icon-btn:hover { background: #ffffff14; color: var(--text); }
+.icon-btn svg { width: 16px; height: 16px; }
+button.small { padding: 3px 9px; font-size: 12px; }
+.account { display: flex; align-items: center; gap: 4px; }
+
+/* Tab live indicator */
+.tab .live-pill { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: #ff6b6b; font-weight: 700; }
+.tab .live-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #eb0400; }
+
+/* Info bar: live status, chat modes, search, mod controls */
+.infobar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); min-width: 0; }
+.infobar .live { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
+.infobar .live.on .dot { width: 8px; height: 8px; border-radius: 50%; background: #eb0400; flex: none; box-shadow: 0 0 6px #eb0400; }
+.infobar .live.on b { color: #ff8a8a; }
+.infobar .live .title { overflow: hidden; text-overflow: ellipsis; }
+.infobar .modes { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.chip { padding: 1px 7px; border-radius: 10px; background: #2f2f35; color: var(--text); font-size: 11px; white-space: nowrap; }
+.searchbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+.searchbar input { flex: 1; padding: 5px 9px; }
+.search-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.msg.filtered, .notice.filtered, .sys.filtered, .automod.filtered { display: none; }
+.msg.ignored { display: none; }
+
+/* Mod chat-modes panel */
+.panel { flex: none; margin: 8px 8px 0; padding: 10px 12px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; font-size: 13px; }
+.panel select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid #3a3a3d; background: var(--bg); color: var(--text); }
+.panel input[type=checkbox], .sheet input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+.panel .panel-title { grid-column: 1 / -1; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+
+/* AutoMod held messages */
+.automod { margin: 4px 8px; padding: 6px 10px; border-radius: 8px; background: #2a2210; border: 1px solid #5c4a14; }
+.automod .am-head { font-size: 11px; font-weight: 700; color: #f5c451; text-transform: uppercase; letter-spacing: .03em; }
+.automod .am-body { margin: 2px 0 6px; overflow-wrap: anywhere; }
+.automod .am-actions { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.automod .am-actions .allow { background: #1f7a33; }
+.automod .am-actions .deny { background: var(--danger); }
+.automod.resolved { opacity: .6; }
+
+/* Highlights */
+.msg.highlighted { background: #4a2a10; box-shadow: inset 3px 0 0 #ff9f1a; }
+
+/* Bottom sheet / dialog (user cards, settings) */
+.sheet-backdrop { position: fixed; inset: 0; z-index: 50; background: #000a; display: flex; align-items: flex-end; justify-content: center; }
+.sheet { position: relative; width: min(520px, 100%); max-height: min(85%, 720px); overflow-y: auto; overscroll-behavior: contain; background: var(--panel); border: 1px solid var(--line); border-radius: 14px 14px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px #000a; }
+@media (min-width: 640px) { .sheet-backdrop { align-items: center; } .sheet { border-radius: 14px; } }
+.sheet-close { position: absolute; right: 8px; top: 8px; }
+.sheet h2 { font-size: 16px; margin: 0 0 12px; }
+.sheet h3 { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
+.sheet .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.sheet .row label { flex: 1; }
+.sheet .hint { font-size: 12px; color: var(--muted); }
+.sheet .seg { display: flex; gap: 4px; }
+.sheet .seg button.on { background: var(--accent); color: #fff; }
+.sheet input[type=text] { width: 100%; }
+.card-head { display: flex; gap: 12px; align-items: center; padding-right: 28px; }
+.card-head img { width: 56px; height: 56px; border-radius: 50%; background: #2f2f35; flex: none; }
+.card-head .card-name { font-size: 18px; font-weight: 700; }
+.card-meta { font-size: 13px; color: var(--muted); margin-top: 10px; display: grid; gap: 2px; }
+.card-desc { font-size: 13px; margin-top: 8px; overflow-wrap: anywhere; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.card-actions button { font-size: 13px; padding: 6px 10px; }
+.card-msgs { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.card-msgs li { padding: 3px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.card-msgs .time { color: var(--muted); font-size: 11px; margin-right: 6px; }
+.msg .name { cursor: pointer; }

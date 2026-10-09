@@ -9,6 +9,9 @@ export const OPTIONAL_SCOPES = [
   "user:read:moderated_channels",
   "moderator:manage:chat_messages",
   "moderator:manage:banned_users",
+  "moderator:read:followers",
+  "moderator:manage:automod",
+  "moderator:manage:chat_settings",
 ];
 
 export class TwitchError extends Error {
@@ -148,12 +151,13 @@ export async function createWebSocketSubscription(
   type: string,
   condition: Record<string, string>,
   sessionId: string,
+  version = "1",
 ): Promise<string> {
   const res = await check(
     await fetch(`${API_BASE}/eventsub/subscriptions`, {
       method: "POST",
       headers: { ...helixHeaders(env, accessToken), "Content-Type": "application/json" },
-      body: JSON.stringify({ type, version: "1", condition, transport: { method: "websocket", session_id: sessionId } }),
+      body: JSON.stringify({ type, version, condition, transport: { method: "websocket", session_id: sessionId } }),
     }),
     `Subscribe to ${type}`,
   );
@@ -390,4 +394,119 @@ export async function unpinMessage(
     }),
     "Unpin Chat Message",
   );
+}
+
+export interface TwitchUserProfile {
+  id: string;
+  login: string;
+  display_name: string;
+  description: string;
+  profile_image_url: string;
+  broadcaster_type: string;
+  created_at: string;
+}
+
+export async function getUserById(env: Env, accessToken: string, id: string): Promise<TwitchUserProfile | null> {
+  const url = `${API_BASE}/users?id=${encodeURIComponent(id)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Users");
+  return ((await res.json()) as { data: TwitchUserProfile[] }).data[0] ?? null;
+}
+
+/** When userId followed the channel (null if not following). Needs moderator:read:followers + mod. */
+export async function getFollowedAt(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  userId: string,
+): Promise<string | null> {
+  const url = `${API_BASE}/channels/followers?broadcaster_id=${encodeURIComponent(broadcasterId)}&user_id=${encodeURIComponent(userId)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Channel Followers");
+  return ((await res.json()) as { data: { followed_at: string }[] }).data[0]?.followed_at ?? null;
+}
+
+/** Allows or denies a message AutoMod is holding for review. */
+export async function manageHeldMessage(
+  env: Env,
+  accessToken: string,
+  moderatorId: string,
+  messageId: string,
+  action: "ALLOW" | "DENY",
+): Promise<void> {
+  await check(
+    await fetch(`${API_BASE}/moderation/automod/message`, {
+      method: "POST",
+      headers: { ...helixHeaders(env, accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: moderatorId, msg_id: messageId, action }),
+    }),
+    "Manage Held AutoMod Message",
+  );
+}
+
+export interface ChatSettings {
+  slow_mode: boolean;
+  slow_mode_wait_time: number | null;
+  follower_mode: boolean;
+  follower_mode_duration: number | null;
+  subscriber_mode: boolean;
+  emote_mode: boolean;
+  unique_chat_mode: boolean;
+}
+
+export async function getChatSettings(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+): Promise<ChatSettings | null> {
+  const url = `${API_BASE}/chat/settings?broadcaster_id=${encodeURIComponent(broadcasterId)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Chat Settings");
+  return ((await res.json()) as { data: ChatSettings[] }).data[0] ?? null;
+}
+
+/** Needs moderator:manage:chat_settings and moderator status. */
+export async function updateChatSettings(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  moderatorId: string,
+  patch: Partial<ChatSettings>,
+): Promise<ChatSettings | null> {
+  const url = `${API_BASE}/chat/settings?broadcaster_id=${encodeURIComponent(broadcasterId)}&moderator_id=${encodeURIComponent(moderatorId)}`;
+  const res = await check(
+    await fetch(url, {
+      method: "PATCH",
+      headers: { ...helixHeaders(env, accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+    "Update Chat Settings",
+  );
+  return ((await res.json()) as { data: ChatSettings[] }).data[0] ?? null;
+}
+
+export interface StreamInfo {
+  user_id: string;
+  title: string;
+  game_name: string;
+  viewer_count: number;
+  started_at: string;
+}
+
+/** Live streams among up to 100 user ids. */
+export async function getStreamsByIds(env: Env, accessToken: string, ids: string[]): Promise<StreamInfo[]> {
+  if (!ids.length) return [];
+  const url = new URL(`${API_BASE}/streams`);
+  for (const id of ids.slice(0, 100)) url.searchParams.append("user_id", id);
+  url.searchParams.set("first", "100");
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Streams");
+  return ((await res.json()) as { data: StreamInfo[] }).data;
+}
+
+export interface Cheermote {
+  prefix: string;
+  tiers: { min_bits: number; color: string; images: { dark: { animated: Record<string, string> } } }[];
+}
+
+export async function getCheermotes(env: Env, accessToken: string, broadcasterId: string): Promise<Cheermote[]> {
+  const url = `${API_BASE}/bits/cheermotes?broadcaster_id=${encodeURIComponent(broadcasterId)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Cheermotes");
+  return ((await res.json()) as { data: Cheermote[] }).data;
 }

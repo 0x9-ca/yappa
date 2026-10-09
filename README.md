@@ -23,10 +23,15 @@ Cloudflare Access.
 
 - Twitch scopes: `user:manage:chat_color`, `user:read:chat`, `user:write:chat` (required);
   `user:read:emotes`, `user:read:moderated_channels`, `moderator:manage:chat_messages`,
-  `moderator:manage:banned_users` (optional: emote list and mod tools).
-- Chat: channel tabs sharing one EventSub WebSocket, 7TV emotes, emote picker, autocomplete
+  `moderator:manage:banned_users`, `moderator:read:followers`, `moderator:manage:automod`,
+  `moderator:manage:chat_settings` (optional: emote list and mod tools).
+- Chat: channel tabs sharing one EventSub WebSocket, 7TV/BTTV/FFZ emotes, cheermotes, emote picker, autocomplete
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
-  `/untimeout`, `/clear`) in channels you moderate.
+  `/untimeout`, `/clear`, `/unpin`) in channels you moderate, plus pinned messages, the AutoMod
+  queue, chat-mode toggles and user cards (follow age, quick timeouts).
+- Live status on tabs, search/filter, highlight words, mention notifications and sound, hidden
+  users, text size. Color cycling also reacts to messages you send from other apps while their
+  channel is open in a tab.
 - Client code lives in `src/client/` and is bundled as text modules (see `rules` in `wrangler.jsonc`).
 - Color cycling picks a new color when switched on and again after every message sent
   through the app, so each message comes out a different color.

@@ -18,8 +18,8 @@ input { padding: 7px 10px; border-radius: 6px; border: 1px solid #3a3a3d; backgr
 input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 [hidden] { display: none !important; }
 
-.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: var(--app-height, 100dvh); padding-bottom: env(safe-area-inset-bottom); max-width: 900px; margin: 0 auto; border-inline: 1px solid var(--line); background: var(--panel); }
-.top { position: sticky; top: 0; z-index: 10; background: var(--panel); padding-top: env(safe-area-inset-top); }
+.app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "video" "chat" "footer"; height: var(--app-height, 100dvh); padding-bottom: env(safe-area-inset-bottom); max-width: 900px; margin: 0 auto; border-inline: 1px solid var(--line); background: var(--panel); }
+.top { grid-area: top; position: sticky; top: 0; z-index: 10; background: var(--panel); padding-top: env(safe-area-inset-top); }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; }
 header h1 { font-size: 15px; margin: 0; }
 header form { display: flex; gap: 6px; flex: 1 1 220px; }
@@ -50,6 +50,8 @@ header form input { flex: 1; }
 .banner a { color: #bf94ff; }
 
 /* Messages */
+.chat, .connect { grid-area: chat; }
+footer { grid-area: footer; }
 .chat { position: relative; overflow: hidden; display: flex; flex-direction: column; }
 .chat { font-size: var(--chat-font, 14px); }
 .messages { list-style: none; margin: 0; padding: 8px 0; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
@@ -76,7 +78,6 @@ header form input { flex: 1; }
 .msg .badge { width: 18px; height: 18px; vertical-align: -4px; margin-right: 3px; }
 .msg .name { font-weight: 700; }
 .msg .name.dark { text-shadow: 0 0 1px #fff, 0 0 3px #ffffff80; }
-.msg .hex { font: 11px ui-monospace, monospace; color: var(--muted); margin-left: 4px; }
 .emote-wrap { display: inline-grid; vertical-align: middle; margin: -4px 0; }
 .emote-wrap > img { grid-area: 1/1; justify-self: center; align-self: center; height: 28px; }
 .msg .mention { font-weight: 700; }
@@ -210,3 +211,14 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .card-msgs li { padding: 3px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .card-msgs .time { color: var(--muted); font-size: 11px; margin-right: 6px; }
 .msg .name { cursor: pointer; }
+
+/* Stream player: above chat on phones, beside it on wide screens. */
+.video { grid-area: video; background: #000; aspect-ratio: 16 / 9; width: 100%; max-height: calc(var(--app-height, 100dvh) * 0.4); }
+.video iframe { display: block; width: 100%; height: 100%; border: 0; }
+#video-btn[aria-pressed="true"] { color: #bf94ff; }
+@media (min-width: 1000px) {
+  .app.with-video { max-width: none; margin: 0; border-inline: 0; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "video top" "video chat" "video footer"; }
+  .app.with-video .video { aspect-ratio: auto; max-height: none; height: 100%; border-right: 1px solid var(--line); display: grid; place-items: center; }
+  /* Largest 16:9 box that fits the column. */
+  .app.with-video .video iframe { width: min(100%, calc((var(--app-height, 100dvh)) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
+}

@@ -51,10 +51,14 @@ export function renderPage(user: string): string {
     </div>
   </div>
 
+  <div class="video" id="video" hidden></div>
   <div class="chat" id="chat" hidden>
     <div class="infobar" id="infobar" hidden>
       <span class="live" id="live"></span>
       <span class="modes" id="modes"></span>
+      <button class="icon-btn" id="video-btn" type="button" title="Show or hide the stream" aria-label="Show or hide the stream" aria-pressed="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="m8 2 4 4 4-4"/></svg>
+      </button>
       <button class="icon-btn" id="search-btn" type="button" title="Search chat" aria-label="Search chat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </button>

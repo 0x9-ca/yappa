@@ -28,7 +28,7 @@ let hiddenUnread = 0;
 const sentIds = new Set();     // message ids sent from this app (for color cycling from elsewhere)
 const inflightSends = new Set();
 
-const DEFAULT_SETTINGS = { notify: false, sound: false, highlights: "", fontSize: 14, hidden: [] };
+const DEFAULT_SETTINGS = { notify: false, sound: false, highlights: "", fontSize: 14, hidden: [], video: true };
 let settings = loadSettings();
 function loadSettings() {
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(safeGet("settings") || "{}") }; } catch { return { ...DEFAULT_SETTINGS }; }
@@ -234,6 +234,7 @@ function activate(tab) {
   updateComposer();
   renderPin();
   renderInfo();
+  renderVideo();
   show("modes-panel", false);
   applyFilter();
   if (tab.isMod && tab.joined) refreshPin(tab);
@@ -250,7 +251,7 @@ function closeTab(tab, opts = {}) {
     active = null;
     const next = tabs.values().next().value;
     if (next) activate(next);
-    else { history.replaceState(null, "", "/"); updateComposer(); renderPin(); renderInfo(); }
+    else { history.replaceState(null, "", "/"); updateComposer(); renderPin(); renderInfo(); renderVideo(); }
   }
   if (!opts.keepSaved) saveTabs();
   ircPart(tab.login);
@@ -868,7 +869,6 @@ function renderMessage(tab, ev, opts = {}) {
   });
   li.appendChild(nm);
   const mine = me && ev.chatter_user_id === me.userId;
-  if (mine) li.appendChild(el("span", "hex", ev.color || "default"));
   li.appendChild(document.createTextNode(": "));
   const body = el("span", "body");
   renderFragments(tab, body, ev.message.fragments, !!ev.reply, !!ev.bits);
@@ -1482,7 +1482,44 @@ async function refreshStreams() {
     updateTabEl(t);
   }
   renderInfo();
+  renderVideo();
 }
+
+// ---------- stream player ----------
+
+// One embedded player, for the tab in view, shown while that channel is live.
+let videoChannel = null;
+
+function renderVideo() {
+  const box = $("video");
+  const tab = active;
+  const want = !!(settings.video && me && tab && tab.stream);
+  document.querySelector(".app").classList.toggle("with-video", want);
+  $("video-btn").setAttribute("aria-pressed", String(!!settings.video));
+  $("video-btn").title = settings.video ? "Hide the stream" + (tab && !tab.stream ? " (offline right now)" : "") : "Show the stream";
+  if (!want) {
+    if (videoChannel) { box.replaceChildren(); videoChannel = null; }
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  if (videoChannel === tab.login) return;
+  const frame = document.createElement("iframe");
+  // Twitch requires parent= to name the site embedding the player.
+  frame.src = "https://player.twitch.tv/?channel=" + encodeURIComponent(tab.login) +
+    "&parent=" + encodeURIComponent(location.hostname) + "&autoplay=true&muted=false";
+  frame.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media";
+  frame.allowFullscreen = true;
+  frame.title = "Live stream: " + tab.login;
+  box.replaceChildren(frame);
+  videoChannel = tab.login;
+}
+
+$("video-btn").addEventListener("click", () => {
+  settings.video = !settings.video;
+  saveSettings();
+  renderVideo();
+});
 
 // ---------- info bar: live status + chat modes ----------
 

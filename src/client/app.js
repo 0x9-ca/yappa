@@ -2211,7 +2211,7 @@ async function openPip() {
   w.document.title = APP_TITLE;
   w.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
   box.classList.add("in-pip");
-  box.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;max-height:none;aspect-ratio:auto";
+  box.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;min-height:0;max-height:none;aspect-ratio:auto";
   for (const n of box.querySelectorAll(".player-host, iframe")) n.style.cssText = "display:block;width:100%;height:100%;border:0;aspect-ratio:auto";
   w.document.body.appendChild(box);
   box.hidden = false;

@@ -224,7 +224,9 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .msg .name { cursor: pointer; }
 
 /* Stream player: above chat on phones, beside it on wide screens. */
-.video { grid-area: video; background: #000; aspect-ratio: 16 / 9; width: 100%; max-height: calc(var(--app-height, 100dvh) * 0.4); }
+/* 16:9, but at least 300px tall: Twitch requires embeds of at least 400×300 (the player
+   letterboxes). Capped at 45% of the screen so chat stays usable with the keyboard open. */
+.video { grid-area: video; background: #000; aspect-ratio: 16 / 9; width: 100%; min-height: min(300px, calc(var(--app-height, 100dvh) * 0.45)); max-height: calc(var(--app-height, 100dvh) * 0.45); }
 .video .player-host { width: 100%; height: 100%; display: grid; place-items: center; }
 .video iframe { display: block; width: 100%; height: 100%; border: 0; }
 #video-btn[aria-pressed="true"] { color: var(--link); }
@@ -247,7 +249,7 @@ button.small { padding: 3px 9px; font-size: 12px; }
 @media (min-width: 520px) { .rule-form { grid-template-columns: 1fr 1fr auto; } }
 
 /* Player while it lives in the picture-in-picture window */
-.video.in-pip { position: fixed; inset: 0; width: 100vw; height: 100vh; max-height: none; aspect-ratio: auto; }
+.video.in-pip { position: fixed; inset: 0; width: 100vw; height: 100vh; min-height: 0; max-height: none; aspect-ratio: auto; }
 .video.in-pip .player-host, .video.in-pip iframe { width: 100% !important; height: 100% !important; aspect-ratio: auto !important; }
 #pip-btn[aria-pressed="true"] { color: var(--link); }
 

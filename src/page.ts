@@ -54,6 +54,9 @@ export function renderPage(user: string): string {
       <button class="icon-btn" id="video-btn" type="button" title="Show or hide the stream" aria-label="Show or hide the stream" aria-pressed="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="m8 2 4 4 4-4"/></svg>
       </button>
+      <button class="icon-btn" id="pip-btn" type="button" title="Picture-in-picture" aria-label="Picture-in-picture" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor"/></svg>
+      </button>
       <button class="icon-btn" id="search-btn" type="button" title="Search chat" aria-label="Search chat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </button>

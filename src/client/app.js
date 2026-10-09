@@ -1728,7 +1728,9 @@ async function renderVideo() {
   const box = $("video");
   const tab = active;
   const want = !!(settings.video && me && tab && tab.stream);
-  document.querySelector(".app").classList.toggle("with-video", want);
+  if (!want && pipWindow) pipWindow.close(); // returns the player here (see openPip)
+  document.querySelector(".app").classList.toggle("with-video", want && !pipWindow);
+  $("pip-btn").hidden = !(want && "documentPictureInPicture" in window);
   $("video-btn").setAttribute("aria-pressed", String(!!settings.video));
   $("video-btn").title = settings.video ? "Hide the stream" + (tab && !tab.stream ? " (offline right now)" : "") : "Show the stream";
   if (!want) {
@@ -1736,7 +1738,7 @@ async function renderVideo() {
     if (player) try { player.pause(); } catch {}
     return;
   }
-  box.hidden = false;
+  if (!pipWindow) box.hidden = false;
   const channel = tab.login;
   if (player) {
     if (playerChannel !== channel) { player.setChannel(channel); playerChannel = channel; }
@@ -1748,20 +1750,82 @@ async function renderVideo() {
   const host = el("div", "player-host");
   host.id = "player-host";
   box.replaceChildren(host);
-  player = new Twitch.Player("player-host", {
-    width: "100%",
-    height: "100%",
-    channel,
-    parent: [location.hostname], // Twitch requires the embedding site's hostname
-    autoplay: true,
-    muted: !canPlaySound(),
-  });
+  // Twitch's iframe only allows "autoplay; fullscreen". Add picture-in-picture so the
+  // browser's own PiP (media controls, Android leaving a fullscreen video) is permitted.
+  const setAttr = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    if (this.tagName === "IFRAME" && name === "allow" && !/picture-in-picture/.test(value)) value += "; picture-in-picture";
+    return setAttr.call(this, name, value);
+  };
+  try {
+    player = new Twitch.Player("player-host", {
+      width: "100%",
+      height: "100%",
+      channel,
+      parent: [location.hostname], // Twitch requires the embedding site's hostname
+      autoplay: true,
+      muted: !canPlaySound(),
+    });
+  } finally {
+    Element.prototype.setAttribute = setAttr;
+  }
   playerChannel = channel;
   player.addEventListener(Twitch.Player.PLAYBACK_BLOCKED, () => {
     player.setMuted(true);
     player.play();
   });
 }
+
+// ---------- picture-in-picture (Document PiP: desktop Chrome/Edge) ----------
+
+// Moves the whole player into an always-on-top window; closing it brings the player back.
+// The iframe reloads when it changes documents, which for a live stream is a brief rebuffer.
+let pipWindow = null;
+
+async function openPip() {
+  const box = $("video");
+  if (pipWindow || box.hidden) return;
+  let w;
+  try {
+    w = await documentPictureInPicture.requestWindow({ width: 480, height: 270 });
+  } catch (err) {
+    if (active) sysLine(active, "Couldn't open picture-in-picture: " + err.message, "err");
+    return;
+  }
+  pipWindow = w;
+  // The PiP document is about:blank: use absolute stylesheet URLs, and size the player
+  // inline so it fills the window even before (or without) the stylesheet.
+  for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+    const l = w.document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = link.href;
+    w.document.head.appendChild(l);
+  }
+  const vp = w.document.createElement("meta");
+  vp.name = "viewport";
+  vp.content = "width=device-width, initial-scale=1";
+  w.document.head.appendChild(vp);
+  w.document.title = "Yappa";
+  w.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
+  box.classList.add("in-pip");
+  box.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;max-height:none;aspect-ratio:auto";
+  for (const n of box.querySelectorAll(".player-host, iframe")) n.style.cssText = "display:block;width:100%;height:100%;border:0;aspect-ratio:auto";
+  w.document.body.appendChild(box);
+  box.hidden = false;
+  $("pip-btn").setAttribute("aria-pressed", "true");
+  document.querySelector(".app").classList.remove("with-video");
+  w.addEventListener("pagehide", () => {
+    pipWindow = null;
+    box.classList.remove("in-pip");
+    box.style.cssText = "";
+    for (const n of box.querySelectorAll(".player-host, iframe")) n.style.cssText = "";
+    document.querySelector(".app").insertBefore(box, $("chat"));
+    $("pip-btn").setAttribute("aria-pressed", "false");
+    renderVideo();
+  }, { once: true });
+}
+
+$("pip-btn").addEventListener("click", () => (pipWindow ? pipWindow.close() : openPip()));
 
 $("video-btn").addEventListener("click", () => {
   settings.video = !settings.video;

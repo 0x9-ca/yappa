@@ -240,3 +240,8 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .rules .row { border-top: 1px solid var(--line); }
 .rule-form { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }
 @media (min-width: 520px) { .rule-form { grid-template-columns: 1fr 1fr auto; } }
+
+/* Player while it lives in the picture-in-picture window */
+.video.in-pip { position: fixed; inset: 0; width: 100vw; height: 100vh; max-height: none; aspect-ratio: auto; }
+.video.in-pip .player-host, .video.in-pip iframe { width: 100% !important; height: 100% !important; aspect-ratio: auto !important; }
+#pip-btn[aria-pressed="true"] { color: #bf94ff; }

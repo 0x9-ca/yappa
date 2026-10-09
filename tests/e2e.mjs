@@ -654,6 +654,43 @@ await page.setViewportSize({ width: 390, height: 760 });
   check("real hls.js loads under the CSP", real);
 }
 
+// =============== Open on Twitch (Bits and channel points) ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  const btn = await page.$eval("#twitch-btn", (b) => ({ disabled: b.disabled, label: b.getAttribute("aria-label"), next: b.previousElementSibling.id, w: Math.round(b.getBoundingClientRect().width) }));
+  check("button sits right after the emote button, small, labelled", !btn.disabled && btn.next === "emote-btn" && btn.w < 44 && btn.label.includes("Bits and channel points"), JSON.stringify(btn));
+  await page.screenshot({ path: dir + "/t26-twitch-btn.png" });
+  await page.evaluate(() => {
+    window.__calls = [];
+    appFallbackMs = 150;
+    launchers.app = (u) => __calls.push(["app", u]);
+    launchers.window = (u, n, f) => { __calls.push(["window", u, n || "", f || ""]); return window.__popupBlocked ? null : {}; };
+  });
+  // Phone: the app first, then the website if this page is still in front.
+  await page.tap("#twitch-btn");
+  check("phone: tries the Twitch app first", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]');
+  await sleep(400);
+  check("phone: app didn't take over → opens twitch.tv", JSON.stringify((await page.evaluate(() => __calls)).slice(1)) === '[["window","https://www.twitch.tv/uwoslab","_blank",""]]', JSON.stringify(await page.evaluate(() => __calls)));
+  // The app opening (page loses focus) cancels the website fallback.
+  await page.evaluate(() => { __calls.length = 0; });
+  await page.tap("#twitch-btn");
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await sleep(400);
+  check("phone: app opened (page blurred) → no website fallback", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]');
+  // A blocked fallback leaves a link in chat instead.
+  await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = true; });
+  await page.tap("#twitch-btn");
+  await sleep(400);
+  const linkLine = await page.evaluate(() => { const a = [...active.list.querySelectorAll(".sys a.link")].at(-1); return a && a.href; });
+  check("blocked fallback → tappable link in chat", linkLine === "https://www.twitch.tv/uwoslab", String(linkLine));
+  // Desktop: the pop-out chat window (or a tab if the popup is blocked).
+  await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = false; openOnTwitch(active, false); });
+  check("desktop: pop-out chat window", JSON.stringify(await page.evaluate(() => __calls)) === '[["window","https://www.twitch.tv/popout/uwoslab/chat?popout=","twitch-popout","popup,width=420,height=720"]]', JSON.stringify(await page.evaluate(() => __calls)));
+  await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = true; openOnTwitch(active, false); });
+  check("desktop, popup blocked → opens a tab instead", (await page.evaluate(() => __calls)).length === 2 && (await page.evaluate(() => __calls[1][1])) === "https://www.twitch.tv/uwoslab");
+  await page.evaluate(() => { window.__popupBlocked = false; });
+}
+
 // =============== Twitch player script blocked (Firefox tracking protection, ad blockers) ===============
 {
   await page.click(".tab:first-child .tab-name");

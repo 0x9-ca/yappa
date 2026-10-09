@@ -896,6 +896,7 @@ function updateComposer() {
 
   $("send").disabled = !on;
   $("emote-btn").disabled = !on;
+  $("twitch-btn").disabled = !active;   // only needs a channel, not a live connection
   composer.setEnabled(on, on
     ? "Send a message" + (active.isMod ? " (mod: /ban /timeout /unban /clear)" : "")
     : (active ? "Connecting…" : "Open a channel to chat"));
@@ -1724,6 +1725,64 @@ function insertEmote(name) {
 }
 
 $("emote-btn").addEventListener("click", () => ($("picker").hidden ? openPicker() : closePicker()));
+
+// ---------- Bits and channel points: hand off to Twitch ----------
+
+// Twitch's API can't cheer or redeem channel points, and its chat embed doesn't offer them
+// either, so this opens Twitch itself (signed in as you): the pop-out chat in a small window
+// on desktop, the Twitch app on phones (falling back to the website if the app doesn't open).
+const launchers = {
+  // Opens blank first so the new page can't reach back to us through window.opener.
+  window(url, name, features) {
+    const w = window.open("", name, features);
+    if (!w) return null;
+    try { w.opener = null; } catch {}
+    w.location.href = url;
+    return w;
+  },
+  app(url) { location.href = url; },
+};
+let appFallbackMs = 2000;
+
+function twitchLinks(login) {
+  return {
+    web: "https://www.twitch.tv/" + login,
+    popout: "https://www.twitch.tv/popout/" + login + "/chat?popout=",
+    app: "twitch://stream/" + login,
+  };
+}
+
+function openOnTwitch(tab, touch = coarse) {
+  const links = twitchLinks(tab.login);
+  if (!touch) {
+    // A small pop-out window; if the browser blocks it, a normal tab.
+    if (!launchers.window(links.popout, "twitch-popout", "popup,width=420,height=720")) launchers.window(links.web, "_blank");
+    return;
+  }
+  // Try the app. If this page is still in front shortly after (the app isn't installed, or
+  // the browser didn't hand over), open the website instead.
+  let left = false;
+  const gone = () => { left = true; };
+  const events = ["pagehide", "blur", "visibilitychange"];
+  for (const ev of events) window.addEventListener(ev, gone, { once: true });
+  launchers.app(links.app);
+  setTimeout(() => {
+    for (const ev of events) window.removeEventListener(ev, gone);
+    if (left || document.hidden) return;
+    if (!launchers.window(links.web, "_blank") && active) {
+      // Blocked (not a direct tap any more): leave a link to tap.
+      const li = el("li", "sys");
+      const a = el("a", "link", links.web.replace("https://", ""));
+      a.href = links.web;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      li.append("Couldn't open the Twitch app: ", a);
+      append(active, li, false);
+    }
+  }, appFallbackMs);
+}
+
+$("twitch-btn").addEventListener("click", () => { if (active) openOnTwitch(active); });
 $("emote-search").addEventListener("input", renderPicker);
 $("emote-search").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closePicker(); composer.focus(); }

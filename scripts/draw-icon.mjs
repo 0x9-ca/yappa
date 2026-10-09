@@ -1,7 +1,7 @@
 import { chromium } from "playwright-core";
 import fs from "fs";
 const out = process.argv[2];
-const browser = await chromium.launch({ executablePath: process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell" });
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell" });
 const page = await browser.newPage();
 await page.setContent("<canvas id=c></canvas>");
 // size: output px; inset: fraction of the canvas the artwork may use (maskable keeps it in the safe zone);

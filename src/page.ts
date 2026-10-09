@@ -26,7 +26,7 @@ export function renderPage(user: string): string {
 <div class="app">
   <div class="top">
     <header>
-      <h1>Chat</h1>
+      <h1>${APP_NAME}</h1>
       <form id="join-form">
         <input id="channel" placeholder="Open a channel" autocomplete="off" spellcheck="false" aria-label="Channel">
         <button class="ghost" type="submit">Open</button>

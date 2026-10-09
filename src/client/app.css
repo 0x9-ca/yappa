@@ -20,9 +20,9 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-col
 
 .app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "video" "chat" "footer"; height: var(--app-height, 100dvh); padding-bottom: env(safe-area-inset-bottom); max-width: 900px; margin: 0 auto; border-inline: 1px solid var(--line); background: var(--panel); }
 .top { grid-area: top; position: sticky; top: 0; z-index: 10; background: var(--panel); padding-top: env(safe-area-inset-top); }
-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; }
+header { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; padding: 10px 12px; }
 header h1 { font-size: 15px; margin: 0; }
-header form { display: flex; gap: 6px; flex: 1 1 220px; }
+header form { display: flex; gap: 6px; flex: 1 1 0; min-width: 0; }
 header form input { flex: 1; }
 .cycler { display: flex; align-items: center; gap: 8px; }
 .swatch { width: 22px; height: 22px; border-radius: 5px; border: 1px solid #3a3a3d; transition: background .3s; }

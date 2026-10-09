@@ -1,8 +1,9 @@
-# yappa
+# Yappa
 
-Web Twitch chat client (EventSub WebSocket + Helix, with 7TV emotes) that can also
-change your chat color to a random hex color every time you send a message. Gated by
-Cloudflare Access.
+A Twitch chat client that runs as a Cloudflare Worker (deployed as the `yappa` Worker).
+
+Built on EventSub WebSocket + Helix. It can also change your chat color to a random hex color
+every time you send a message. Gated by Cloudflare Access.
 
 ## Setup
 

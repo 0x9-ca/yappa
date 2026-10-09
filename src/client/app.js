@@ -1805,7 +1805,7 @@ async function openPip() {
   vp.name = "viewport";
   vp.content = "width=device-width, initial-scale=1";
   w.document.head.appendChild(vp);
-  w.document.title = "Yappa";
+  w.document.title = APP_TITLE;
   w.document.body.style.cssText = "margin:0;background:#000;overflow:hidden";
   box.classList.add("in-pip");
   box.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;max-height:none;aspect-ratio:auto";

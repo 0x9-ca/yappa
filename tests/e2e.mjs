@@ -610,13 +610,27 @@ check("Settings switches back to touch controls", (await pc()).filter((c) => c[0
 await page.evaluate(() => composer.setText(""));
 await page.click("#message");
 await page.keyboard.type("hi Kappa catJAM OMEGALUL");
-let ce = await page.evaluate(() => ({ text: composer.getText(), imgs: [...document.querySelectorAll("#message img")].map((i) => i.dataset.name) }));
+let ce = await page.evaluate(() => ({ text: composer.getText(), imgs: [...document.querySelectorAll("#message .ce-emote")].map((i) => i.dataset.name) }));
 check("finished emote names become images; the word being typed stays text", ce.imgs.join(",") === "Kappa,catJAM" && ce.text === "hi Kappa catJAM OMEGALUL", JSON.stringify(ce));
 await page.keyboard.type(" and more");
-ce = await page.evaluate(() => ({ text: composer.getText(), imgs: [...document.querySelectorAll("#message img")].map((i) => i.dataset.name), caretAtEnd: composer.caret() === composer.getText().length }));
+ce = await page.evaluate(() => ({ text: composer.getText(), imgs: [...document.querySelectorAll("#message .ce-emote")].map((i) => i.dataset.name), caretAtEnd: composer.caret() === composer.getText().length }));
 check("typing continues normally after conversion (caret stays at end)", ce.imgs.join(",") === "Kappa,catJAM,OMEGALUL" && ce.text === "hi Kappa catJAM OMEGALUL and more" && ce.caretAtEnd, JSON.stringify(ce));
 await sleep(400);
 await page.screenshot({ path: dir + "/t14-composer.png" });
+check("emotes stay real text in the box (what phone keyboards read for predictions)", await page.evaluate(() => {
+  const box = document.getElementById("message");
+  return !box.querySelector("img") && box.textContent.replace(/\u00a0/g, " ") === composer.getText();
+}));
+// Typing more must not rebuild the emotes already shown (that resets keyboard predictions).
+check("typing after an emote leaves earlier nodes untouched", await page.evaluate(() => {
+  const before = document.querySelector('#message .ce-emote[data-name="Kappa"]');
+  document.getElementById("message").lastChild.appendData("x");
+  document.getElementById("message").dispatchEvent(new InputEvent("input", { bubbles: true }));
+  const same = document.querySelector('#message .ce-emote[data-name="Kappa"]') === before;
+  const t = document.getElementById("message").lastChild; t.deleteData(t.length - 1, 1);
+  document.getElementById("message").dispatchEvent(new InputEvent("input", { bubbles: true }));
+  return same;
+}));
 await page.keyboard.press("Home");
 await page.keyboard.type("so ");
 ce = await page.evaluate(() => composer.getText());
@@ -628,7 +642,7 @@ await sleep(200);
 check("sends plain text with emote names", log.sent.at(-1) === "so hi Kappa catJAM OMEGALUL and more" && log.sent.length === sentBefore + 1 && (await page.evaluate(() => composer.getText())) === "", log.sent.at(-1));
 await page.click("#emote-btn");
 await page.click('#picker-list button[data-name="uwoHype"]');
-check("picker inserts an image", await page.evaluate(() => !!document.querySelector('#message img[data-name="uwoHype"]') && composer.getText() === "uwoHype "));
+check("picker inserts an image", await page.evaluate(() => !!document.querySelector('#message .ce-emote[data-name="uwoHype"]') && composer.getText() === "uwoHype "));
 await page.keyboard.press("Escape");
 await page.evaluate(() => composer.setText(""));
 

@@ -1820,8 +1820,10 @@ document.addEventListener("pointerdown", (e) => {
 // ---------- composer (message box) ----------
 
 // A contenteditable box: plain text, except finished emote names (followed by a space)
-// are shown as images. The text model is always the plain string; images carry their
-// name in data-name, so what's sent is exactly what was typed.
+// are shown as images. The text model is always the plain string, so what's sent is
+// exactly what was typed. An emote stays real text in a <span> whose letters are hidden
+// and whose background is the image. Phone keyboards predict the next word from the text
+// before the caret, and an <img> would hide the emote name from them.
 const composer = (() => {
   const box = $("message");
   const MAX = 500;
@@ -1897,38 +1899,54 @@ const composer = (() => {
     return out;
   }
 
-  function currentShape() {
-    const out = [];
-    for (const n of box.childNodes) {
-      if (n.nodeType === 3) {
-        if (out.length && out[out.length - 1][0] === "t") out[out.length - 1][1] += n.data;
-        else out.push(["t", n.data]);
-      } else if (n.nodeName === "IMG") out.push(["e", n.dataset.name]);
-    }
-    return JSON.stringify(out.map((t) => t.slice(0, 2)));
+  const norm = (t) => t.replace(/\u00a0/g, " ");
+  /** Whether an existing node already shows the given token. */
+  function same(node, [type, value]) {
+    if (type === "t") return node.nodeType === 3 && norm(node.data) === value;
+    return node.nodeType === 1 && node.classList.contains("ce-emote") && node.dataset.name === value && node.textContent === value;
   }
 
-  /** Re-renders only if the emote layout changed, so ordinary typing is never disturbed. */
+  const emoteWidths = new Map(); // url -> px width at the box's emote height
+  function emoteNode(name, url) {
+    const span = document.createElement("span");
+    span.className = "ce-emote";
+    span.dataset.name = name;
+    span.title = name;
+    span.textContent = name;
+    span.style.backgroundImage = 'url("' + url.replace(/["\\]/g, encodeURIComponent) + '")';
+    // Wide emotes (many 7TV ones) keep their shape once the image's size is known.
+    const known = emoteWidths.get(url);
+    if (known) span.style.width = known + "px";
+    else {
+      const probe = new Image();
+      probe.onload = () => {
+        if (!probe.naturalHeight) return;
+        const w = Math.min(96, Math.round(24 * probe.naturalWidth / probe.naturalHeight));
+        emoteWidths.set(url, w);
+        span.style.width = w + "px";
+      };
+      probe.src = url;
+    }
+    return span;
+  }
+
+  /**
+   * Brings the box in line with the text's tokens. Nodes that already match are left alone
+   * and only the rest is rebuilt, so ordinary typing is never disturbed. Since emotes stay
+   * text, the characters a phone keyboard sees don't change either.
+   */
   function render(force) {
     let text = getText();
     let pos = caret();
     if (text.length > MAX) { text = text.slice(0, MAX); pos = Math.min(pos, MAX); force = true; }
     const want = tokens(text);
-    if (!force && JSON.stringify(want.map((t) => t.slice(0, 2))) === currentShape()) {
-      if (!text && box.childNodes.length) box.replaceChildren(); // drop stray <br> so the placeholder shows
-      return;
-    }
-    const nodes = want.map(([type, value, url]) => {
-      if (type === "t") return document.createTextNode(value);
-      const img = document.createElement("img");
-      img.className = "ce-emote";
-      img.src = url;
-      img.alt = img.title = value;
-      img.dataset.name = value;
-      img.draggable = false;
-      return img;
-    });
-    box.replaceChildren(...nodes);
+    const have = [...box.childNodes];
+    let i = 0;
+    if (!force) while (i < want.length && i < have.length && same(have[i], want[i])) i++;
+    if (i === want.length && i === have.length) return;
+    if (!text) { box.replaceChildren(); return; } // drop stray <br> so the placeholder shows
+    for (const n of have.slice(i)) n.remove();
+    box.append(...want.slice(i).map(([type, value, url]) => (type === "t" ? document.createTextNode(value) : emoteNode(value, url))));
     if (document.activeElement === box) placeCaret(pos);
   }
 

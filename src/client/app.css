@@ -121,7 +121,8 @@ footer form { display: flex; gap: 8px; }
 .composer:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .composer:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer[aria-disabled="true"] { opacity: .5; cursor: default; }
-.composer .ce-emote { height: 24px; vertical-align: middle; margin: -2px 1px; }
+.composer .ce-emote { display: inline-block; width: 24px; height: 24px; vertical-align: middle; margin: -2px 1px; background: center / contain no-repeat; color: transparent; overflow: hidden; white-space: nowrap; }
+.composer .ce-emote::selection { color: transparent; }
 footer form { align-items: flex-end; }
 #send-error { color: var(--err-text); font-size: 12px; margin-top: 6px; }
 #emote-btn { padding: 7px 9px; display: grid; place-items: center; }

@@ -28,10 +28,18 @@ let hiddenUnread = 0;
 const sentIds = new Set();     // message ids sent from this app (for color cycling from elsewhere)
 const inflightSends = new Set();
 
-const DEFAULT_SETTINGS = { notify: false, sound: false, highlights: "", fontSize: 14, hidden: [], video: true, followRaids: true };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true };
 let settings = loadSettings();
 function loadSettings() {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(safeGet("settings") || "{}") }; } catch { return { ...DEFAULT_SETTINGS }; }
+  let s;
+  // structuredClone: the defaults' arrays must not be shared with (and mutated through) settings.
+  try { s = { ...structuredClone(DEFAULT_SETTINGS), ...JSON.parse(safeGet("settings") || "{}") }; } catch { s = structuredClone(DEFAULT_SETTINGS); }
+  // Older versions stored comma-separated highlight words; turn them into rules.
+  if (typeof s.highlights === "string") {
+    if (!s.rules.length) s.rules = s.highlights.split(",").map((w) => w.trim()).filter(Boolean).map((phrase) => ({ phrase, user: "" }));
+    delete s.highlights;
+  }
+  return s;
 }
 function saveSettings() { safeSet("settings", JSON.stringify(settings)); applySettings(); }
 function applySettings() { document.querySelector(".app").style.setProperty("--chat-font", settings.fontSize + "px"); }
@@ -555,12 +563,12 @@ function tabForBroadcaster(id) {
 
 function updateComposer() {
   const on = !!(active && active.joined && sock);
-  $("message").disabled = !on;
+
   $("send").disabled = !on;
   $("emote-btn").disabled = !on;
-  $("message").placeholder = on
+  composer.setEnabled(on, on
     ? "Send a message" + (active.isMod ? " (mod: /ban /timeout /unban /clear)" : "")
-    : (active ? "Connecting…" : "Open a channel to chat");
+    : (active ? "Connecting…" : "Open a channel to chat"));
   if (!on) { closePicker(); closeSuggest(); }
 }
 
@@ -879,7 +887,7 @@ function renderMessage(tab, ev, opts = {}) {
 
   const mentioned = me && (ev.message.fragments || []).some((f) => (f.type === "mention" && f.mention && f.mention.user_id === me.userId) || f.mentionsMe);
   if (mentioned) li.classList.add("mentioned");
-  const highlighted = !mentioned && !mine && matchesHighlight(ev.message.text);
+  const highlighted = !mentioned && !mine && matchesHighlight(ev);
   if (highlighted) li.classList.add("highlighted");
   if ((mentioned || highlighted) && !mine && !opts.historical && !opts.before && !li.classList.contains("ignored")) alertFor(tab, ev);
   if (mine && !opts.historical && !opts.before) maybeBumpColor(ev.message_id);
@@ -1291,23 +1299,20 @@ function renderPicker() {
 }
 
 function insertEmote(name) {
-  const input = $("message");
-  const v = input.value;
-  const start = input.selectionStart ?? v.length;
-  const end = input.selectionEnd ?? v.length;
-  const before = v.slice(0, start), after = v.slice(end);
+  const v = composer.getText();
+  const start = composer.caret();
+  const before = v.slice(0, start), after = v.slice(start);
   const text = (before && !/\s$/.test(before) ? " " : "") + name + (/^\s/.test(after) ? "" : " ");
   if ((before + text + after).length > 500) return;
-  input.value = before + text + after;
   const pos = before.length + text.length;
-  input.setSelectionRange(pos, pos);
-  if (!coarse) input.focus();
+  composer.setText(before + text + after, pos);
+  if (!coarse) composer.focus();
 }
 
 $("emote-btn").addEventListener("click", () => ($("picker").hidden ? openPicker() : closePicker()));
 $("emote-search").addEventListener("input", renderPicker);
 $("emote-search").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closePicker(); $("message").focus(); }
+  if (e.key === "Escape") { closePicker(); composer.focus(); }
   if (e.key === "Enter") {
     e.preventDefault();
     const first = $("picker-list").querySelector(".grid button");
@@ -1329,13 +1334,13 @@ let suggestWord = null;        // { start, end } of the word being completed
 let suggestStrong = false;     // Enter accepts (":"/"@" prefix or arrow-key choice); otherwise Enter sends
 
 function currentWord() {
-  const input = $("message");
-  const pos = input.selectionStart ?? input.value.length;
-  const before = input.value.slice(0, pos);
+  const value = composer.getText();
+  const pos = composer.caret();
+  const before = value.slice(0, pos);
   const m = /(\S+)$/.exec(before);
   if (!m) return null;
   // Only complete when the cursor is at the end of the word.
-  if (/^\S/.test(input.value.slice(pos))) return null;
+  if (/^\S/.test(value.slice(pos))) return null;
   return { text: m[1], start: pos - m[1].length, end: pos };
 }
 
@@ -1404,16 +1409,13 @@ function acceptSuggestion(i) {
   const s = suggestions[i];
   const w = suggestWord;
   if (!s || !w) return;
-  const input = $("message");
-  const v = input.value;
+  const v = composer.getText();
   const after = v.slice(w.end);
   const insert = s.name + (/^\s/.test(after) ? "" : " ");
-  input.value = v.slice(0, w.start) + insert + after;
-  const pos = w.start + insert.length;
-  input.setSelectionRange(pos, pos);
+  composer.setText(v.slice(0, w.start) + insert + after, w.start + insert.length);
   if (s.url) rememberEmote(s.name, s.url);
   closeSuggest();
-  input.focus();
+  composer.focus();
 }
 
 $("message").addEventListener("input", updateSuggest);
@@ -1448,7 +1450,9 @@ $("message").addEventListener("keydown", (e) => {
       if (hit) { suggestions = [hit]; suggestWord = w; acceptSuggestion(0); e.preventDefault(); return; }
     }
   }
-  if (e.key === "ArrowUp" && !$("message").value && lastSent) { $("message").value = lastSent; e.preventDefault(); }
+  if (e.key === "ArrowUp" && !composer.getText() && lastSent) { composer.setText(lastSent); e.preventDefault(); }
+  // Enter sends (there are no multi-line chat messages).
+  if (e.key === "Enter" && !e.defaultPrevented) { e.preventDefault(); if (!e.isComposing) $("send-form").requestSubmit(); }
   if (e.key === "Escape") { if (!$("picker").hidden) closePicker(); else setReply(null); }
 });
 
@@ -1457,6 +1461,163 @@ document.addEventListener("pointerdown", (e) => {
   if (!$("suggest").hidden && !e.target.closest("#suggest, #message")) closeSuggest();
 });
 
+// ---------- composer (message box) ----------
+
+// A contenteditable box: plain text, except finished emote names (followed by a space)
+// are shown as images. The text model is always the plain string; images carry their
+// name in data-name, so what's sent is exactly what was typed.
+const composer = (() => {
+  const box = $("message");
+  const MAX = 500;
+  let composing = false;
+  let pendingCaret = null; // where the caret goes when the box next gets focus
+
+  const plainOf = (node) => {
+    let out = "";
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) out += n.data;
+      else if (n.nodeName === "IMG") out += n.dataset.name || "";
+      else if (n.nodeName !== "BR") out += plainOf(n);
+    }
+    return out;
+  };
+  const getText = () => plainOf(box).replace(/ /g, " ");
+
+  function caret() {
+    const sel = getSelection();
+    if (!sel.rangeCount || !box.contains(sel.anchorNode)) return pendingCaret ?? getText().length;
+    const r = sel.getRangeAt(0);
+    const pre = document.createRange();
+    pre.selectNodeContents(box);
+    pre.setEnd(r.endContainer, r.endOffset);
+    return plainOf(pre.cloneContents()).length;
+  }
+
+  function placeCaret(index) {
+    const sel = getSelection();
+    const r = document.createRange();
+    for (const n of box.childNodes) {
+      const len = n.nodeType === 3 ? n.data.length : (n.dataset && n.dataset.name ? n.dataset.name.length : 0);
+      if (index <= len) {
+        if (n.nodeType === 3) r.setStart(n, index);
+        else r.setStartAfter(n);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        return;
+      }
+      index -= len;
+    }
+    r.selectNodeContents(box);
+    r.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
+  function lookup(word) {
+    const tab = active;
+    if (!tab) return null;
+    if (tab.twitchEmotes && tab.twitchEmotes.ok) {
+      const e = tab.twitchEmotes.emotes.find((x) => x.name === word);
+      if (e) return twitchEmoteUrl(e);
+    }
+    const ext = findExt(tab, word);
+    return ext ? ext.url : null;
+  }
+
+  // Desired tokens: emote names followed by whitespace become images.
+  function tokens(text) {
+    const out = [];
+    const re = /(\S+)(?=\s)/g;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      const url = lookup(m[1]);
+      if (!url) continue;
+      if (m.index > last) out.push(["t", text.slice(last, m.index)]);
+      out.push(["e", m[1], url]);
+      last = m.index + m[1].length;
+    }
+    if (last < text.length) out.push(["t", text.slice(last)]);
+    return out;
+  }
+
+  function currentShape() {
+    const out = [];
+    for (const n of box.childNodes) {
+      if (n.nodeType === 3) {
+        if (out.length && out[out.length - 1][0] === "t") out[out.length - 1][1] += n.data;
+        else out.push(["t", n.data]);
+      } else if (n.nodeName === "IMG") out.push(["e", n.dataset.name]);
+    }
+    return JSON.stringify(out.map((t) => t.slice(0, 2)));
+  }
+
+  /** Re-renders only if the emote layout changed, so ordinary typing is never disturbed. */
+  function render(force) {
+    let text = getText();
+    let pos = caret();
+    if (text.length > MAX) { text = text.slice(0, MAX); pos = Math.min(pos, MAX); force = true; }
+    const want = tokens(text);
+    if (!force && JSON.stringify(want.map((t) => t.slice(0, 2))) === currentShape()) {
+      if (!text && box.childNodes.length) box.replaceChildren(); // drop stray <br> so the placeholder shows
+      return;
+    }
+    const nodes = want.map(([type, value, url]) => {
+      if (type === "t") return document.createTextNode(value);
+      const img = document.createElement("img");
+      img.className = "ce-emote";
+      img.src = url;
+      img.alt = img.title = value;
+      img.dataset.name = value;
+      img.draggable = false;
+      return img;
+    });
+    box.replaceChildren(...nodes);
+    if (document.activeElement === box) placeCaret(pos);
+  }
+
+  function setText(text, pos) {
+    box.replaceChildren(document.createTextNode(text.slice(0, MAX)));
+    render(true);
+    const at = Math.min(pos == null ? text.length : pos, MAX);
+    // Don't grab focus (on phones that would pop the keyboard); remember the spot instead.
+    if (document.activeElement === box) placeCaret(at);
+    else pendingCaret = at;
+  }
+
+  box.addEventListener("compositionstart", () => { composing = true; });
+  box.addEventListener("compositionend", () => { composing = false; render(); });
+  box.addEventListener("input", (e) => { pendingCaret = null; if (!composing && !e.isComposing) render(); });
+  // Plain text only, on one line.
+  box.addEventListener("paste", (e) => {
+    e.preventDefault();
+    const t = (e.clipboardData.getData("text/plain") || "").replace(/\s*\n\s*/g, " ");
+    const text = getText(), pos = caret();
+    setText(text.slice(0, pos) + t + text.slice(pos), pos + t.length);
+    updateSuggest();
+  });
+  box.addEventListener("drop", (e) => e.preventDefault());
+
+  return {
+    el: box,
+    getText,
+    setText,
+    caret,
+    refresh: () => render(true),
+    focus: () => {
+      const at = pendingCaret ?? caret();
+      box.focus();
+      placeCaret(at);
+      pendingCaret = null;
+    },
+    setEnabled(on, placeholder) {
+      box.contentEditable = on ? "true" : "false";
+      box.setAttribute("aria-disabled", String(!on));
+      box.dataset.placeholder = placeholder;
+    },
+  };
+})();
+
 // ---------- sending ----------
 
 function setReply(r) {
@@ -1464,21 +1625,20 @@ function setReply(r) {
   show("replying", !!r);
   if (r) {
     $("replying-text").textContent = "Replying to @" + r.user + ": " + r.text;
-    $("message").focus();
+    composer.focus();
   }
 }
 $("reply-cancel").addEventListener("click", () => setReply(null));
 
 $("send-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const input = $("message");
-  const text = input.value.trim();
+  const text = composer.getText().trim();
   const tab = active;
   if (!text || !tab || !tab.broadcaster) return;
   closeSuggest();
   if (runCommand(tab, text)) {
     lastSent = text;
-    input.value = "";
+    composer.setText("");
     return;
   }
   $("send").disabled = true;
@@ -1495,7 +1655,7 @@ $("send-form").addEventListener("submit", async (e) => {
   updateComposer();
   if (r.ok) {
     lastSent = text;
-    input.value = "";
+    composer.setText("");
     setReply(null);
     closePicker();
     if (status && status.cycle && status.cycle.enabled) refreshStatus(); // show the new color now
@@ -1503,7 +1663,7 @@ $("send-form").addEventListener("submit", async (e) => {
     $("send-error").textContent = r.error;
     show("send-error", true);
   }
-  input.focus();
+  composer.focus();
 });
 
 // ---------- live status ----------
@@ -1829,6 +1989,15 @@ async function openUserCard(tab, u) {
   actions.appendChild(btn("@ Mention", () => { closeSheet(); insertEmote("@" + u.name); }));
   const hidden = isHidden(u.id);
   actions.appendChild(btn(hidden ? "Show their messages" : "Hide their messages", () => { setHidden(u, !hidden); closeSheet(); }));
+  const login = u.login || u.name;
+  const hl = userRule(login);
+  actions.appendChild(btn(hl ? "Stop highlighting" : "Highlight their messages", () => {
+    if (hl) settings.rules = settings.rules.filter((r) => r !== hl);
+    else settings.rules.push({ phrase: "", user: normLogin(login) });
+    saveSettings();
+    closeSheet();
+    if (active) sysLine(active, (hl ? "No longer highlighting " : "Highlighting messages from ") + u.name + ".");
+  }));
   const isMe = me && u.id === me.userId;
   const isBroadcaster = tab.broadcaster && u.id === tab.broadcaster.id;
   if (tab.isMod && !isMe && !isBroadcaster) {
@@ -1879,15 +2048,24 @@ function setHidden(u, hide) {
 
 // ---------- highlights, notifications, sound ----------
 
-function highlightWords() {
-  return settings.highlights.split(",").map((w) => w.trim()).filter(Boolean);
+/** Whole-word/phrase, case-insensitive. */
+function containsPhrase(text, phrase) {
+  const esc = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp("(^|[^\\p{L}\\p{N}_])" + esc + "($|[^\\p{L}\\p{N}_])", "iu").test(text || "");
 }
 
-function matchesHighlight(text) {
-  const words = highlightWords();
-  if (!words.length || !text) return false;
-  return words.some((w) => new RegExp("(^|[^\\p{L}\\p{N}_])" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^\\p{L}\\p{N}_])", "iu").test(text));
+function normLogin(u) { return String(u || "").trim().replace(/^@/, "").toLowerCase(); }
+
+/** Highlight rules: a phrase, a user, or a phrase only when that user says it. */
+function matchesHighlight(ev) {
+  const login = normLogin(ev.chatter_user_login || ev.chatter_user_name);
+  return settings.rules.some((r) =>
+    (r.phrase || r.user) &&
+    (!r.user || normLogin(r.user) === login) &&
+    (!r.phrase || containsPhrase(ev.message.text, r.phrase)));
 }
+
+function userRule(login) { return settings.rules.find((r) => !r.phrase && normLogin(r.user) === normLogin(login)); }
 
 let audioCtx = null;
 function ping() {
@@ -1983,11 +2161,38 @@ function openSettings() {
     if (c.checked) ping();
   });
 
-  const words = document.createElement("input");
-  words.type = "text";
-  words.placeholder = "e.g. your nickname, giveaway, !discord";
-  words.value = settings.highlights;
-  words.addEventListener("change", () => { settings.highlights = words.value; saveSettings(); });
+  // Highlight rules editor
+  const rulesList = el("div", "rules");
+  const renderRules = () => {
+    rulesList.replaceChildren();
+    if (!settings.rules.length) { rulesList.appendChild(el("div", "hint", "No rules yet.")); return; }
+    settings.rules.forEach((r, i) => {
+      const desc = el("label");
+      desc.appendChild(el("div", null, r.phrase ? "“" + r.phrase + "”" : "Every message"));
+      desc.appendChild(el("div", "hint", r.user ? "only from @" + normLogin(r.user) : "from anyone"));
+      const line = el("div", "row");
+      line.append(desc, btn("Remove", () => { settings.rules.splice(i, 1); saveSettings(); renderRules(); }, "ghost small"));
+      rulesList.appendChild(line);
+    });
+  };
+  renderRules();
+  const phraseIn = document.createElement("input");
+  phraseIn.type = "text";
+  phraseIn.placeholder = "Word or phrase (optional if you pick a user)";
+  const userIn = document.createElement("input");
+  userIn.type = "text";
+  userIn.placeholder = "From user (optional), e.g. somestreamer";
+  userIn.autocapitalize = "off";
+  const addRule = el("div", "rule-form");
+  const addBtn = btn("Add rule", () => {
+    const phrase = phraseIn.value.trim(), user = normLogin(userIn.value);
+    if (!phrase && !user) { phraseIn.focus(); return; }
+    settings.rules.push({ phrase, user });
+    saveSettings();
+    phraseIn.value = userIn.value = "";
+    renderRules();
+  }, "small");
+  addRule.append(phraseIn, userIn, addBtn);
 
   const seg = el("div", "seg");
   for (const [label, px] of [["S", 13], ["M", 14], ["L", 16], ["XL", 18]]) {
@@ -2034,9 +2239,10 @@ function openSettings() {
     el("h3", null, "Alerts"),
     row("Notifications", notify, notifyHint),
     row("Sound", sound, "A short chime for mentions and highlights when you're looking elsewhere."),
-    el("h3", null, "Highlight words"),
-    words,
-    el("div", "hint", "Comma-separated. Matching messages are highlighted in orange (and alert you, if on)."),
+    el("h3", null, "Highlight rules"),
+    el("div", "hint", "Matching messages are highlighted in orange (and alert you, if on). Phrases match whole words, ignoring case."),
+    rulesList,
+    addRule,
     el("h3", null, "Chat text size"),
     seg,
     el("h3", null, "Hidden users"),

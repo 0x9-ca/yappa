@@ -88,7 +88,8 @@ export function renderPage(user: string): string {
       <button type="button" class="ghost" id="emote-btn" aria-label="Emotes" title="Emotes" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="3"/></svg>
       </button>
-      <input id="message" placeholder="Open a channel to chat" autocomplete="off" autocapitalize="off" maxlength="500" disabled aria-label="Message">
+      <div id="message" class="composer" contenteditable="false" role="textbox" aria-label="Message" aria-disabled="true"
+        data-placeholder="Open a channel to chat" autocapitalize="off" autocorrect="off" spellcheck="true" enterkeyhint="send"></div>
       <button type="submit" id="send" disabled>Chat</button>
     </form>
     <div id="send-error" hidden></div>

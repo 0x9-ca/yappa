@@ -41,7 +41,8 @@ committed:
 `wrangler.sample.jsonc` is the tracked copy. If you change the structure of `wrangler.jsonc`
 (bindings, `rules`, migrations, vars), make the same change in the sample so a fresh clone
 still works. The Twitch client secret is a Worker secret (`npx wrangler secret put
-TWITCH_CLIENT_SECRET`), not part of any file.
+TWITCH_CLIENT_SECRET`), not part of any file; the config declares it under `secrets.required`,
+so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 
 ## Behavior
 

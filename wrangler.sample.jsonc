@@ -24,7 +24,9 @@
     // along this browser's tabs and settings. Empty = no redirect.
     "APP_HOST": "yappa.example.com"
   },
-  // Secret (set with `wrangler secret put`): TWITCH_CLIENT_SECRET
+  // The Twitch app's client secret is a Worker secret: `npx wrangler secret put TWITCH_CLIENT_SECRET`.
+  // Declaring it here types it and makes `wrangler deploy` fail if it's missing.
+  "secrets": { "required": ["TWITCH_CLIENT_SECRET"] },
   // Client assets are bundled as strings and served by the Worker.
   "rules": [
     { "type": "Text", "globs": ["**/client/*.js", "**/client/*.css", "**/hls.js/dist/hls.light.min.js"], "fallthrough": true },

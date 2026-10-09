@@ -3,8 +3,8 @@
 const $ = (id) => document.getElementById(id);
 const show = (id, on) => { $(id).hidden = !on; };
 const EVENTSUB_URL = "wss://eventsub.wss.twitch.tv/ws";
-const MAX_MESSAGES = 1000;      // per tab; room for a full history load plus live chat
-const HISTORY_LIMIT = 800;      // the recent-messages service keeps at most 800 per channel
+const MAX_MESSAGES = 1000;      // per tab, trimmed only while you're at the bottom
+const HISTORY_PAGE = 100;       // history messages per request (the service recommends 50–100)
 const MAX_TABS = 20;
 const DEFAULT_COLORS = ["#FF0000", "#0000FF", "#008000", "#B22222", "#FF7F50", "#9ACD32", "#FF4500", "#2E8B57", "#DAA520", "#D2691E", "#5F9EA0", "#1E90FF", "#FF69B4", "#8A2BE2", "#00FF7F"];
 const coarse = matchMedia("(pointer: coarse)").matches;
@@ -196,7 +196,10 @@ function openTab(name, focus = true) {
     };
     tab.list.hidden = true;
     tab.list.setAttribute("aria-live", "polite");
-    tab.list.addEventListener("scroll", () => { if (tab === active && nearBottom(tab)) show("more", false); });
+    tab.list.addEventListener("scroll", () => {
+      if (tab === active && nearBottom(tab)) show("more", false);
+      if (tab.list.scrollTop < 400) loadOlder(tab); // near the top: fetch earlier history
+    });
     $("chat").insertBefore(tab.list, $("more"));
     tabs.set(name, tab);
     buildTabEl(tab);
@@ -619,44 +622,125 @@ async function subscribeTab(tab) {
 
 /**
  * Twitch has no chat history API, so (if the user opted in) fetch recent messages from the
- * public recent-messages service, as Chatterino and other clients do: up to 800 on first
- * load, or just the gap after a reconnect. Each message is merged in by timestamp, so
- * history slots in around whatever is already on screen, and already-shown ids are skipped.
+ * public recent-messages service, as Chatterino and other clients do. Requests are small
+ * pages of HISTORY_PAGE: the newest page on first load, more as you scroll up (loadOlder),
+ * and after a reconnect just the gap. Each message is merged in by timestamp, so history
+ * slots in around whatever is already on screen; already-shown ids are skipped.
  */
-async function backfill(tab, { since, until, marker }) {
-  if (settings.history !== true) return;
-  const params = new URLSearchParams({ limit: String(HISTORY_LIMIT) });
-  // `after` compares against the service's receive time, which trails the send time a little.
-  if (since) params.set("after", String(since - 30000));
-  let lines = [];
+async function fetchHistory(tab, { after, before }) {
+  const params = new URLSearchParams({ limit: String(HISTORY_PAGE) });
+  // Both compare against the service's receive time, not the send time.
+  if (after) params.set("after", String(after));
+  if (before) params.set("before", String(before));
   try {
     const r = await fetch("https://recent-messages.robotty.de/api/v2/recent-messages/" + encodeURIComponent(tab.login) + "?" + params);
-    if (r.ok) lines = (await r.json()).messages || [];
+    if (r.ok) return (await r.json()).messages || [];
   } catch {}
-  if (!tabs.has(tab.login) || settings.history !== true) return;
-  const firstLoad = !since;
-  const stick = tab !== active || nearBottom(tab);
+  return null;
+}
+
+/** The service's receive time for a raw line (what before/after compare against). */
+function receivedAt(line) {
+  const m = /(?:^@|;)rm-received-ts=(\d+)/.exec(line);
+  return m ? Number(m[1]) : 0;
+}
+
+/** Merges raw history lines into a tab; returns how many were new. */
+function mergeHistory(tab, lines, { since = 0, until = Infinity, historical }) {
   let added = 0;
-  let earliest = null;
   for (const line of lines) {
     const ev = ircToEvent(line);
     // Newer than `until` arrives live over EventSub.
     if (!ev || !ev.ts || ev.ts <= since || ev.ts > until) continue;
-    const li = renderMessage(tab, ev, { merge: true, historical: firstLoad });
+    const li = renderMessage(tab, ev, { merge: true, historical });
     if (!li) continue; // already shown
+    li.dataset.recv = String(receivedAt(line) || ev.ts);
     if (ev.deleted) addFlag(li, "deleted", "Deleted by a moderator");
     added++;
-    if (!earliest || ev.ts < Number(earliest.dataset.ts)) earliest = li;
   }
-  trimList(tab.list);
-  if (firstLoad && earliest && earliest.isConnected && !earliest.previousElementSibling?.classList.contains("history-divider")) {
-    const divider = el("li", "sys history-divider", "— earlier messages, via recent-messages.robotty.de —");
-    divider.dataset.ts = earliest.dataset.ts;
-    tab.list.insertBefore(divider, earliest);
-  } else if (!firstLoad && added && marker && marker.isConnected) {
-    marker.textContent += " Caught up on " + added + " missed message" + (added === 1 ? "" : "s") + ".";
+  return added;
+}
+
+/** Keeps what you're reading still while messages are inserted above it. */
+function keepScroll(tab, fn) {
+  const list = tab.list;
+  const top = list.getBoundingClientRect().top;
+  let anchor = null;
+  for (const n of list.children) if (n.getBoundingClientRect().bottom > top) { anchor = n; break; }
+  const was = anchor ? anchor.getBoundingClientRect().top : 0;
+  fn();
+  // Works whether or not the browser already did its own scroll anchoring.
+  if (anchor && anchor.isConnected) list.scrollTop += anchor.getBoundingClientRect().top - was;
+}
+
+/** One divider above the oldest loaded history, saying whether more can be loaded. */
+function placeHistoryDivider(tab) {
+  let d = tab.list.querySelector(".history-divider");
+  const first = [...tab.list.children].find((n) => n.dataset.recv);
+  if (!first) { if (d) d.remove(); return; }
+  if (!d) d = el("li", "sys history-divider");
+  d.textContent = tab.historyDone
+    ? "— start of chat history (about the past 24 hours), via recent-messages.robotty.de —"
+    : "— chat history via recent-messages.robotty.de · scroll up for more —";
+  d.dataset.ts = first.dataset.ts;
+  if (d.nextElementSibling !== first) tab.list.insertBefore(d, first);
+}
+
+async function backfill(tab, { since, until, marker }) {
+  if (settings.history !== true) return;
+  if (since) {
+    // After a reconnect: page backwards through the gap until it's covered.
+    let before = 0, added = 0;
+    for (let page = 0; page < 8; page++) {
+      const lines = await fetchHistory(tab, { after: since - 30000, before });
+      if (!lines || !tabs.has(tab.login) || settings.history !== true) break;
+      const stick = tab !== active || nearBottom(tab);
+      keepScroll(tab, () => { added += mergeHistory(tab, lines, { since, until, historical: false }); });
+      if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+      if (lines.length < HISTORY_PAGE) break;
+      before = Math.min(...lines.map(receivedAt).filter(Boolean));
+      if (!before) break;
+    }
+    if (added && marker && marker.isConnected) marker.textContent += " Caught up on " + added + " missed message" + (added === 1 ? "" : "s") + ".";
+    return;
   }
+  // First load: the newest page; scrolling up loads more.
+  const lines = await fetchHistory(tab, {});
+  if (!lines || !tabs.has(tab.login) || settings.history !== true) return;
+  const stick = tab !== active || nearBottom(tab);
+  mergeHistory(tab, lines, { until, historical: true });
+  tab.historyBefore = Math.min(...lines.map(receivedAt).filter(Boolean)) || 0;
+  tab.historyDone = lines.length < HISTORY_PAGE || !tab.historyBefore;
+  placeHistoryDivider(tab);
   if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+  fillScreen(tab);
+}
+
+/** Keeps loading pages until the visible list can scroll (else you can't scroll up for more). */
+function fillScreen(tab) {
+  if (tab === active && !tab.list.hidden && tab.list.scrollHeight <= tab.list.clientHeight + 400) loadOlder(tab).then(() => {
+    if (!tab.historyDone && !tab.olderRetryAt) fillScreen(tab);
+  });
+}
+
+/** Scrolled near the top: fetch the next page of older history. */
+async function loadOlder(tab) {
+  if (settings.history !== true || tab.loadingOlder || tab.historyDone || !tab.historyBefore) return;
+  if (Date.now() < (tab.olderRetryAt || 0)) return;
+  tab.loadingOlder = true;
+  const spinner = el("li", "sys history-loading", "Loading earlier messages…");
+  spinner.dataset.ts = "0";
+  keepScroll(tab, () => tab.list.insertBefore(spinner, tab.list.firstChild));
+  const lines = await fetchHistory(tab, { before: tab.historyBefore });
+  keepScroll(tab, () => {
+    spinner.remove();
+    if (!lines) { tab.olderRetryAt = Date.now() + 10000; return; }
+    mergeHistory(tab, lines, { historical: true });
+    tab.historyBefore = Math.min(tab.historyBefore, ...lines.map(receivedAt).filter(Boolean));
+    tab.historyDone = lines.length < HISTORY_PAGE;
+    placeHistoryDivider(tab);
+  });
+  tab.loadingOlder = false;
 }
 
 /** The service's guidelines: ask before using it, say what it does, and link to it. */
@@ -666,8 +750,8 @@ function historyInfo() {
   a.href = "https://recent-messages.robotty.de/";
   a.target = "_blank";
   a.rel = "noopener noreferrer";
-  p.append("Twitch doesn't keep chat history, so Yappa can load up to the last " + HISTORY_LIMIT +
-    " messages (from the past 24 hours) when you open a channel, and fill in messages you missed while disconnected. " +
+  p.append("Twitch doesn't keep chat history, so Yappa can load the last " + HISTORY_PAGE +
+    " messages when you open a channel (scroll up for more, back about 24 hours), and fill in messages you missed while disconnected. " +
     "They come from ", a, ", a free service run by a community developer, which sees which channels you open.");
   return p;
 }
@@ -957,8 +1041,21 @@ function insertByTime(tab, node, ts) {
   if (tab === active && filterText) filterNode(node);
 }
 
-function trimList(list) {
-  while (list.children.length > MAX_MESSAGES) list.firstChild.remove();
+/** Drops the oldest items past MAX_MESSAGES; scrolling up can load them again from history. */
+function trimList(tab) {
+  const list = tab.list;
+  if (list.children.length <= MAX_MESSAGES) return;
+  while (list.children.length > MAX_MESSAGES) {
+    const n = list.firstChild;
+    if (n.dataset.id) tab.seen.delete(n.dataset.id); // so a reload from history isn't skipped
+    n.remove();
+  }
+  const first = [...list.children].find((n) => n.dataset.ts && n.dataset.ts !== "0");
+  if (first && settings.history === true) {
+    tab.historyBefore = Number(first.dataset.recv || first.dataset.ts);
+    tab.historyDone = false;
+    placeHistoryDivider(tab);
+  }
 }
 
 function append(tab, node, countsAsUnread) {
@@ -967,7 +1064,8 @@ function append(tab, node, countsAsUnread) {
   if (!node.dataset.ts) node.dataset.ts = String(Date.now());
   list.appendChild(node);
   if (tab === active && filterText) filterNode(node);
-  trimList(list);
+  // Only trim at the bottom, so history you've scrolled up to load stays put while you read it.
+  if (stick) trimList(tab);
   if (countsAsUnread && document.hidden) { hiddenUnread++; updateTitle(); }
   if (tab === active) {
     if (stick) list.scrollTop = list.scrollHeight;

@@ -94,7 +94,16 @@ await ctx.route("**/*", async (route) => {
   if (u.host === "recent-messages.robotty.de") {
     const chan = u.pathname.split("/").pop();
     log.history = [...(log.history || []), chan + u.search];
-    const irc = (id, user, uid, text, ts, extra = "") => "@badge-info=;badges=;color=#FF7F50;display-name=" + user + ";emotes=" + (extra.emotes || "") + ";first-msg=" + (extra.first ? 1 : 0) + ";id=" + id + ";room-id=" + ids[chan] + ";tmi-sent-ts=" + ts + ";user-id=" + uid + (extra.reply || "") + " :" + user.toLowerCase() + "!" + user.toLowerCase() + "@x.tmi.twitch.tv PRIVMSG #" + chan + " :" + text;
+    // A channel with lots of history, honoring limit/before/after like the real service.
+    if (chan === "deepchan") {
+      const p = u.searchParams, base = Date.now() - 3600e3;
+      let all = Array.from({ length: 250 }, (_, i) => ({ i, ts: base + i * 10000 }));
+      if (p.get("before")) all = all.filter((m) => m.ts + 50 < Number(p.get("before")));
+      if (p.get("after")) all = all.filter((m) => m.ts + 50 > Number(p.get("after")));
+      all = all.slice(-Number(p.get("limit") || 800));
+      return j({ messages: all.map((m) => "@color=#FF7F50;rm-received-ts=" + (m.ts + 50) + ";display-name=Deep" + m.i + ";emotes=;id=deep" + m.i + ";tmi-sent-ts=" + m.ts + ";user-id=" + (8000 + m.i) + " :deep" + m.i + "!deep" + m.i + "@x PRIVMSG #deepchan :history line " + m.i) });
+    }
+    const irc = (id, user, uid, text, ts, extra = "") => "@badge-info=;badges=;color=#FF7F50;rm-received-ts=" + (ts + 50) + ";display-name=" + user + ";emotes=" + (extra.emotes || "") + ";first-msg=" + (extra.first ? 1 : 0) + ";id=" + id + ";room-id=" + ids[chan] + ";tmi-sent-ts=" + ts + ";user-id=" + uid + (extra.reply || "") + " :" + user.toLowerCase() + "!" + user.toLowerCase() + "@x.tmi.twitch.tv PRIVMSG #" + chan + " :" + text;
     const now = Date.now();
     const msgs = [
       irc("h1", "OldTimer", "501", "Kappa from history", now - 120000, { emotes: "25:0-4" }),
@@ -300,7 +309,7 @@ await page.click("#sheet-close");
 // ---- first-time chatters, history, deletions ----
 await page.click(".tab:first-child .tab-name");
 s = await state();
-check("history loaded above join line", s.visibleMsgs.length && (await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent)).then((t) => t.findIndex((x) => x.includes(" from history")) < t.findIndex((x) => x.includes("Joined #UwoSlab")) && t.findIndex((x) => x.includes(" from history")) > t.findIndex((x) => x.includes("earlier messages, via recent-messages.robotty.de")))));
+check("history loaded above join line", s.visibleMsgs.length && (await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent)).then((t) => t.findIndex((x) => x.includes(" from history")) < t.findIndex((x) => x.includes("Joined #UwoSlab")) && t.findIndex((x) => x.includes(" from history")) > t.findIndex((x) => x.includes("via recent-messages.robotty.de")))));
 check("history emote parsed from IRC tags", await page.$eval('li[data-id="h1"]', (l) => !!l.querySelector('img[alt="Kappa"]')));
 check("first-time flag from history", await page.$eval('li[data-id="h2"]', (l) => l.classList.contains("first") && l.textContent.includes("First-time chatter")));
 check("anon IRC joined channels", ircSockets.length >= 1 && /JOIN #uwoslab/.test(ircSockets.at(-1).joined) && /NICK justinfan/.test(ircSockets.at(-1).joined), ircSockets.at(-1)?.joined);
@@ -353,7 +362,7 @@ const iG1 = gap.findIndex((t) => t.includes("you missed this one")), iRe = gap.f
 check("missed messages backfilled above the reconnect line", iG1 >= 0 && iG1 < iRe, gap.slice(-5).join(" ‖ "));
 check("reconnect line reports catch-up", gap[iRe] && gap[iRe].includes("Caught up on 2 missed messages"), gap[iRe]);
 check("backfilled @mention highlighted", await page.$eval('li[data-id="g2"]', (l) => l.classList.contains("mentioned")));
-check("reconnect asks only for the gap; first join asks for 800", log.history.some((h) => h.startsWith("uwoslab?limit=800") && !h.includes("after=")) && log.history.slice(-2).some((h) => /^uwoslab\?limit=800&after=\d+$/.test(h)), JSON.stringify(log.history.slice(-3)));
+check("reconnect asks only for the gap; first join asks for 100", log.history.some((h) => h === "uwoslab?limit=100") && log.history.slice(-2).some((h) => /^uwoslab\?limit=100&after=\d+$/.test(h)), JSON.stringify(log.history.slice(-3)));
 check("no duplicate history after reconnect", (await page.$$('.messages:not([hidden]) li[data-id="h1"]')).length === 1);
 await page.evaluate(() => { keepaliveMs = 30000; });
 
@@ -780,7 +789,7 @@ followingMode = "ok";
   const iH1 = order.indexOf("h1"), iH2 = order.indexOf("h2"), iLive = order.indexOf("live-before-optin");
   const tsSorted = await page.$$eval(".messages:not([hidden]) > li", (ls) => ls.every((l, i) => i === 0 || Number(l.dataset.ts) >= Number(ls[i - 1].dataset.ts)));
   check("opting in merges history by time around what's on screen", iH1 >= 0 && iH1 < iH2 && iH2 < iLive && tsSorted && !(await page.$(".history-ask")), JSON.stringify(order));
-  check("saved as opted in; asked for 800", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).history === true && log.history.at(-1) === "alphachan?limit=800", log.history.at(-1));
+  check("saved as opted in; asked for 100", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).history === true && log.history.at(-1) === "alphachan?limit=100", log.history.at(-1));
   // Opt out from Settings: the toggle carries the same info and link.
   await page.click("#settings-btn");
   const histRow = page.locator('#sheet-body .row:has-text("Load chat history")');
@@ -799,6 +808,36 @@ followingMode = "ok";
   await page.click('.history-ask button:has-text("No thanks")');
   check("No thanks: saved, card gone, nothing fetched", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).history === false && !(await page.$(".history-ask")) && log.history.length === n);
   await page.evaluate(() => { closeTab(tabs.get("alphachan")); settings.history = true; saveSettings(); });
+}
+// Scrolling up pages in older history, keeping your place.
+{
+  ids.deepchan = "444";
+  const n0 = log.history.length;
+  await page.evaluate(() => openTab("deepchan"));
+  await page.waitForSelector('li[data-id="deep249"]');
+  await sleep(300);
+  const first = await page.evaluate(() => ({ msgs: active.list.querySelectorAll(".msg").length, divider: active.list.querySelector(".history-divider").textContent, atBottom: nearBottom(active) }));
+  check("first load: newest 100, divider invites scrolling up, scrolled to the bottom", first.msgs === 100 && first.divider.includes("scroll up for more") && first.atBottom && log.history[n0] === "deepchan?limit=100", JSON.stringify(first));
+  const anchorTop = await page.evaluate(() => { const l = active.list; l.scrollTop = 0; return null; });
+  await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 200, null, { timeout: 5000 });
+  await sleep(200);
+  const second = await page.evaluate(() => {
+    const l = active.list, d150 = l.querySelector('[data-id="deep150"]');
+    const ts = [...l.children].map((n) => Number(n.dataset.ts));
+    return { req: null, sorted: ts.every((t, i) => i === 0 || t >= ts[i - 1]), firstId: l.querySelector(".msg").dataset.id, kept: d150.getBoundingClientRect().top - l.getBoundingClientRect().top > 0, top: l.scrollTop };
+  });
+  check("scrolling to the top loads the next 100 older, in order, without jumping to them", second.sorted && second.firstId === "deep50" && second.top > 400 && /^deepchan\?limit=100&before=\d+$/.test(log.history.at(-1)), JSON.stringify(second) + " " + log.history.at(-1));
+  await page.evaluate(() => { active.list.scrollTop = 0; });
+  await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 250, null, { timeout: 5000 });
+  await sleep(200);
+  const done = await page.evaluate(() => ({ div: active.list.querySelector(".history-divider").textContent, firstAfterDivider: active.list.querySelector(".history-divider").nextElementSibling.dataset.id, dividers: active.list.querySelectorAll(".history-divider").length }));
+  check("runs out cleanly: start-of-history divider above the oldest message", done.div.includes("start of chat history") && done.firstAfterDivider === "deep0" && done.dividers === 1, JSON.stringify(done));
+  const reqs = log.history.length;
+  await page.evaluate(() => { active.list.scrollTop = 0; });
+  await sleep(300);
+  check("no more requests once history is exhausted", log.history.length === reqs);
+  await page.screenshot({ path: dir + "/t22-history-top.png" });
+  await page.evaluate(() => closeTab(tabs.get("deepchan")));
 }
 // Deleted-before-load messages from history are flagged like live deletions.
 check("history marks messages deleted before they were loaded", await page.evaluate(() => {

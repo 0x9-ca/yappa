@@ -27,7 +27,7 @@ The Worker is still named `yappa` (the project started as a chat-color prank).
 The browser talks to these directly:
 - **Twitch EventSub WebSocket:** one shared socket for all tabs. The Worker creates the subscriptions against the socket's session id.
 - **Anonymous read-only Twitch IRC:** only for `first-msg` flags, which EventSub lacks.
-- **recent-messages.robotty.de:** history and reconnect backfill, **only after the user opts in** (`settings.history`: `null` = not asked yet). The service's guidelines require consent, a short explanation and a link to it, both in the opt-in prompt and in Settings. Keep that if you touch it. First load asks for 800 messages; reconnects pass `after=` to fetch only the gap.
+- **recent-messages.robotty.de:** history and reconnect backfill, **only after the user opts in** (`settings.history`: `null` = not asked yet). The service's guidelines require consent, a short explanation and a link to it, both in the opt-in prompt and in Settings. Keep that if you touch it. History comes in pages of 100 (`HISTORY_PAGE`, within the service's recommended 50–100): the newest page on first load, older pages via `before=` as you scroll up (`loadOlder`), and reconnect gaps via `after=`. Lists are trimmed only while you're at the bottom.
 - **7TV / BTTV / FFZ APIs.**
 - **The Twitch embed player** (`player.twitch.tv/js/embed/v1.js`).
 

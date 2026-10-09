@@ -606,6 +606,26 @@ await page.click("#sheet-close");
 await sleep(300);
 check("Settings switches back to touch controls", (await pc()).filter((c) => c[0] === "new").at(-1)[1].controls === false && !!(await page.$("#video .vctl")) && JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).twitchControls === false);
 
+// =============== recent emotes: only what works in this channel ===============
+await page.click(".tab:first-child .tab-name");
+await page.evaluate(() => localStorage.setItem("recentEmotes", JSON.stringify([
+  { name: "otherChanOnly", url: "https://cdn.7tv.app/emote/X/2x.webp" },     // 7TV, another channel's
+  { name: "PETPET", url: "https://cdn.7tv.app/emote/P/2x.webp" },            // 7TV global
+  { name: "Kappa", url: "https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/2.0" },
+  { name: "otherFollowerEmote", url: "https://static-cdn.jtvnw.net/emoticons/v2/999/static/dark/2.0" }, // not in your list here
+  { name: "catJAM", url: "https://cdn.7tv.app/emote/OLD/2x.webp" },          // this channel's 7TV, stored with an old image
+])));
+await page.click("#emote-btn");
+await page.waitForSelector("#picker:not([hidden]) .grid button");
+const recent = await page.evaluate(() => {
+  const h = [...document.querySelectorAll("#picker-list h3")].find((x) => x.textContent.startsWith("Recent"));
+  return [...h.nextElementSibling.querySelectorAll("button")].map((b) => b.dataset.name + "|" + b.dataset.url);
+});
+check("recent emotes: only ones usable in this channel, with this channel's image",
+  JSON.stringify(recent.map((r) => r.split("|")[0])) === '["PETPET","Kappa","catJAM"]' && recent[2].endsWith("//cdn.7tv.app/emote/J/2x.webp"), JSON.stringify(recent));
+await page.click("#emote-btn");
+await page.evaluate(() => localStorage.removeItem("recentEmotes"));
+
 // =============== composer: emote images ===============
 await page.evaluate(() => composer.setText(""));
 await page.click("#message");

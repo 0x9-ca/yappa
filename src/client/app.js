@@ -1566,6 +1566,29 @@ function allEmotes(tab) {
 
 // ---------- emote picker ----------
 
+/** An emote usable in this tab by that name ({ name, url }), Twitch first, else null. */
+function emoteInChannel(tab, name) {
+  if (!tab) return null;
+  if (tab.twitchEmotes && tab.twitchEmotes.ok) {
+    const e = tab.twitchEmotes.emotes.find((x) => x.name === name);
+    if (e) return { name, url: twitchEmoteUrl(e) };
+  }
+  const ext = findExt(tab, name);
+  return ext ? { name, url: ext.url } : null;
+}
+
+/**
+ * Recent emotes that work here, drawn with this channel's image. Third-party emotes
+ * (7TV/BTTV/FFZ) belong to channels, and some Twitch ones (follower emotes) do too. If
+ * your Twitch emote list didn't load, Twitch recents stay, since there's no way to check.
+ */
+function recentHere(tab) {
+  const twitchKnown = !!(tab && tab.twitchEmotes && tab.twitchEmotes.ok);
+  return recentEmotes()
+    .map((e) => emoteInChannel(tab, e.name) || (!twitchKnown && /static-cdn\.jtvnw\.net/.test(e.url) ? e : null))
+    .filter(Boolean);
+}
+
 function recentEmotes() {
   try { return JSON.parse(safeGet("recentEmotes") || "[]"); } catch { return []; }
 }
@@ -1611,7 +1634,7 @@ function renderPicker() {
     ? tab.twitchEmotes.emotes.filter((e) => e.group === group).map((e) => ({ name: e.name, url: twitchEmoteUrl(e) }))
     : [];
 
-  if (!q) add("Recent", recentEmotes());
+  if (!q) add("Recent", recentHere(tab));
   add("Twitch · this channel", tw("This channel"));
   if (tab) for (const src of EXT_SOURCES) add(src + " · this channel", ext(tab.ext, src));
   add("Twitch · your other subs", tw("Other channels"));
@@ -1873,14 +1896,8 @@ const composer = (() => {
   }
 
   function lookup(word) {
-    const tab = active;
-    if (!tab) return null;
-    if (tab.twitchEmotes && tab.twitchEmotes.ok) {
-      const e = tab.twitchEmotes.emotes.find((x) => x.name === word);
-      if (e) return twitchEmoteUrl(e);
-    }
-    const ext = findExt(tab, word);
-    return ext ? ext.url : null;
+    const e = emoteInChannel(active, word);
+    return e ? e.url : null;
   }
 
   // Desired tokens: emote names followed by whitespace become images.

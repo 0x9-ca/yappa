@@ -27,7 +27,7 @@ The Worker is still named `yappa` (the project started as a chat-color prank).
 The browser talks to these directly:
 - **Twitch EventSub WebSocket:** one shared socket for all tabs. The Worker creates the subscriptions against the socket's session id.
 - **Anonymous read-only Twitch IRC:** only for `first-msg` flags, which EventSub lacks.
-- **recent-messages.robotty.de:** history and reconnect backfill.
+- **recent-messages.robotty.de:** history and reconnect backfill, **only after the user opts in** (`settings.history`: `null` = not asked yet). The service's guidelines require consent, a short explanation and a link to it, both in the opt-in prompt and in Settings. Keep that if you touch it. First load asks for 800 messages; reconnects pass `after=` to fetch only the gap.
 - **7TV / BTTV / FFZ APIs.**
 - **The Twitch embed player** (`player.twitch.tv/js/embed/v1.js`).
 
@@ -39,6 +39,7 @@ Tokens never reach the browser.
 - **Stay compatible with data written by older versions:** DO storage (e.g. the `scopes` backfill) and client `localStorage` (`settings` migrations in `loadSettings`). Use `structuredClone(DEFAULT_SETTINGS)` so the defaults' arrays aren't shared.
 - **The page has a Content-Security-Policy** (`PAGE_HEADERS` in `src/page.ts`): scripts only from our origin and `player.twitch.tv`, no inline scripts or `on*=` attributes, and no framing. Loading a script from a new host means adding it there. Images, fetches and sockets aren't restricted.
 - **Token refreshes are single-flight** (`ColorLoop.refresh`). Twitch can rotate the refresh token, so two concurrent refreshes could spend it twice and log the user out.
+- **Message lists are kept in time order.** Every `<li>` has `data-ts` (set in `append`, or from the event). History merges in with `insertByTime`, so don't insert list items any other way.
 - **The message box is `contenteditable`** (so finished emote names render as images). Always go through the `composer` API (`getText`, `setText(text, caret)`, `caret`, `focus`, `setEnabled`); never `.value`.
 - **Layout runs on phones first.** The document never scrolls (only message lists do), and the app is sized to `visualViewport` via `--app-height`. Percent heights inside the footer resolve against the footer; use `--app-height`.
 - **Twitch API limits:**

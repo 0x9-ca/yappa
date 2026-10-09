@@ -285,3 +285,8 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .fl-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fl-viewers { flex: none; font-size: 12px; color: #ff8280; font-weight: 700; }
 .fl-open { flex: none; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+
+/* Chat history opt-in */
+.history-ask .ask-text { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
+.history-ask a.link, .sheet .hint a.link { color: #bf94ff; text-decoration: underline; }
+.history-divider { text-align: center; }

@@ -3,7 +3,8 @@
 const $ = (id) => document.getElementById(id);
 const show = (id, on) => { $(id).hidden = !on; };
 const EVENTSUB_URL = "wss://eventsub.wss.twitch.tv/ws";
-const MAX_MESSAGES = 500;
+const MAX_MESSAGES = 1000;      // per tab; room for a full history load plus live chat
+const HISTORY_LIMIT = 800;      // the recent-messages service keeps at most 800 per channel
 const MAX_TABS = 20;
 const DEFAULT_COLORS = ["#FF0000", "#0000FF", "#008000", "#B22222", "#FF7F50", "#9ACD32", "#FF4500", "#2E8B57", "#DAA520", "#D2691E", "#5F9EA0", "#1E90FF", "#FF69B4", "#8A2BE2", "#00FF7F"];
 const coarse = matchMedia("(pointer: coarse)").matches;
@@ -46,7 +47,8 @@ let sending = false;
   history.replaceState(null, "", "/" + location.search);
 })();
 
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, twitchControls: false };
+// history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, twitchControls: false, history: null };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -611,34 +613,84 @@ async function subscribeTab(tab) {
     tab.loadedExtras = true;
     await loadTabExtras(tab);
   }
-  backfill(tab, marker, range);
+  if (settings.history === true) backfill(tab, { ...range, marker });
+  else if (settings.history == null) askHistory(tab);
 }
 
 /**
- * Twitch has no chat history API, so fetch recent messages from the public
- * recent-messages service (as Chatterino and other clients do) and insert any we
- * haven't shown: the gap while disconnected, or recent history on first join.
+ * Twitch has no chat history API, so (if the user opted in) fetch recent messages from the
+ * public recent-messages service, as Chatterino and other clients do: up to 800 on first
+ * load, or just the gap after a reconnect. Each message is merged in by timestamp, so
+ * history slots in around whatever is already on screen, and already-shown ids are skipped.
  */
-async function backfill(tab, marker, { since, until }) {
+async function backfill(tab, { since, until, marker }) {
+  if (settings.history !== true) return;
+  const params = new URLSearchParams({ limit: String(HISTORY_LIMIT) });
+  // `after` compares against the service's receive time, which trails the send time a little.
+  if (since) params.set("after", String(since - 30000));
   let lines = [];
   try {
-    const r = await fetch("https://recent-messages.robotty.de/api/v2/recent-messages/" + encodeURIComponent(tab.login) + "?limit=100");
+    const r = await fetch("https://recent-messages.robotty.de/api/v2/recent-messages/" + encodeURIComponent(tab.login) + "?" + params);
     if (r.ok) lines = (await r.json()).messages || [];
   } catch {}
-  if (!tabs.has(tab.login) || !marker.isConnected) return;
-  const firstJoin = !since;
+  if (!tabs.has(tab.login) || settings.history !== true) return;
+  const firstLoad = !since;
+  const stick = tab !== active || nearBottom(tab);
   let added = 0;
-  let firstAdded = null;
+  let earliest = null;
   for (const line of lines) {
     const ev = ircToEvent(line);
-    // Newer than `until` arrives live over EventSub; already-seen ids are skipped in renderMessage.
-    if (!ev || ev.ts <= since || ev.ts > until || tab.seen.has(ev.message_id)) continue;
-    renderMessage(tab, ev, { before: marker, historical: firstJoin });
-    firstAdded = firstAdded || marker.previousElementSibling;
+    // Newer than `until` arrives live over EventSub.
+    if (!ev || !ev.ts || ev.ts <= since || ev.ts > until) continue;
+    const li = renderMessage(tab, ev, { merge: true, historical: firstLoad });
+    if (!li) continue; // already shown
+    if (ev.deleted) addFlag(li, "deleted", "Deleted by a moderator");
     added++;
+    if (!earliest || ev.ts < Number(earliest.dataset.ts)) earliest = li;
   }
-  if (firstJoin && firstAdded) insertBefore(tab, el("li", "sys", "— recent messages —"), firstAdded);
-  else if (!firstJoin && added) marker.textContent += " Caught up on " + added + " missed message" + (added === 1 ? "" : "s") + ".";
+  trimList(tab.list);
+  if (firstLoad && earliest && earliest.isConnected && !earliest.previousElementSibling?.classList.contains("history-divider")) {
+    const divider = el("li", "sys history-divider", "— earlier messages, via recent-messages.robotty.de —");
+    divider.dataset.ts = earliest.dataset.ts;
+    tab.list.insertBefore(divider, earliest);
+  } else if (!firstLoad && added && marker && marker.isConnected) {
+    marker.textContent += " Caught up on " + added + " missed message" + (added === 1 ? "" : "s") + ".";
+  }
+  if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+}
+
+/** The service's guidelines: ask before using it, say what it does, and link to it. */
+function historyInfo() {
+  const p = el("span");
+  const a = el("a", "link", "recent-messages.robotty.de");
+  a.href = "https://recent-messages.robotty.de/";
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  p.append("Twitch doesn't keep chat history, so Yappa can load up to the last " + HISTORY_LIMIT +
+    " messages (from the past 24 hours) when you open a channel, and fill in messages you missed while disconnected. " +
+    "They come from ", a, ", a free service run by a community developer, which sees which channels you open.");
+  return p;
+}
+
+function askHistory(tab) {
+  if (settings.history != null || document.querySelector(".history-ask")) return;
+  const target = active || tab;
+  const li = el("li", "notice history-ask");
+  li.appendChild(el("div", "sysmsg", "Load chat history?"));
+  const text = el("div", "ask-text");
+  text.append(historyInfo(), " You can change this in Settings.");
+  const row = el("div", "raid-actions");
+  row.append(btn("Load history", () => setHistory(true), "small"), btn("No thanks", () => setHistory(false), "small ghost"));
+  li.append(text, row);
+  append(target, li, false);
+}
+
+function setHistory(on) {
+  settings.history = on;
+  saveSettings();
+  document.querySelectorAll(".history-ask").forEach((n) => n.remove());
+  // Opting in mid-session: merge each open channel's history into what's already shown.
+  if (on) for (const t of tabs.values()) if (t.joined) backfill(t, { since: 0, until: Date.now() });
 }
 
 // "@a=b;c=d :nick!nick@host PRIVMSG #chan :text" -> an object shaped like an EventSub chat event.
@@ -701,6 +753,7 @@ function ircToEvent(line) {
     reply,
     first: tags["first-msg"] === "1",
     bits: Number(tags.bits) || 0,
+    deleted: tags["rm-deleted"] === "1", // removed by a moderator before we loaded it
     historical: true,
   };
 }
@@ -891,18 +944,30 @@ $("more").addEventListener("click", () => {
   show("more", false);
 });
 
-function insertBefore(tab, node, ref) {
-  const stick = tab !== active || nearBottom(tab);
+/**
+ * Inserts a message where its timestamp belongs. Every list item carries data-ts and
+ * lists stay in time order, which is what lets history merge in around live chat.
+ * The caller handles scrolling (history inserts many at once).
+ */
+function insertByTime(tab, node, ts) {
+  node.dataset.ts = String(ts);
+  let ref = null;
+  for (let n = tab.list.lastElementChild; n && Number(n.dataset.ts || 0) > ts; n = n.previousElementSibling) ref = n;
   tab.list.insertBefore(node, ref);
-  if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+  if (tab === active && filterText) filterNode(node);
+}
+
+function trimList(list) {
+  while (list.children.length > MAX_MESSAGES) list.firstChild.remove();
 }
 
 function append(tab, node, countsAsUnread) {
   const list = tab.list;
   const stick = tab !== active || nearBottom(tab);
+  if (!node.dataset.ts) node.dataset.ts = String(Date.now());
   list.appendChild(node);
   if (tab === active && filterText) filterNode(node);
-  while (list.children.length > MAX_MESSAGES) list.firstChild.remove();
+  trimList(list);
   if (countsAsUnread && document.hidden) { hiddenUnread++; updateTitle(); }
   if (tab === active) {
     if (stick) list.scrollTop = list.scrollHeight;
@@ -1155,8 +1220,8 @@ function renderMessage(tab, ev, opts = {}) {
   if (mentioned) li.classList.add("mentioned");
   const highlighted = !mentioned && !mine && matchesHighlight(ev);
   if (highlighted) li.classList.add("highlighted");
-  if ((mentioned || highlighted) && !mine && !opts.historical && !opts.before && !li.classList.contains("ignored")) alertFor(tab, ev);
-  if (mine && !opts.historical && !opts.before) maybeBumpColor(ev.message_id);
+  if ((mentioned || highlighted) && !mine && !opts.historical && !opts.merge && !li.classList.contains("ignored")) alertFor(tab, ev);
+  if (mine && !opts.historical && !opts.merge) maybeBumpColor(ev.message_id);
 
   const actions = el("div", "actions");
   actions.appendChild(actionButton("Reply", () => setReply({ id: ev.message_id, user: ev.chatter_user_name, text: ev.message.text })));
@@ -1174,13 +1239,15 @@ function renderMessage(tab, ev, opts = {}) {
   if (!li.classList.contains("ignored")) attachClipCards(tab, li, body);
   if (ev.first || ev.message_type === "user_intro" || firstMsgIds.has(ev.message_id)) addFlag(li, "first", "First-time chatter");
 
-  if (opts.before) {
-    insertBefore(tab, li, opts.before);
+  if (opts.merge) {
+    insertByTime(tab, li, ev.ts);
     if (!opts.historical && !mine && tab !== active) { tab.unread++; updateTabEl(tab); }
   } else {
+    if (ev.ts) li.dataset.ts = String(ev.ts);
     append(tab, li, !li.classList.contains("ignored") && !mine);
   }
   if (mentioned && tab !== active && !opts.historical && !li.classList.contains("ignored")) { tab.mentioned = true; updateTabEl(tab); }
+  return li;
 }
 
 function renderNotification(tab, ev) {
@@ -2619,6 +2686,12 @@ function openSettings() {
   acctBtns.append(reconnect, btn("Disconnect", () => { if (confirm("Disconnect your Twitch account?")) { closeSheet(); logout(); } }, "stop"));
   account.append(who, acctBtns);
 
+  const historyRow = el("div", "row");
+  const historyLabel = el("label");
+  historyLabel.append(el("div", null, "Load chat history"), el("div", "hint"));
+  historyLabel.lastChild.appendChild(historyInfo());
+  historyRow.append(historyLabel, checkbox(settings.history === true, (c) => setHistory(c.checked)));
+
   const color = el("div", "row");
   const colorLabel = el("label");
   colorLabel.append(el("div", null, "Change my color every message"), el("div", "hint", "A new random color for each message you send. Shows your current color and how many times it has changed."));
@@ -2636,6 +2709,8 @@ function openSettings() {
       row("Simple video controls", checkbox(!settings.twitchControls, (c) => { settings.twitchControls = !c.checked; saveSettings(); resetPlayer(); }),
         "Big touch controls on the stream. Turn off to use Twitch's own player controls."),
     ] : []),
+    el("h3", null, "Chat history"),
+    historyRow,
     el("h3", null, "Raids"),
     row("Follow raids", checkbox(settings.followRaids, (c) => { settings.followRaids = c.checked; saveSettings(); }),
       "When the channel you're watching raids, switch to the raided channel after " + RAID_FOLLOW_SECONDS + " seconds (you can stay)."),

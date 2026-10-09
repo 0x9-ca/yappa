@@ -4,6 +4,17 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
+/**
+ * Defense in depth for a page that renders other people's chat: only our own script and
+ * the Twitch player's may run, and nobody may frame the app.
+ */
+export const PAGE_HEADERS: Record<string, string> = {
+  "Content-Security-Policy":
+    "script-src 'self' https://player.twitch.tv; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
+
 export function renderPage(user: string): string {
   return `<!doctype html>
 <html lang="en">

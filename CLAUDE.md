@@ -33,6 +33,8 @@ Tokens never reach the browser.
 
 - **The Durable Object can keep running old code after a deploy.** Each request calls `syncVersion()`, and the DO `ctx.abort()`s itself if the Worker is newer. The Worker also maps "does not implement the method" RPC errors to a `503 {retry: true}`, which the client retries. After deploys that change `color-loop.ts`, confirm the switch-over: query Workers Observability for `jsrpc`/`alarm` events and compare `$workers.scriptVersion.id` with the deployed version. `console.log` JSON lands in the event's `source` field.
 - **Stay compatible with data written by older versions:** DO storage (e.g. the `scopes` backfill) and client `localStorage` (`settings` migrations in `loadSettings`). Use `structuredClone(DEFAULT_SETTINGS)` so the defaults' arrays aren't shared.
+- **The page has a Content-Security-Policy** (`PAGE_HEADERS` in `src/page.ts`): scripts only from our origin and `player.twitch.tv`, no inline scripts or `on*=` attributes, and no framing. Loading a script from a new host means adding it there. Images, fetches and sockets aren't restricted.
+- **Token refreshes are single-flight** (`ColorLoop.refresh`). Twitch can rotate the refresh token, so two concurrent refreshes could spend it twice and log the user out.
 - **The message box is `contenteditable`** (so finished emote names render as images). Always go through the `composer` API (`getText`, `setText(text, caret)`, `caret`, `focus`, `setEnabled`); never `.value`.
 - **Layout runs on phones first.** The document never scrolls (only message lists do), and the app is sized to `visualViewport` via `--app-height`. Percent heights inside the footer resolve against the footer; use `--app-height`.
 - **Twitch API limits:**

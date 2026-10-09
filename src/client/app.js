@@ -25,8 +25,10 @@ let keepaliveMs = 15000;
 let resumedAt = Date.now();    // when the page last became visible / unfrozen
 let reconnectTimer = null;
 let hiddenUnread = 0;
+let lastStatusAt = 0;
 const sentIds = new Set();     // message ids sent from this app (for color cycling from elsewhere)
 const inflightSends = new Set();
+let sending = false;
 
 const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true };
 let settings = loadSettings();
@@ -63,10 +65,16 @@ function safeGet(k) { try { return localStorage.getItem(k); } catch { return nul
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
 
 async function api(path, body) {
-  const res = await fetch(path, body === undefined ? {} : {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  try { return await res.json(); } catch { return { ok: false, error: "Request failed (" + res.status + ")" }; }
+  let res;
+  try {
+    res = await fetch(path, body === undefined ? {} : {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+  } catch {
+    // Offline, or the phone just woke up: callers treat this like any failed request.
+    return { ok: false, error: "Network error; check your connection.", retry: true };
+  }
+  try { return await res.json(); } catch { return { ok: false, error: "Request failed (" + res.status + ")", retry: res.status >= 500 }; }
 }
 
 function setError(msg) { $("error").textContent = msg || ""; show("error", !!msg); }
@@ -84,10 +92,12 @@ function normalizeChannel(v) {
 const cyclerEl = $("cycler"), swatchEl = $("swatch"), colorEl = $("color"), cycleBtn = $("cycle");
 
 async function refreshStatus() {
-  let s;
-  try { s = await api("/api/status"); } catch { return; }
+  const s = await api("/api/status");
+  // A failed request (offline, mid-deploy) says nothing about the account; keep the UI as is.
+  if (!s || !("twitch" in s)) return;
   const first = status === null;
   status = s;
+  lastStatusAt = Date.now();
   const tw = s.twitch;
   me = tw ? { userId: tw.userId, login: tw.login } : null;
   show("connect", !tw);
@@ -346,24 +356,26 @@ function openSocket(url, gen, migrating) {
     }
   };
 
-  ws.onclose = () => {
-    if (ws.retired || gen !== sockGen) return;
-    if (migrating && sock !== ws) return; // failed migration; the old socket is still serving
-    sock = null;
-    sessionId = null;
-    for (const t of tabs.values()) {
-      t.joined = false;
-      t.subIds = []; // subscriptions die with the session
-      updateTabEl(t);
-    }
-    updateComposer();
-    if (tabs.size === 0) return;
-    // Reconnect right away if the user is looking; otherwise back off.
-    const delay = document.hidden ? Math.min(30000, 1000 * 2 ** retries) : (retries ? Math.min(30000, 1000 * 2 ** (retries - 1)) : 0);
-    retries++;
-    if (active) sysLine(active, delay ? "Disconnected. Reconnecting in " + Math.round(delay / 1000) + "s…" : "Disconnected. Reconnecting…");
-    scheduleReconnect(gen, delay);
-  };
+  ws.onclose = () => socketLost(ws, gen, migrating);
+}
+
+function socketLost(ws, gen, migrating) {
+  if (ws.retired || gen !== sockGen) return;
+  if (migrating && sock !== ws) return; // failed migration; the old socket is still serving
+  sock = null;
+  sessionId = null;
+  for (const t of tabs.values()) {
+    t.joined = false;
+    t.subIds = []; // subscriptions die with the session
+    updateTabEl(t);
+  }
+  updateComposer();
+  if (tabs.size === 0) return;
+  // Reconnect right away if the user is looking; otherwise back off.
+  const delay = document.hidden ? Math.min(30000, 1000 * 2 ** retries) : (retries ? Math.min(30000, 1000 * 2 ** (retries - 1)) : 0);
+  retries++;
+  if (active) sysLine(active, delay ? "Disconnected. Reconnecting in " + Math.round(delay / 1000) + "s…" : "Disconnected. Reconnecting…");
+  scheduleReconnect(gen, delay);
 }
 
 function scheduleReconnect(gen, delay) {
@@ -380,7 +392,14 @@ function scheduleReconnect(gen, delay) {
 setInterval(() => {
   if (!sock || !sessionId) return;
   if (Date.now() - resumedAt < 3000) return;
-  if (Date.now() - lastSocketMsgAt > keepaliveMs + 5000) sock.close();
+  if (Date.now() - lastSocketMsgAt > keepaliveMs + 5000) {
+    // On a dead connection close() waits for a closing handshake that never comes, so
+    // don't wait for onclose: retire the socket and reconnect now.
+    const ws = sock;
+    socketLost(ws, sockGen, false);
+    ws.retired = true;
+    ws.close();
+  }
 }, 2000);
 
 function onResume() {
@@ -388,6 +407,7 @@ function onResume() {
   if (document.hidden) return;
   hiddenUnread = 0;
   updateTitle();
+  if (Date.now() - lastStatusAt > 10000) refreshStatus();
   // Skip any pending back-off: the user is here now.
   if (!sock && tabs.size > 0 && me) {
     retries = 0;
@@ -439,7 +459,7 @@ async function subscribeTab(tab) {
   const marker = sysLine(tab, (rejoin ? "Reconnected to #" : "Joined #") + r.broadcaster.name + "." +
     (r.isMod && !rejoin ? " You're a moderator here" + (r.automod ? "; AutoMod queue is on." : ".") : ""));
   if (tab === active) { updateComposer(); renderInfo(); }
-  refreshStreams();
+  refreshStreamsSoon();
   if (tab.isMod) refreshPin(tab);
   if (!tab.loadedExtras) {
     tab.loadedExtras = true;
@@ -880,7 +900,7 @@ function attachClipCards(tab, li, body) {
   const ids = [...new Set([...body.querySelectorAll("a.link")].map((a) => clipIdFrom(a.href)).filter(Boolean))].slice(0, 2);
   for (const id of ids) {
     fetchClip(id).then((clip) => {
-      if (!clip || !li.isConnected) return;
+      if (!clip || !li.isConnected || !/^https:\/\//.test(clip.url)) return;
       const stick = tab === active && nearBottom(tab);
       const card = el("a", "clip-card");
       card.href = clip.url;
@@ -1017,9 +1037,9 @@ function renderMessage(tab, ev, opts = {}) {
 
   if (opts.before) {
     insertBefore(tab, li, opts.before);
-    if (!opts.historical && tab !== active) { tab.unread++; updateTabEl(tab); }
+    if (!opts.historical && !mine && tab !== active) { tab.unread++; updateTabEl(tab); }
   } else {
-    append(tab, li, !li.classList.contains("ignored"));
+    append(tab, li, !li.classList.contains("ignored") && !mine);
   }
   if (mentioned && tab !== active && !opts.historical && !li.classList.contains("ignored")) { tab.mentioned = true; updateTabEl(tab); }
 }
@@ -1450,10 +1470,11 @@ function computeSuggestions(word) {
   if (!active) return [];
   if (word.startsWith("@")) {
     const q = word.slice(1).toLowerCase();
-    const names = [...active.chatters.values()].reverse();
     const out = [];
-    for (const n of names) {
-      if (n.toLowerCase().startsWith(q) && !out.includes(n)) out.push(n);
+    for (const [login, name] of [...active.chatters].reverse()) {
+      if (!login.startsWith(q) && !name.toLowerCase().startsWith(q)) continue;
+      const n = mentionName(login, name);
+      if (!out.includes(n)) out.push(n);
       if (out.length >= 8) break;
     }
     return out.map((n) => ({ name: "@" + n, user: n }));
@@ -1736,7 +1757,8 @@ $("send-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = composer.getText().trim();
   const tab = active;
-  if (!text || !tab || !tab.broadcaster) return;
+  // Enter calls requestSubmit(), which works even while the button is disabled.
+  if (!text || !tab || !tab.broadcaster || sending) return;
   closeSuggest();
   if (runCommand(tab, text)) {
     lastSent = text;
@@ -1744,6 +1766,7 @@ $("send-form").addEventListener("submit", async (e) => {
     return;
   }
   $("send").disabled = true;
+  sending = true;
   show("send-error", false);
   const pending = api("/api/chat/send", {
     broadcaster_id: tab.broadcaster.id,
@@ -1753,11 +1776,12 @@ $("send-form").addEventListener("submit", async (e) => {
   inflightSends.add(pending);
   const r = await pending;
   inflightSends.delete(pending);
+  sending = false;
   if (r.ok && r.messageId) sentIds.add(r.messageId);
   updateComposer();
   if (r.ok) {
     lastSent = text;
-    composer.setText("");
+    if (composer.getText().trim() === text) composer.setText(""); // keep anything typed meanwhile
     setReply(null);
     closePicker();
     if (status && status.cycle && status.cycle.enabled) refreshStatus(); // show the new color now
@@ -1784,6 +1808,11 @@ function since(iso) {
 }
 
 let streamsTimer = null;
+/** Many tabs join at once after a reconnect; look up their live status in one request. */
+function refreshStreamsSoon() {
+  clearTimeout(streamsTimer);
+  streamsTimer = setTimeout(refreshStreams, 300);
+}
 async function refreshStreams() {
   clearTimeout(streamsTimer);
   streamsTimer = setTimeout(refreshStreams, 60000);
@@ -1809,6 +1838,7 @@ async function refreshStreams() {
 // player reports that, fall back to muted autoplay so the stream still starts.
 let player = null;
 let playerChannel = null;
+const videoBox = $("video"); // lives in the PiP window's document while that's open
 let embedScript = null;
 
 function loadEmbedScript() {
@@ -1827,7 +1857,7 @@ function canPlaySound() {
 }
 
 async function renderVideo() {
-  const box = $("video");
+  const box = videoBox;
   const tab = active;
   const want = !!(settings.video && me && tab && tab.stream);
   if (!want && pipWindow) pipWindow.close(); // returns the player here (see openPip)
@@ -1840,11 +1870,14 @@ async function renderVideo() {
     if (player) try { player.pause(); } catch {}
     return;
   }
+  const wasHidden = box.hidden;
   if (!pipWindow) box.hidden = false;
   const channel = tab.login;
   if (player) {
-    if (playerChannel !== channel) { player.setChannel(channel); playerChannel = channel; }
-    try { player.play(); } catch {}
+    // Only (re)start playback on a change, so a stream you paused stays paused.
+    const changed = playerChannel !== channel;
+    if (changed) { player.setChannel(channel); playerChannel = channel; }
+    if (changed || wasHidden) try { player.play(); } catch {}
     return;
   }
   try { await loadEmbedScript(); } catch (err) { if (active) sysLine(active, err.message, "err"); return; }
@@ -1885,7 +1918,7 @@ async function renderVideo() {
 let pipWindow = null;
 
 async function openPip() {
-  const box = $("video");
+  const box = videoBox;
   if (pipWindow || box.hidden) return;
   let w;
   try {
@@ -2152,7 +2185,7 @@ async function openUserCard(tab, u) {
   const desc = el("div", "card-desc");
 
   const actions = el("div", "card-actions");
-  actions.appendChild(btn("@ Mention", () => { closeSheet(); insertEmote("@" + u.name); }));
+  actions.appendChild(btn("@ Mention", () => { closeSheet(); insertEmote("@" + mentionName(u.login, u.name)); }));
   const hidden = isHidden(u.id);
   actions.appendChild(btn(hidden ? "Show their messages" : "Hide their messages", () => { setHidden(u, !hidden); closeSheet(); }));
   const login = u.login || u.name;
@@ -2220,6 +2253,11 @@ function containsPhrase(text, phrase) {
   return new RegExp("(^|[^\\p{L}\\p{N}_])" + esc + "($|[^\\p{L}\\p{N}_])", "iu").test(text || "");
 }
 
+/** What to type to @mention someone: their display name, unless it isn't their login (localized names). */
+function mentionName(login, name) {
+  return login && (!name || name.toLowerCase() !== login) ? login : name;
+}
+
 function normLogin(u) { return String(u || "").trim().replace(/^@/, "").toLowerCase(); }
 
 /** Highlight rules: a phrase, a user, or a phrase only when that user says it. */
@@ -2284,7 +2322,7 @@ function maybeBumpColor(messageId) {
   setTimeout(async () => {
     await Promise.all([...inflightSends]);
     if (sentIds.has(messageId)) return;
-    const r = await api("/api/cycle/bump", {});
+    const r = await api("/api/cycle/bump", { message_id: messageId });
     if (r.ok && status) { status.cycle = r.cycle; renderCycle(r.cycle); }
   }, 1500);
 }
@@ -2439,4 +2477,5 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
 applySettings();
 loadExtGlobal();
 refreshStatus();
-setInterval(refreshStatus, 5000);
+// The status rarely changes on its own (sending refreshes it), so poll gently and only while visible.
+setInterval(() => { if (!document.hidden) refreshStatus(); }, 30000);

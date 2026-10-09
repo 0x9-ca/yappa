@@ -1,5 +1,5 @@
 import { verifyAccess } from "./access";
-import { renderPage } from "./page";
+import { PAGE_HEADERS, renderPage } from "./page";
 import { staticFiles } from "./static";
 import { authorizeUrl } from "./twitch";
 
@@ -37,18 +37,18 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return new Response(file.body, { headers: { "Content-Type": file.type, "Cache-Control": file.cache } });
   }
 
-  const redirectUri = `${url.origin}/auth/callback`;
-  const stub = await currentStub(env, user);
-
   // Cross-site form/fetch protection for state-changing requests.
   if (request.method === "POST" && request.headers.get("Origin") !== url.origin) {
     return new Response("Bad origin", { status: 403 });
   }
 
+  const redirectUri = `${url.origin}/auth/callback`;
+  const stub = await currentStub(env, user);
+
   switch (`${request.method} ${url.pathname}`) {
     case "GET /":
       return new Response(renderPage(user), {
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+        headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
       });
 
     case "GET /auth/login": {
@@ -188,8 +188,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
       return json(await stub.cheermotes(id));
     }
 
-    case "POST /api/cycle/bump":
-      return json({ ok: true, cycle: await stub.cycleBump() });
+    case "POST /api/cycle/bump": {
+      const body = (await request.json().catch(() => ({}))) as { message_id?: unknown };
+      const messageId = typeof body.message_id === "string" && body.message_id ? body.message_id.slice(0, 100) : undefined;
+      return json({ ok: true, cycle: await stub.cycleBump(messageId) });
+    }
 
     case "GET /api/chat/clip": {
       const id = url.searchParams.get("id") ?? "";

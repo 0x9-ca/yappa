@@ -10,11 +10,11 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = fileURLToPath(new URL("./output", import.meta.url)); // screenshots + bundle (git-ignored)
 mkdirSync(dir, { recursive: true });
 await build({
-  stdin: { contents: 'export { renderPage } from "./src/page.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
+  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
   bundle: true, format: "esm", outfile: dir + "/page.bundle.mjs", logLevel: "warning",
   loader: { ".css": "text", ".js": "text", ".png": "base64" },
 });
-const { renderPage, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
+const { renderPage, PAGE_HEADERS, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
 const html = renderPage("testuser@example.com");
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
@@ -25,7 +25,12 @@ await page.addInitScript(() => {
   // Stand-in for Document Picture-in-Picture (not available headless): a same-origin popup.
   window.documentPictureInPicture = { requestWindow: async (o) => window.open("", "pip", "width=" + o.width + ",height=" + o.height) };
 });
-const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+// Console errors the checks provoke on purpose: the CSP check, the 503 status, the aborted request.
+// The CSP one is allowed once, so a real violation by the app still fails the run.
+const expectedErrors = [/status of 503/, /net::ERR_FAILED/];
+let allowedCspErrors = 1;
+const expected = (t) => expectedErrors.some((re) => re.test(t)) || (/Content Security Policy/.test(t) && allowedCspErrors-- > 0);
+const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && !expected(m.text()) && errors.push(m.text()));
 page.on("dialog", (d) => d.accept());
 page.on("response", (r) => { if (r.status() === 404) errors.push("404 " + r.url()); });
 const log = { subs: [], unsubs: [], mods: [], sent: [], cycle: [], pinGets: [], settings: [], automod: [], bumps: 0, player: [], clips: [] };
@@ -34,6 +39,7 @@ let pinState = null;
 let sendCounter = 0;
 const cycle = { enabled: false, changes: 0, lastColor: "#30E51E" };
 let statusCalls = 0;
+let statusDown = false, slowSend = 0;
 const ids = { uwoslab: "999", otherchan: "888", targetchan: "777" };
 const svg = (h) => `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><circle cx="28" cy="28" r="26" fill="hsl(${h},70%,55%)"/></svg>`;
 await ctx.route("**/*", async (route) => {
@@ -41,10 +47,12 @@ await ctx.route("**/*", async (route) => {
   const j = (d) => route.fulfill({ json: d });
   const body = () => route.request().postDataJSON();
   if (u.host === "yappa.test") {
-    if (u.pathname === "/") return route.fulfill({ body: html, contentType: "text/html" });
+    if (u.pathname === "/") return route.fulfill({ body: html, contentType: "text/html", headers: PAGE_HEADERS });
     const f = staticFiles[u.pathname];
     if (f) return route.fulfill({ body: f.type === "image/png" ? Buffer.from(f.body, "base64") : f.body, contentType: f.type });
     if (u.pathname === "/api/cycle") { cycle.enabled = body().enabled; if (cycle.enabled) { cycle.lastColor = "#11AA22"; cycle.changes++; } log.cycle.push(cycle.enabled); return j({ ok: true, cycle }); }
+    if (u.pathname === "/api/netfail") return route.abort();
+    if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
     if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", missingScopes: [], missingOptionalScopes: [] }, cycle }); }
     if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan" }[b.channel] }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
     if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: new Date(Date.now() - 3 * 3600e3).toISOString() }]);
@@ -57,7 +65,7 @@ await ctx.route("**/*", async (route) => {
       if (id === "MissingClip") return j({ ok: true, clip: null });
       return j({ ok: true, clip: { id, url: "https://clips.twitch.tv/" + id, title: id === "SecondSlug" ? "Second clip" : "An incredible play nobody saw coming and a very long title that wraps", broadcaster: "UwoSlab", creator: "Clipper", views: 12345, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting" } });
     }
-    if (u.pathname === "/api/cycle/bump") { log.bumps++; return j({ ok: true, cycle }); }
+    if (u.pathname === "/api/cycle/bump") { log.bumps++; log.bumpIds = [...(log.bumpIds || []), body().message_id]; return j({ ok: true, cycle }); }
     if (u.pathname === "/api/chat/unsubscribe") { log.unsubs.push(...body().ids); return j({ ok: true }); }
     if (u.pathname === "/api/chat/mod") {
       const b = body(); log.mods.push(b);
@@ -66,6 +74,7 @@ await ctx.route("**/*", async (route) => {
       return j({ ok: true, message: "did " + b.action });
     }
     if (u.pathname === "/api/chat/pin") { log.pinGets.push(u.searchParams.get("broadcaster_id")); return j({ ok: true, pin: u.searchParams.get("broadcaster_id") === "999" ? pinState : null }); }
+    if (u.pathname === "/api/chat/send" && slowSend) await sleep(slowSend);
     if (u.pathname === "/api/chat/send") { log.sent.push(body().message); sendCounter++; if (cycle.enabled) { cycle.lastColor = "#" + (0x100000 + log.sent.length * 77777).toString(16).slice(-6).toUpperCase(); cycle.changes++; } return j({ ok: true, messageId: "sent-" + sendCounter }); }
     if (u.pathname === "/api/chat/badges") return j({});
     if (u.pathname === "/api/chat/emotes") return j({ ok: true, emotes: [{ id: "25", name: "Kappa", group: "Twitch global", animated: false }, { id: "e1", name: "uwoHype", group: "This channel", animated: false }] });
@@ -457,7 +466,7 @@ await page.evaluate(() => refreshStatus());
 await sleep(100);
 cur().send(chat("999", "official-app-msg", "testuser", "111", "sent from the official app"));
 await sleep(1800);
-check("own message from another app bumps color", log.bumps === 1, String(log.bumps));
+check("own message from another app bumps color (with its id, so other devices don't double it)", log.bumps === 1 && log.bumpIds[0] === "official-app-msg", JSON.stringify(log.bumpIds));
 await page.fill("#message", "sent from here");
 await page.press("#message", "Enter");
 await sleep(150);
@@ -626,6 +635,46 @@ cur().send(raid("999", "UwoSlab", "targetchan", 9));
 await sleep(6000);
 check("follow-raids off: notice only", (await page.evaluate(() => location.hash)) === "#uwoslab" && !(await page.textContent(".messages:not([hidden]) .notice.raid:last-of-type")).includes("Following"));
 await page.evaluate(() => { settings.followRaids = true; });
+
+// =============== review fixes ===============
+check("CSP blocks injected inline script", await page.evaluate(() => {
+  const sc = document.createElement("script");
+  sc.textContent = "window.__injected = 1";
+  document.body.appendChild(sc);
+  return window.__injected === undefined;
+}));
+// A failed status request (mid-deploy, offline) must not swap the chat for "Connect Twitch".
+statusDown = true;
+await page.evaluate(() => refreshStatus());
+await sleep(150);
+check("status error keeps chat visible", await page.evaluate(() => !document.getElementById("chat").hidden && document.getElementById("connect").hidden));
+statusDown = false;
+const net = await page.evaluate(() => api("/api/netfail"));
+check("network error is a retryable failure, not a throw", net.ok === false && net.retry === true, JSON.stringify(net));
+// Enter twice while a send is in flight sends once; text typed meanwhile survives.
+slowSend = 400;
+const sendsBefore = log.sent.length;
+await page.fill("#message", "only once please");
+await page.evaluate(() => { document.getElementById("send-form").requestSubmit(); document.getElementById("send-form").requestSubmit(); });
+await sleep(100);
+await page.evaluate(() => composer.setText("next message"));
+await sleep(600);
+slowSend = 0;
+check("no double send on repeated Enter", log.sent.length === sendsBefore + 1, JSON.stringify(log.sent.slice(sendsBefore)));
+check("text typed during a send is kept", (await page.evaluate(() => composer.getText())) === "next message");
+await page.evaluate(() => composer.setText(""));
+// Localized display names: mention by login.
+cur().send(chat("999", "kanji1", "テスト", "601", "こんにちは", { chatter_user_login: "tesuto_jp" }));
+await page.waitForSelector('li[data-id="kanji1"]');
+await page.fill("#message", "@tes");
+await sleep(100);
+check("@ autocomplete uses login for localized names", ((await state()).suggest || "").includes("@tesuto_jp"), (await state()).suggest);
+await page.evaluate(() => composer.setText(""));
+// The periodic live-status refresh must not resume a stream you paused.
+await page.evaluate(() => { __player.calls.length = 0; });
+await page.evaluate(() => refreshStreams());
+await sleep(200);
+check("stream refresh doesn't call play() again", !(await page.evaluate(() => __player.calls.some((c) => c[0] === "play"))), JSON.stringify(await page.evaluate(() => __player.calls)));
 
 await browser.close();
 if (errors.length) console.log("Browser errors:", errors);

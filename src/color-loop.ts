@@ -76,6 +76,10 @@ function randomHexColor(): string {
 /** One instance per Access user. Holds Twitch tokens and the color-cycling setting. */
 export class ColorLoop extends DurableObject<Env> {
   private moderated: { at: number; ids: Set<string> } | undefined;
+  /** The refresh in progress, shared so concurrent requests don't spend the refresh token twice. */
+  private refreshing: Promise<Tokens> | undefined;
+  /** Recent message ids that already advanced the color (from any device running the app). */
+  private colored = new Set<string>();
 
   private async getTokens(): Promise<Tokens | undefined> {
     return this.ctx.storage.get<Tokens>("tokens");
@@ -128,6 +132,7 @@ export class ColorLoop extends DurableObject<Env> {
   async connectTwitch(code: string, redirectUri: string): Promise<void> {
     const tok = await exchangeCode(this.env, code, redirectUri);
     const info = await validateToken(tok.access_token);
+    this.moderated = undefined; // it may be a different Twitch account
     await this.ctx.storage.put<Tokens>("tokens", {
       accessToken: tok.access_token,
       refreshToken: tok.refresh_token,
@@ -162,13 +167,20 @@ export class ColorLoop extends DurableObject<Env> {
         const user = await getUser(this.env, t.accessToken, channel);
         if (!user) return { ok: false as const, error: `No Twitch channel named ${channel}.` };
         const condition = { broadcaster_user_id: user.id, user_id: t.userId };
-        const [subscriptionIds, isMod, settings] = await Promise.all([
-          Promise.all(
+        const [created, isMod, settings] = await Promise.all([
+          Promise.allSettled(
             CHAT_EVENTS.map((type) => createWebSocketSubscription(this.env, t.accessToken, type, condition, sessionId)),
           ),
           this.isModerator(t, user.id),
           getChatSettings(this.env, t.accessToken, user.id).catch(() => null),
         ]);
+        const subscriptionIds = created.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+        const failed = created.find((r) => r.status === "rejected");
+        if (failed) {
+          // Don't leave half a channel subscribed (they count against the session's limit).
+          await Promise.all(subscriptionIds.map((id) => deleteSubscription(this.env, t.accessToken, id).catch(() => {})));
+          throw failed.reason;
+        }
         // Outgoing raids from this channel (no special permission needed).
         try {
           subscriptionIds.push(
@@ -243,7 +255,7 @@ export class ColorLoop extends DurableObject<Env> {
             await unpinMessage(this.env, t.accessToken, broadcasterId, t.userId, target.messageId);
             return { ok: true as const, message: "Message unpinned." };
           }
-          const duration = target.duration ? Math.min(1800, Math.max(30, target.duration)) : undefined;
+          const duration = target.duration ? Math.round(Math.min(1800, Math.max(30, target.duration))) : undefined;
           await pinMessage(this.env, t.accessToken, broadcasterId, t.userId, target.messageId, duration);
           return {
             ok: true as const,
@@ -267,7 +279,7 @@ export class ColorLoop extends DurableObject<Env> {
           await unbanUser(this.env, t.accessToken, broadcasterId, t.userId, userId);
           return { ok: true as const, message: `Unbanned ${name}.` };
         }
-        const duration = action === "timeout" ? Math.min(1_209_600, Math.max(1, target.duration ?? 600)) : undefined;
+        const duration = action === "timeout" ? Math.round(Math.min(1_209_600, Math.max(1, target.duration ?? 600))) : undefined;
         await banUser(this.env, t.accessToken, broadcasterId, t.userId, userId, duration, target.reason);
         return { ok: true as const, message: duration ? `Timed out ${name} for ${duration}s.` : `Banned ${name}.` };
       });
@@ -287,7 +299,7 @@ export class ColorLoop extends DurableObject<Env> {
       );
       if (!res.is_sent) return { ok: false, error: res.drop_reason?.message ?? "Message was not sent." };
       // Pick the next color now, so Twitch has applied it well before the next message.
-      if ((await this.getCycle()).enabled) await this.changeColor();
+      if (this.markColored(res.message_id) && (await this.getCycle()).enabled) await this.changeColor();
       return { ok: true, messageId: res.message_id };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
@@ -390,10 +402,21 @@ export class ColorLoop extends DurableObject<Env> {
     }
   }
 
-  /** The user chatted from somewhere else (e.g. the official app): next color, if cycling. */
-  async cycleBump(): Promise<Cycle> {
-    if ((await this.getCycle()).enabled) await this.changeColor();
+  /**
+   * The user chatted from somewhere else (e.g. the official app): next color, if cycling.
+   * Every open copy of the app reports the same message, so each id only counts once.
+   */
+  async cycleBump(messageId?: string): Promise<Cycle> {
+    if ((!messageId || this.markColored(messageId)) && (await this.getCycle()).enabled) await this.changeColor();
     return this.getCycle();
+  }
+
+  /** Records that a message advanced the color; false if it already had. */
+  private markColored(messageId: string): boolean {
+    if (this.colored.has(messageId)) return false;
+    this.colored.add(messageId);
+    if (this.colored.size > 500) this.colored.delete(this.colored.values().next().value!);
+    return true;
   }
 
   /** Clip details for link cards in chat. */
@@ -425,6 +448,7 @@ export class ColorLoop extends DurableObject<Env> {
   }
 
   async disconnectTwitch(): Promise<void> {
+    this.moderated = undefined;
     await this.setCycle(false);
     const tokens = await this.getTokens();
     await this.ctx.storage.delete("tokens");
@@ -493,13 +517,26 @@ export class ColorLoop extends DurableObject<Env> {
     }
   }
 
-  private async refresh(tokens: Tokens): Promise<Tokens> {
+  /** Single-flight: requests that need a refresh at the same time share one. */
+  private refresh(tokens: Tokens): Promise<Tokens> {
+    this.refreshing ??= this.doRefresh(tokens).finally(() => {
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+
+  private async doRefresh(tokens: Tokens): Promise<Tokens> {
+    // Another request may already have refreshed since `tokens` was read.
+    const stored = await this.getTokens();
+    if (stored && stored.accessToken !== tokens.accessToken && stored.expiresAt - Date.now() > 60_000) return stored;
+    tokens = stored ?? tokens;
     let tok;
     try {
       tok = await refreshToken(this.env, tokens.refreshToken);
     } catch (err) {
       if (err instanceof TwitchError && (err.status === 400 || err.status === 401)) {
-        await this.ctx.storage.delete("tokens");
+        // Only forget the grant if nobody replaced it meanwhile (e.g. a reconnect).
+        if ((await this.getTokens())?.refreshToken === tokens.refreshToken) await this.ctx.storage.delete("tokens");
         throw new TwitchError(401, "Twitch authorization expired or was revoked; reconnect your account.");
       }
       throw err;

@@ -82,6 +82,16 @@ export class ColorLoop extends DurableObject<Env> {
     return this.ctx.storage.get<Run>("run");
   }
 
+  /**
+   * Restarts this object if the calling Worker runs newer code. A deploy doesn't always
+   * restart a busy Durable Object, which would leave it without newly added methods.
+   */
+  async syncVersion(callerTimestamp: string): Promise<void> {
+    if (Date.parse(callerTimestamp) > Date.parse(this.env.CF_VERSION_METADATA.timestamp)) {
+      this.ctx.abort("A newer Worker version is deployed");
+    }
+  }
+
   async status(): Promise<Status> {
     let [tokens, run] = await Promise.all([this.getTokens(), this.getRun()]);
     if (tokens && !tokens.scopes) tokens = await this.backfillScopes(tokens);

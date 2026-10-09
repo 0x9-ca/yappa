@@ -32,7 +32,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
   const url = new URL(request.url);
   const redirectUri = `${url.origin}/auth/callback`;
-  const stub = env.COLOR_LOOP.getByName(user);
+  const stub = await currentStub(env, user);
 
   // Cross-site form/fetch protection for state-changing requests.
   if (request.method === "POST" && request.headers.get("Origin") !== url.origin) {
@@ -183,6 +183,17 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>;
+
+/** Gets the user's Durable Object, first restarting it if it's still on an older deploy. */
+async function currentStub(env: Env, user: string) {
+  try {
+    await env.COLOR_LOOP.getByName(user).syncVersion(env.CF_VERSION_METADATA.timestamp);
+  } catch {
+    // Either it just restarted itself (a fresh stub reaches the new instance), or it
+    // predates syncVersion; both are fine to continue past.
+  }
+  return env.COLOR_LOOP.getByName(user);
+}
 
 function redirectHome(setCookie: string, error?: string): Response {
   return new Response(null, {

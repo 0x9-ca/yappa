@@ -1,4 +1,5 @@
 import { verifyAccess } from "./access";
+import * as publicApi from "./app-token";
 import { renderMoved } from "./moved";
 import { PAGE_HEADERS, renderPage } from "./page";
 import { staticFiles } from "./static";
@@ -50,8 +51,32 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return new Response("Bad origin", { status: 403 });
   }
 
+  // Public Twitch data: answered with the app token, without waking the user's Durable Object.
+  switch (`${request.method} ${url.pathname}`) {
+    case "GET /api/streams": {
+      const ids = (url.searchParams.get("ids") ?? "").split(",").filter((x) => /^\d+$/.test(x)).slice(0, 100);
+      return json(await publicApi.streams(env, url.origin, ids));
+    }
+    case "GET /api/chat/cheermotes": {
+      const id = url.searchParams.get("broadcaster_id");
+      if (!id) return json([], 400);
+      return json(await publicApi.cheermotes(env, url.origin, id));
+    }
+    case "GET /api/chat/badges": {
+      const id = url.searchParams.get("broadcaster_id");
+      if (!id) return json({}, 400);
+      return json(await publicApi.badges(env, url.origin, id));
+    }
+    case "GET /api/chat/clip": {
+      const id = url.searchParams.get("id") ?? "";
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(id)) return json({ ok: false, error: "Bad clip id." }, 400);
+      const result = await publicApi.clip(env, url.origin, id);
+      return json(result, result.ok ? 200 : 502);
+    }
+  }
+
   const redirectUri = `${url.origin}/auth/callback`;
-  const stub = await currentStub(env, user);
+  const stub = await currentStub(env, user, url.pathname === "/");
 
   switch (`${request.method} ${url.pathname}`) {
     case "GET /":
@@ -185,28 +210,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
       return json(result, result.ok ? 200 : 502);
     }
 
-    case "GET /api/streams": {
-      const ids = (url.searchParams.get("ids") ?? "").split(",").filter((x) => /^\d+$/.test(x)).slice(0, 100);
-      return json(await stub.streams(ids));
-    }
-
-    case "GET /api/chat/cheermotes": {
-      const id = url.searchParams.get("broadcaster_id");
-      if (!id) return json([], 400);
-      return json(await stub.cheermotes(id));
-    }
-
     case "POST /api/cycle/bump": {
       const body = (await request.json().catch(() => ({}))) as { message_id?: unknown };
       const messageId = typeof body.message_id === "string" && body.message_id ? body.message_id.slice(0, 100) : undefined;
       return json({ ok: true, cycle: await stub.cycleBump(messageId) });
-    }
-
-    case "GET /api/chat/clip": {
-      const id = url.searchParams.get("id") ?? "";
-      if (!/^[A-Za-z0-9_-]{1,100}$/.test(id)) return json({ ok: false, error: "Bad clip id." }, 400);
-      const result = await stub.clip(id);
-      return json(result, result.ok ? 200 : 502);
     }
 
     case "GET /api/chat/pin": {
@@ -214,12 +221,6 @@ async function handle(request: Request, env: Env): Promise<Response> {
       if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);
       const result = await stub.chatPinned(id);
       return json(result, result.ok ? 200 : 502);
-    }
-
-    case "GET /api/chat/badges": {
-      const id = url.searchParams.get("broadcaster_id");
-      if (!id) return json({}, 400);
-      return json(await stub.chatBadges(id));
     }
   }
 
@@ -234,6 +235,7 @@ export default {
       const message = (err as Error).message ?? String(err);
       // Right after a deploy the Durable Object can briefly still run the previous version.
       if (message.includes("does not implement the method")) {
+        synced.clear(); // check again next time
         return json({ ok: false, error: "The server is updating; try again in a minute.", retry: true }, 503);
       }
       console.error(err);
@@ -242,13 +244,24 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/** Gets the user's Durable Object, first restarting it if it's still on an older deploy. */
-async function currentStub(env: Env, user: string) {
-  try {
-    await env.COLOR_LOOP.getByName(user).syncVersion(env.CF_VERSION_METADATA.timestamp);
-  } catch {
-    // Either it just restarted itself (a fresh stub reaches the new instance), or it
-    // predates syncVersion; both are fine to continue past.
+// Users whose Durable Object this isolate has already brought up to its own version. An
+// object can't fall back to older code, so each isolate needs to check only once per user
+// (new isolates start empty after every deploy).
+const synced = new Set<string>();
+
+/**
+ * Gets the user's Durable Object, first restarting it if it's still on an older deploy.
+ * Checks on every page load, and otherwise once per isolate per user.
+ */
+async function currentStub(env: Env, user: string, pageLoad: boolean) {
+  if (pageLoad || !synced.has(user)) {
+    try {
+      await env.COLOR_LOOP.getByName(user).syncVersion(env.CF_VERSION_METADATA.timestamp);
+      synced.add(user);
+    } catch {
+      // Either it just restarted itself (a fresh stub reaches the new instance), or it
+      // predates syncVersion; both are fine to continue past.
+    }
   }
   return env.COLOR_LOOP.getByName(user);
 }

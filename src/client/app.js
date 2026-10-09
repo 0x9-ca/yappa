@@ -2494,5 +2494,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
 applySettings();
 loadExtGlobal();
 refreshStatus();
-// The status rarely changes on its own (sending refreshes it), so poll gently and only while visible.
-setInterval(() => { if (!document.hidden) refreshStatus(); }, 30000);
+// Everything that changes the status from here refreshes it (sending, the cycle toggle,
+// reconnecting, coming back to the app), so this only catches changes made on another
+// device or Twitch revoking access. Poll rarely, and only while visible.
+setInterval(() => { if (!document.hidden) refreshStatus(); }, 5 * 60000);

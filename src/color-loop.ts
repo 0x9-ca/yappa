@@ -8,13 +8,8 @@ import {
   deleteChatMessages,
   deleteSubscription,
   exchangeCode,
-  getBadges,
   getChatSettings,
-  getCheermotes,
-  getClip,
-  getGameName,
   getFollowedAt,
-  getStreamsByIds,
   getUserById,
   manageHeldMessage,
   updateChatSettings,
@@ -386,21 +381,7 @@ export class ColorLoop extends DurableObject<Env> {
     }
   }
 
-  async streams(ids: string[]): Promise<unknown[]> {
-    try {
-      return await this.withToken((t) => getStreamsByIds(this.env, t.accessToken, ids));
-    } catch {
-      return [];
-    }
-  }
 
-  async cheermotes(broadcasterId: string): Promise<unknown[]> {
-    try {
-      return await this.withToken((t) => getCheermotes(this.env, t.accessToken, broadcasterId));
-    } catch {
-      return [];
-    }
-  }
 
   /**
    * The user chatted from somewhere else (e.g. the official app): next color, if cycling.
@@ -419,33 +400,7 @@ export class ColorLoop extends DurableObject<Env> {
     return true;
   }
 
-  /** Clip details for link cards in chat. */
-  async clip(id: string): Promise<{ ok: true; clip: unknown } | { ok: false; error: string }> {
-    try {
-      return await this.withToken(async (t) => {
-        const c = await getClip(this.env, t.accessToken, id);
-        if (!c) return { ok: true as const, clip: null };
-        const game = c.game_id ? await getGameName(this.env, t.accessToken, c.game_id).catch(() => null) : null;
-        return {
-          ok: true as const,
-          clip: {
-            id: c.id, url: c.url, title: c.title, broadcaster: c.broadcaster_name, creator: c.creator_name,
-            views: c.view_count, createdAt: c.created_at, thumbnail: c.thumbnail_url, duration: c.duration, game,
-          },
-        };
-      });
-    } catch (err) {
-      return { ok: false, error: (err as Error).message };
-    }
-  }
 
-  async chatBadges(broadcasterId: string): Promise<Record<string, { url: string; title: string }>> {
-    try {
-      return await this.withToken((t) => getBadges(this.env, t.accessToken, broadcasterId));
-    } catch {
-      return {};
-    }
-  }
 
   async disconnectTwitch(): Promise<void> {
     this.moderated = undefined;

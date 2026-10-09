@@ -844,6 +844,48 @@ await page.setViewportSize({ width: 390, height: 760 });
   check("finger lifted: follows again", await page.evaluate(() => atBottom(active)));
 }
 
+// =============== native player recovers when playback stops ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => "maybe"; setPlayer("native"); });
+  await page.waitForFunction(() => native && native.way === "built-in" && !!document.querySelector("#video video").getAttribute("src"), null, { timeout: 5000 });
+  const stopped = () => page.evaluate(() => [...active.list.querySelectorAll(".sys")].filter((l) => l.textContent.startsWith("The native stream stopped")).map((l) => l.textContent));
+  const tokens0 = log.gql.length;
+  const freeze = (secs, paused) => page.evaluate(([secs, paused]) => {
+    const v = document.querySelector("#video video");
+    Object.defineProperty(v, "paused", { get: () => paused, configurable: true });
+    native.hasPlayed = true; native.progressAt = Date.now() - secs * 1000; native.lastTime = v.currentTime;
+    v.dispatchEvent(new Event("waiting")); v.dispatchEvent(new Event("stalled"));
+    nativeWatchdog();
+  }, [secs, paused]);
+  await freeze(60, true);
+  await sleep(300);
+  check("a paused video isn't treated as stalled", log.gql.length === tokens0 && (await stopped()).length === 0);
+  await freeze(3, false);
+  await sleep(300);
+  check("briefly slow isn't a stall either", log.gql.length === tokens0 && (await stopped()).length === 0);
+  await freeze(12, false);
+  await sleep(500);
+  let msgs = await stopped();
+  check("frozen for 12s → fresh playback token, playlist reloaded, said in chat with what the video did",
+    log.gql.length === tokens0 + 1 && msgs.length === 1 && msgs[0].includes("no video for 12s") && msgs[0].includes("waiting") && msgs[0].includes("stalled") && msgs[0].includes("Reconnecting"), JSON.stringify(msgs));
+  check("still the native player after recovering", await page.evaluate(() => !!document.querySelector("#video video") && !document.querySelector("#video iframe") && (document.querySelector("#video video").getAttribute("src") || "").includes("usher.ttvnw.net")));
+  await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("ended")));
+  await sleep(500);
+  msgs = await stopped();
+  check("a live stream 'ending' reconnects", log.gql.length === tokens0 + 2 && msgs.at(-1).includes("the stream ended"), JSON.stringify(msgs.at(-1)));
+  await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("error")));
+  await sleep(500);
+  check("an error after it was playing reconnects instead of giving up", log.gql.length === tokens0 + 3 && !(await page.$("#video iframe")), String(log.gql.length - tokens0));
+  await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("ended")));
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
+  const gaveUp = await page.evaluate(() => [...active.list.querySelectorAll(".sys.err")].at(-1).textContent);
+  check("stopping over and over → gives up and uses Twitch's player, saying why", log.gql.length === tokens0 + 3 && gaveUp.includes("kept stopping"), gaveUp);
+  await page.evaluate(() => { setPlayer("embed"); HTMLMediaElement.prototype.canPlayType = () => ""; });
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
+  check("no watchdog left running after teardown", await page.evaluate(() => native === null));
+}
+
 // =============== recent emotes: only what works in this channel ===============
 await page.click(".tab:first-child .tab-name");
 await page.evaluate(() => localStorage.setItem("recentEmotes", JSON.stringify([

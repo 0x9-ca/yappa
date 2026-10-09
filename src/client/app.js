@@ -2433,23 +2433,87 @@ async function renderNative(box, channel, wasHidden) {
     video.playsInline = true;  // iPhone: don't force fullscreen
     video.autoplay = true;
     video.muted = !canPlaySound(); // muted autoplay is allowed everywhere, phones included
+    // Remember what the video element did lately, to say in chat if playback stops.
+    const note = (what) => {
+      if (!native || native.video !== video) return;
+      native.events.push(Math.round((Date.now() - native.startedAt) / 1000) + "s " + what);
+      if (native.events.length > 8) native.events.shift();
+    };
+    for (const ev of ["waiting", "stalled", "pause", "emptied", "suspend", "abort"]) video.addEventListener(ev, () => note(ev));
+    video.addEventListener("playing", () => { if (native && native.video === video) { native.hasPlayed = true; note("playing"); } });
+    // A live stream shouldn't end; if it does, the playlist or token went stale.
+    video.addEventListener("ended", () => { note("ended"); if (native && native.video === video) nativeRestart("the stream ended"); });
     video.addEventListener("error", () => {
-      if (native && native.video === video && native.way === "built-in") native.fail(mediaErrorText(video.error));
+      if (!native || native.video !== video || native.way !== "built-in") return;
+      // An error after it was playing is usually a stale token: reconnect rather than give up.
+      if (native.hasPlayed) nativeRestart(mediaErrorText(video.error)); else native.fail(mediaErrorText(video.error));
     });
     box.replaceChildren(video);
-    native = { video, hls: null, channel: null, way: null, fail: () => {} };
+    native = {
+      video, hls: null, channel: null, way: null, fail: () => {},
+      events: [], hasPlayed: false, startedAt: Date.now(), progressAt: Date.now(), lastTime: 0,
+      restarting: false, restartTimes: [], timer: setInterval(nativeWatchdog, 2000),
+    };
   }
   native.channel = channel;
+  Object.assign(native, { hasPlayed: false, events: [], restartTimes: [], progressAt: Date.now(), lastTime: 0 });
   let url;
   try { url = await hlsUrl(channel); } catch (err) { if (gen === nativeGen) nativeFail("token: " + err.message); return; }
   if (gen !== nativeGen || !native) return;
-  // The browser's built-in HLS first: Twitch only lets twitch.tv read its playlists
-  // (CORS), which blocks hls.js everywhere, but a plain <video src> works in some browsers
-  // (tested: Firefox for Android yes, Chrome for Android no). hls.js is the last resort.
+  playNext(gen, url, playWays(), []);
+}
+
+/**
+ * The browser's built-in HLS first: Twitch only lets twitch.tv read its playlists (CORS),
+ * which blocks hls.js everywhere, but a plain <video src> works in some browsers (tested:
+ * Firefox for Android yes, Chrome for Android no). hls.js is the last resort.
+ */
+function playWays() {
   const ways = [];
   if (native.video.canPlayType("application/vnd.apple.mpegurl")) ways.push("built-in");
   if (window.MediaSource || window.ManagedMediaSource) ways.push("hls.js");
-  playNext(gen, url, ways, []);
+  return ways;
+}
+
+const NATIVE_STALL_MS = 10000;  // playing but not advancing for this long = stopped
+const NATIVE_MAX_RESTARTS = 3;  // within two minutes, then give up and use the embed
+
+/** Every couple of seconds: has the picture stopped moving while it should be playing? */
+function nativeWatchdog() {
+  const n = native;
+  if (!n || n.restarting || !n.way) return;
+  const v = n.video, now = Date.now();
+  // Not expected to move: backgrounded (browsers throttle), paused (by you or us), or not started.
+  if (document.hidden || v.paused || v.ended || !n.hasPlayed) { n.progressAt = now; n.lastTime = v.currentTime; return; }
+  if (v.currentTime !== n.lastTime) { n.lastTime = v.currentTime; n.progressAt = now; return; }
+  if (now - n.progressAt >= NATIVE_STALL_MS) nativeRestart("no video for " + Math.round((now - n.progressAt) / 1000) + "s");
+}
+
+/** Gets a fresh playback token and playlist and starts over, saying so in chat. */
+async function nativeRestart(reason) {
+  const n = native;
+  if (!n || n.restarting) return;
+  const now = Date.now();
+  n.restartTimes = n.restartTimes.filter((t) => now - t < 120000);
+  if (n.restartTimes.length >= NATIVE_MAX_RESTARTS) { nativeFail("it kept stopping (" + reason + ")"); return; }
+  n.restartTimes.push(now);
+  n.restarting = true;
+  const gen = ++nativeGen; // drops anything still pending from the old attempt
+  if (active) {
+    sysLine(active, "The native stream stopped (" + reason + "; " + Math.round((now - n.startedAt) / 60000) + " min after it loaded; " +
+      (n.events.slice(-4).join(", ") || "no events") + "). Reconnecting…");
+  }
+  try {
+    const url = await hlsUrl(n.channel);
+    if (gen !== nativeGen || native !== n) return;
+    n.progressAt = now;
+    n.lastTime = n.video.currentTime;
+    await playNext(gen, url, playWays(), []);
+  } catch (err) {
+    if (gen === nativeGen && native === n) nativeFail("token: " + err.message);
+  } finally {
+    n.restarting = false;
+  }
 }
 
 /** Tries each way to play in turn; when all fail, falls back to the embed with every reason. */
@@ -2460,6 +2524,7 @@ async function playNext(gen, url, ways, reasons) {
   stopMedia();
   let failed = false;
   native.way = way;
+  native.startedAt = Date.now(); // for "N min after it loaded"
   native.fail = (reason) => {
     if (failed || gen !== nativeGen || !native) return;
     failed = true;
@@ -2478,7 +2543,8 @@ async function playNext(gen, url, ways, reasons) {
   const hls = new Hls({ enableWorker: false });
   native.hls = hls;
   hls.on(Hls.Events.ERROR, (_, data) => {
-    if (data.fatal && native && native.hls === hls) native.fail(hlsErrorText(data));
+    if (!data.fatal || !native || native.hls !== hls) return;
+    if (native.hasPlayed) nativeRestart(hlsErrorText(data)); else native.fail(hlsErrorText(data));
   });
   hls.loadSource(url);
   hls.attachMedia(video);
@@ -2515,6 +2581,7 @@ function startNative(video) {
 function teardownNative() {
   nativeGen++;
   if (!native) return;
+  clearInterval(native.timer);
   stopMedia();
   native.video.remove();
   native = null;

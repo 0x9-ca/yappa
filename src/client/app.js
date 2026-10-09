@@ -209,15 +209,24 @@ function openTab(name, focus = true) {
     tab = {
       login: name, broadcaster: null, isMod: null, subIds: [], badges: {}, ext: new Map(), cheermotes: null,
       twitchEmotes: null, unread: 0, mentioned: false, joined: false, chatters: new Map(), loadedExtras: false,
-      seen: new Set(), lastTs: 0,
+      seen: new Set(), lastTs: 0, follow: true, lastTop: 0, holding: false,
       list: el("ul", "messages"), tabEl: null,
     };
     tab.list.hidden = true;
     tab.list.setAttribute("aria-live", "polite");
     tab.list.addEventListener("scroll", () => {
-      if (tab === active && nearBottom(tab)) show("more", false);
-      if (tab.list.scrollTop < 400) loadOlder(tab); // near the top: fetch earlier history
+      const top = tab.list.scrollTop;
+      // Our own scrolls only ever go down, so a decrease means the user scrolled up.
+      if (atBottom(tab)) tab.follow = true;
+      else if (top < tab.lastTop - 1) tab.follow = false;
+      tab.lastTop = top;
+      if (tab === active && tab.follow) show("more", false);
+      if (top < 400) loadOlder(tab); // near the top: fetch earlier history
     });
+    // A finger on the chat (about to select or copy) pauses following until it lifts.
+    tab.list.addEventListener("pointerdown", () => { tab.holding = true; });
+    // Emotes and thumbnails load after insertion and grow the list; stay at the bottom.
+    tab.list.addEventListener("load", () => { if (tab === active && sticking(tab)) scrollToBottom(tab); }, true);
     $("chat").insertBefore(tab.list, $("more"));
     tabs.set(name, tab);
     buildTabEl(tab);
@@ -285,7 +294,7 @@ function activate(tab) {
   tab.mentioned = false;
   updateTabEl(tab);
   tab.tabEl.wrap.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  tab.list.scrollTop = tab.list.scrollHeight;
+  scrollToBottom(tab);
   show("more", false);
   if (prev) { setReply(null); closePicker(); closeSuggest(); }
   $("channel").value = "";
@@ -712,9 +721,9 @@ async function backfill(tab, { since, until, marker }) {
     for (let page = 0; page < 8; page++) {
       const lines = await fetchHistory(tab, { after: since - 30000, before });
       if (!lines || !tabs.has(tab.login) || settings.history !== true) break;
-      const stick = tab !== active || nearBottom(tab);
+      const stick = sticking(tab);
       keepScroll(tab, () => { added += mergeHistory(tab, lines, { since, until, historical: false }); });
-      if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+      if (stick) scrollToBottom(tab);
       if (lines.length < HISTORY_PAGE) break;
       before = Math.min(...lines.map(receivedAt).filter(Boolean));
       if (!before) break;
@@ -725,12 +734,12 @@ async function backfill(tab, { since, until, marker }) {
   // First load: the newest page; scrolling up loads more.
   const lines = await fetchHistory(tab, {});
   if (!lines || !tabs.has(tab.login) || settings.history !== true) return;
-  const stick = tab !== active || nearBottom(tab);
+  const stick = sticking(tab);
   mergeHistory(tab, lines, { until, historical: true });
   tab.historyBefore = Math.min(...lines.map(receivedAt).filter(Boolean)) || 0;
   tab.historyDone = lines.length < HISTORY_PAGE || !tab.historyBefore;
   placeHistoryDivider(tab);
-  if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+  if (stick) scrollToBottom(tab);
   fillScreen(tab);
 }
 
@@ -1040,9 +1049,32 @@ function appendCheer(tab, parent, prefix, bits, text) {
 
 // ---------- rendering ----------
 
-const nearBottom = (tab) => tab.list.scrollHeight - tab.list.scrollTop - tab.list.clientHeight < 60;
+// Chat follows new messages only while you're at the very bottom. Any scroll up stops that,
+// so what you're reading (or copying) doesn't move; so does a finger on the chat or text
+// selected in it. Scrolling back to the bottom, or "More messages below", resumes.
+const atBottom = (tab) => tab.list.scrollHeight - tab.list.scrollTop - tab.list.clientHeight <= 4;
+
+function sticking(tab) {
+  if (tab !== active) return true;
+  if (!tab.follow || tab.holding) return false;
+  const sel = getSelection();
+  return !(sel && !sel.isCollapsed && tab.list.contains(sel.anchorNode));
+}
+
+function scrollToBottom(tab) {
+  tab.list.scrollTop = tab.list.scrollHeight;
+  tab.follow = true;
+  tab.lastTop = tab.list.scrollTop;
+}
+
+function releaseHold() {
+  for (const t of tabs.values()) t.holding = false;
+}
+window.addEventListener("pointerup", releaseHold);
+window.addEventListener("pointercancel", releaseHold);
+
 $("more").addEventListener("click", () => {
-  if (active) active.list.scrollTop = active.list.scrollHeight;
+  if (active) scrollToBottom(active);
   show("more", false);
 });
 
@@ -1078,7 +1110,7 @@ function trimList(tab) {
 
 function append(tab, node, countsAsUnread) {
   const list = tab.list;
-  const stick = tab !== active || nearBottom(tab);
+  const stick = sticking(tab);
   if (!node.dataset.ts) node.dataset.ts = String(Date.now());
   list.appendChild(node);
   if (tab === active && filterText) filterNode(node);
@@ -1086,7 +1118,7 @@ function append(tab, node, countsAsUnread) {
   if (stick) trimList(tab);
   if (countsAsUnread && document.hidden) { hiddenUnread++; updateTitle(); }
   if (tab === active) {
-    if (stick) list.scrollTop = list.scrollHeight;
+    if (stick) scrollToBottom(tab);
     else show("more", true);
   } else {
     list.scrollTop = list.scrollHeight;
@@ -1224,7 +1256,7 @@ function attachClipCards(tab, li, body) {
   for (const id of ids) {
     fetchClip(id).then((clip) => {
       if (!clip || !li.isConnected || !/^https:\/\//.test(clip.url)) return;
-      const stick = tab === active && nearBottom(tab);
+      const stick = tab === active && sticking(tab);
       const card = el("a", "clip-card");
       card.href = clip.url;
       card.target = "_blank";
@@ -1242,8 +1274,12 @@ function attachClipCards(tab, li, body) {
         el("span", null, "Clipped by " + clip.creator + " · " + compactCount(clip.views) + " views · " + since(clip.createdAt) + " ago"),
       );
       card.append(thumb, meta);
-      li.insertBefore(card, li.querySelector(".actions"));
-      if (stick) tab.list.scrollTop = tab.list.scrollHeight;
+      if (stick) {
+        li.insertBefore(card, li.querySelector(".actions"));
+        scrollToBottom(tab);
+      } else {
+        keepScroll(tab, () => li.insertBefore(card, li.querySelector(".actions")));
+      }
     });
   }
 }
@@ -2254,34 +2290,77 @@ async function renderNative(box, channel, wasHidden) {
     video.playsInline = true;  // iPhone: don't force fullscreen
     video.autoplay = true;
     video.muted = !canPlaySound(); // muted autoplay is allowed everywhere, phones included
-    video.addEventListener("error", () => { if (native && native.video === video && !native.hls) nativeFail("the browser couldn't play it"); });
+    video.addEventListener("error", () => {
+      if (native && native.video === video && native.way === "built-in") native.fail(mediaErrorText(video.error));
+    });
     box.replaceChildren(video);
-    native = { video, hls: null, channel: null };
+    native = { video, hls: null, channel: null, way: null, fail: () => {} };
   }
   native.channel = channel;
   let url;
-  try { url = await hlsUrl(channel); } catch (err) { if (gen === nativeGen) nativeFail(err.message); return; }
+  try { url = await hlsUrl(channel); } catch (err) { if (gen === nativeGen) nativeFail("token: " + err.message); return; }
   if (gen !== nativeGen || !native) return;
+  // hls.js first wherever Media Source Extensions exist (it explains its errors), then the
+  // browser's built-in HLS (iPhone; also a fallback, since it doesn't need CORS on video).
+  const ways = [];
+  if (window.MediaSource || window.ManagedMediaSource) ways.push("hls.js");
+  if (native.video.canPlayType("application/vnd.apple.mpegurl")) ways.push("built-in");
+  playNext(gen, url, ways, []);
+}
+
+/** Tries each way to play in turn; when all fail, falls back to the embed with every reason. */
+async function playNext(gen, url, ways, reasons) {
+  if (gen !== nativeGen || !native) return;
+  const way = ways[0];
+  if (!way) { nativeFail(reasons.join("; ") || "this browser can't play HLS"); return; }
+  stopMedia();
+  let failed = false;
+  native.way = way;
+  native.fail = (reason) => {
+    if (failed || gen !== nativeGen || !native) return;
+    failed = true;
+    playNext(gen, url, ways.slice(1), [...reasons, way + ": " + reason]);
+  };
   const { video } = native;
-  if (native.hls) { native.hls.destroy(); native.hls = null; }
-  // Built-in HLS (iPhone, Android, newer desktop Chrome) needs no CORS for the video
-  // segments; elsewhere hls.js plays it through Media Source Extensions.
-  if (video.canPlayType("application/vnd.apple.mpegurl")) {
+  if (way === "built-in") {
     video.src = url;
-  } else {
-    try { await loadHlsJs(); } catch (err) { if (gen === nativeGen) nativeFail(err.message); return; }
-    if (gen !== nativeGen || !native) return;
-    if (!window.Hls || !Hls.isSupported()) { nativeFail("this browser can't play HLS"); return; }
-    // No web worker: the page's CSP doesn't allow blob: scripts.
-    const hls = new Hls({ enableWorker: false });
-    native.hls = hls;
-    hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal && native && native.hls === hls) nativeFail(data.details || data.type || "playback error");
-    });
-    hls.loadSource(url);
-    hls.attachMedia(video);
+    startNative(video);
+    return;
   }
+  try { await loadHlsJs(); } catch (err) { native && native.fail(err.message); return; }
+  if (gen !== nativeGen || !native) return;
+  if (!window.Hls || !Hls.isSupported()) { native.fail("not supported here"); return; }
+  // No web worker: the page's CSP doesn't allow blob: scripts.
+  const hls = new Hls({ enableWorker: false });
+  native.hls = hls;
+  hls.on(Hls.Events.ERROR, (_, data) => {
+    if (data.fatal && native && native.hls === hls) native.fail(hlsErrorText(data));
+  });
+  hls.loadSource(url);
+  hls.attachMedia(video);
   startNative(video);
+}
+
+function stopMedia() {
+  if (native.hls) { native.hls.destroy(); native.hls = null; }
+  native.way = null;
+  if (native.video.getAttribute("src")) {
+    native.video.removeAttribute("src");
+    native.video.load();
+  }
+}
+
+function hlsErrorText(data) {
+  const code = data.response && data.response.code;
+  // Status 0 means the browser refused the response, usually missing CORS headers.
+  const http = code === 0 ? " (blocked by the browser, likely CORS)" : code ? " (HTTP " + code + ")" : "";
+  return (data.details || data.type || "playback error") + http + (data.url ? " loading " + new URL(data.url).host : "");
+}
+
+function mediaErrorText(err) {
+  if (!err) return "unknown error";
+  const kind = { 1: "aborted", 2: "network error", 3: "decode error", 4: "source not supported" }[err.code] || "error " + err.code;
+  return kind + (err.message ? ": " + err.message : "");
 }
 
 function startNative(video) {
@@ -2292,9 +2371,7 @@ function startNative(video) {
 function teardownNative() {
   nativeGen++;
   if (!native) return;
-  if (native.hls) native.hls.destroy();
-  native.video.removeAttribute("src");
-  native.video.load();
+  stopMedia();
   native.video.remove();
   native = null;
 }
@@ -2543,7 +2620,7 @@ function applyFilter() {
   let shown = 0;
   for (const n of active.list.children) { filterNode(n); if (!n.classList.contains("filtered")) shown++; }
   $("search-count").textContent = shown + " match" + (shown === 1 ? "" : "es");
-  active.list.scrollTop = active.list.scrollHeight;
+  scrollToBottom(active);
 }
 
 $("search-btn").addEventListener("click", () => {
@@ -2897,10 +2974,10 @@ const vv = window.visualViewport;
 if (vv) {
   const app = document.querySelector(".app");
   const fit = () => {
-    const stick = active && nearBottom(active);
+    const stick = active && sticking(active);
     app.style.setProperty("--app-height", vv.height + "px");
     app.style.transform = vv.offsetTop ? "translateY(" + vv.offsetTop + "px)" : "";
-    if (stick) active.list.scrollTop = active.list.scrollHeight;
+    if (stick) scrollToBottom(active);
   };
   vv.addEventListener("resize", fit);
   vv.addEventListener("scroll", fit);

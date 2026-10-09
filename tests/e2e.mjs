@@ -100,6 +100,8 @@ await ctx.route("**/*", async (route) => {
   }
   // The app's old address (src/moved.ts).
   if (u.host === "old.test") return route.fulfill({ body: u.pathname === "/" ? renderMoved("yappa.test") : "<p>old</p>", contentType: "text/html" });
+  // The built-in player really fetches the playlist; answer slowly so the test decides the outcome.
+  if (u.host === "usher.ttvnw.net") { await sleep(4000); return route.fulfill({ body: "#EXTM3U\n", contentType: "application/vnd.apple.mpegurl", headers: { "access-control-allow-origin": "*" } }).catch(() => {}); }
   if (u.host === "gql.twitch.tv") {
     const b = route.request().postDataJSON();
     log.gql = [...(log.gql || []), { clientId: route.request().headers()["client-id"], login: b.variables && b.variables.login }];
@@ -615,6 +617,17 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.evaluate(() => setPlayer("native"));
   await page.waitForFunction(() => !!document.querySelector("#video video"), null, { timeout: 5000 });
   check("Choosing Native again retries after a fallback", await page.evaluate(() => !document.querySelector("#video iframe")));
+  // hls.js blocked (e.g. CORS) → the browser's built-in HLS gets a turn → it fails too → embed, with both reasons.
+  await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => "maybe"; setPlayer("native"); });
+  await page.waitForFunction(() => __hls.instances.at(-1).calls.length >= 2 && !__hls.instances.at(-1).destroyed, null, { timeout: 5000 });
+  await page.evaluate(() => __hls.instances.at(-1).fire("hlsError", { fatal: true, type: "networkError", details: "fragLoadError", response: { code: 0 }, url: "https://video-edge-abc.ttvnw.net/v1/segment/x.ts" }));
+  await page.waitForFunction(() => { const v = document.querySelector("#video video"); return v && (v.getAttribute("src") || "").includes("usher.ttvnw.net"); }, null, { timeout: 5000 });
+  check("hls.js failure → built-in HLS tries the same playlist", true);
+  await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("error")));
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
+  const both = await page.evaluate(() => [...active.list.querySelectorAll(".sys.err")].at(-1).textContent);
+  check("all attempts failed → embed, message names each reason", both.includes("hls.js: fragLoadError (blocked by the browser, likely CORS) loading video-edge-abc.ttvnw.net") && both.includes("built-in: unknown error"), both);
+  await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => ""; });
   const tokErr = await page.evaluate(async () => { try { await hlsUrl("brokenchan"); return "no error"; } catch (e) { return e.message; } });
   check("Token errors are reported", tokErr === "service error", tokErr);
   await page.evaluate(() => setPlayer("embed"));
@@ -631,6 +644,48 @@ await page.setViewportSize({ width: 390, height: 760 });
     document.head.appendChild(sc);
   }));
   check("real hls.js loads under the CSP", real);
+}
+
+// =============== chat holds still once you scroll up ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  for (let i = 0; i < 30; i++) cur().send(chat("999", "fill" + i, "Filler", "990", "filler line " + i));
+  await page.waitForSelector('li[data-id="fill29"]');
+  check("at the bottom: new messages follow", await page.evaluate(() => atBottom(active)));
+  await page.evaluate(() => { active.list.scrollTop -= 10; });   // the smallest scroll up
+  await sleep(100);
+  const topBefore = await page.evaluate(() => active.list.scrollTop);
+  cur().send(chat("999", "hold1", "Viewer", "701", "arrives while scrolled up a little"));
+  await page.waitForSelector('li[data-id="hold1"]');
+  await sleep(100);
+  check("scrolled up even 10px: chat stays put, 'More messages below' shown", (await page.evaluate(() => active.list.scrollTop)) === topBefore && !(await page.$eval("#more", (b) => b.hidden)), String(topBefore));
+  await page.click("#more");
+  await sleep(100);
+  cur().send(chat("999", "hold2", "Viewer", "701", "after returning to the bottom"));
+  await page.waitForSelector('li[data-id="hold2"]');
+  await sleep(100);
+  check("'More messages below' resumes following", await page.evaluate(() => atBottom(active)));
+  // Text selected in chat (copying an error, say) also holds it still.
+  await page.evaluate(() => { const r = document.createRange(); r.selectNodeContents(document.querySelector('li[data-id="hold2"] .body')); getSelection().removeAllRanges(); getSelection().addRange(r); });
+  const selTop = await page.evaluate(() => active.list.scrollTop);
+  cur().send(chat("999", "hold3", "Viewer", "701", "arrives while text is selected"));
+  await page.waitForSelector('li[data-id="hold3"]');
+  await sleep(100);
+  check("selected text: chat holds still", (await page.evaluate(() => active.list.scrollTop)) === selTop && (await page.evaluate(() => getSelection().toString())) === "after returning to the bottom");
+  await page.evaluate(() => getSelection().removeAllRanges());
+  // A finger on the chat holds it too.
+  await page.evaluate(() => scrollToBottom(active));
+  await page.dispatchEvent(".messages:not([hidden])", "pointerdown");
+  const holdTop = await page.evaluate(() => active.list.scrollTop);
+  cur().send(chat("999", "hold4", "Viewer", "701", "arrives under a finger"));
+  await page.waitForSelector('li[data-id="hold4"]');
+  await sleep(100);
+  check("finger on the chat: holds still", (await page.evaluate(() => active.list.scrollTop)) === holdTop);
+  await page.evaluate(() => window.dispatchEvent(new Event("pointerup")));
+  cur().send(chat("999", "hold5", "Viewer", "701", "after lifting the finger"));
+  await page.waitForSelector('li[data-id="hold5"]');
+  await sleep(100);
+  check("finger lifted: follows again", await page.evaluate(() => atBottom(active)));
 }
 
 // =============== recent emotes: only what works in this channel ===============
@@ -877,7 +932,7 @@ followingMode = "ok";
   await page.evaluate(() => openTab("deepchan"));
   await page.waitForSelector('li[data-id="deep249"]');
   await sleep(300);
-  const first = await page.evaluate(() => ({ msgs: active.list.querySelectorAll(".msg").length, divider: active.list.querySelector(".history-divider").textContent, atBottom: nearBottom(active) }));
+  const first = await page.evaluate(() => ({ msgs: active.list.querySelectorAll(".msg").length, divider: active.list.querySelector(".history-divider").textContent, atBottom: atBottom(active) }));
   check("first load: newest 100, divider invites scrolling up, scrolled to the bottom", first.msgs === 100 && first.divider.includes("scroll up for older messages") && first.atBottom && log.history[n0] === "deepchan?limit=100", JSON.stringify(first));
   const anchorTop = await page.evaluate(() => { const l = active.list; l.scrollTop = 0; return null; });
   await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 200, null, { timeout: 5000 });

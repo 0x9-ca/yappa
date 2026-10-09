@@ -21,7 +21,13 @@ every 10 seconds while the channel is live. Gated by Cloudflare Access.
 
 ## Behavior
 
-- Twitch scopes: `user:manage:chat_color`, `user:read:chat`, `user:write:chat`.
+- Twitch scopes: `user:manage:chat_color`, `user:read:chat`, `user:write:chat` (required);
+  `user:read:emotes`, `user:read:moderated_channels`, `moderator:manage:chat_messages`,
+  `moderator:manage:banned_users` (optional: emote list and mod tools).
+- Chat: channel tabs sharing one EventSub WebSocket, 7TV emotes, emote picker, autocomplete
+  (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
+  `/untimeout`, `/clear`) in channels you moderate.
+- Client code lives in `src/client/` and is bundled as text modules (see `rules` in `wrangler.jsonc`).
 - Start requires the channel to be live. The loop stops when the channel has been offline
   for 3 consecutive checks (~30s), when you click Stop, or on unrecoverable errors.
 - Twitch only allows hex colors for **Turbo or Prime** accounts; otherwise the

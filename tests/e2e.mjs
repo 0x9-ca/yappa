@@ -603,6 +603,8 @@ await page.setViewportSize({ width: 390, height: 760 });
     su.host === "usher.ttvnw.net" && su.pathname === "/api/channel/hls/uwoslab.m3u8" && su.searchParams.get("sig") === "sig-uwoslab" && JSON.parse(su.searchParams.get("token")).channel === "uwoslab" &&
     nat.attach[1] === "VIDEO" && nat.worker === false, nat.src);
   check("Native: saved", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).player === "native");
+  const nativeH = await page.$eval("#video", (v) => Math.round(v.getBoundingClientRect().height));
+  check("Native on a phone: plain 16:9 without the embed's extra height (more chat)", nativeH > 200 && nativeH < 260, String(nativeH));
   // Switching to another live tab loads that channel; the old pipeline is torn down.
   await page.evaluate(() => { tabs.get("otherchan").stream = { user_id: "888", title: "x", game_name: "y", viewer_count: 5, started_at: new Date().toISOString() }; });
   await page.click(".tab:nth-child(2) .tab-name");
@@ -637,6 +639,7 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.evaluate(() => setPlayer("embed"));
   await page.waitForSelector("#video iframe", { timeout: 5000 });
   check("Back to Twitch's player", await page.evaluate(() => !document.querySelector("#video video") && JSON.parse(localStorage.getItem("settings")).player === "embed"));
+  check("Embed keeps its 300px minimum height", (await page.$eval("#video", (v) => Math.round(v.getBoundingClientRect().height))) >= 300);
   await page.evaluate(() => { tabs.get("otherchan").stream = null; });
   // The real hls.js must load under the page's CSP (script-src 'self', no eval, no blob: workers).
   const real = await page.evaluate(() => new Promise((resolve) => {

@@ -2178,6 +2178,8 @@ async function renderVideo() {
   const wasHidden = box.hidden;
   if (!pipWindow) box.hidden = false;
   const channel = tab.login;
+  // The 300px minimum height is for Twitch's embed; a plain video can be a plain 16:9.
+  box.classList.toggle("is-native", useNative());
   if (useNative()) {
     if (player) teardownEmbed();
     return renderNative(box, channel, wasHidden);

@@ -10,11 +10,11 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = fileURLToPath(new URL("./output", import.meta.url)); // screenshots + bundle (git-ignored)
 mkdirSync(dir, { recursive: true });
 await build({
-  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
+  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { renderMoved } from "./src/moved.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
   bundle: true, format: "esm", outfile: dir + "/page.bundle.mjs", logLevel: "warning",
   loader: { ".css": "text", ".js": "text", ".png": "base64" },
 });
-const { renderPage, PAGE_HEADERS, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
+const { renderPage, PAGE_HEADERS, renderMoved, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
 const html = renderPage("testuser@example.com");
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
@@ -79,6 +79,8 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/api/chat/badges") return j({});
     if (u.pathname === "/api/chat/emotes") return j({ ok: true, emotes: [{ id: "25", name: "Kappa", group: "Twitch global", animated: false }, { id: "e1", name: "uwoHype", group: "This channel", animated: false }] });
   }
+  // The app's old address (src/moved.ts).
+  if (u.host === "old.test") return route.fulfill({ body: u.pathname === "/" ? renderMoved("yappa.test") : "<p>old</p>", contentType: "text/html" });
   if (u.host === "recent-messages.robotty.de") {
     const chan = u.pathname.split("/").pop();
     const irc = (id, user, uid, text, ts, extra = "") => "@badge-info=;badges=;color=#FF7F50;display-name=" + user + ";emotes=" + (extra.emotes || "") + ";first-msg=" + (extra.first ? 1 : 0) + ";id=" + id + ";room-id=" + ids[chan] + ";tmi-sent-ts=" + ts + ";user-id=" + uid + (extra.reply || "") + " :" + user.toLowerCase() + "!" + user.toLowerCase() + "@x.tmi.twitch.tv PRIVMSG #" + chan + " :" + text;
@@ -675,6 +677,26 @@ await page.evaluate(() => { __player.calls.length = 0; });
 await page.evaluate(() => refreshStreams());
 await sleep(200);
 check("stream refresh doesn't call play() again", !(await page.evaluate(() => __player.calls.some((c) => c[0] === "play"))), JSON.stringify(await page.evaluate(() => __player.calls)));
+
+// =============== moving to a new address ===============
+{
+  const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });
+  const p2 = await ctx.newPage();
+  p2.on("pageerror", (e) => errors.push("p2: " + e.message));
+  await p2.goto("https://old.test/seed");
+  await p2.evaluate((st) => { localStorage.setItem("settings", st); localStorage.setItem("tabs", '["otherchan","uwoslab"]'); localStorage.setItem("lastChannel", "otherchan"); }, oldSettings);
+  await page.evaluate(() => localStorage.clear()); // the new address starts empty
+  await p2.goto("https://old.test/");
+  await p2.waitForURL("https://yappa.test/**");
+  await p2.waitForFunction(() => document.querySelectorAll(".tab").length === 2, null, { timeout: 5000 });
+  const moved = await p2.evaluate(() => ({ hash: location.hash, rules: settings.rules, tabs: localStorage.getItem("tabs"), active: active && active.login }));
+  check("old address carries tabs and settings to the new one", moved.hash === "#otherchan" && moved.rules[0].phrase === "moved" && moved.tabs === '["otherchan","uwoslab"]' && moved.active === "otherchan", JSON.stringify(moved));
+  // An import link never overwrites a browser that already has data.
+  await p2.goto("https://yappa.test/?reload#import=" + encodeURIComponent(JSON.stringify({ settings: JSON.stringify({ rules: [{ phrase: "evil", user: "" }] }) })));
+  await p2.waitForFunction(() => typeof settings !== "undefined");
+  check("import doesn't overwrite existing data", (await p2.evaluate(() => settings.rules[0].phrase)) === "moved" && !(await p2.evaluate(() => location.hash)).includes("import"));
+  await p2.close();
+}
 
 await browser.close();
 if (errors.length) console.log("Browser errors:", errors);

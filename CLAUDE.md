@@ -2,6 +2,9 @@
 
 A personal Twitch chat client (tabs, video, 7TV/BTTV/FFZ, mod tools, chat-color cycling) running
 as a Cloudflare Worker behind Cloudflare Access at https://yappa.0x9.ca. Installable as a PWA.
+The old address, https://yappa.0x9.ca, still routes to the Worker. Its page (`src/moved.ts`) forwards
+to `APP_HOST`, carrying the browser's localStorage in the URL fragment; `app.js` imports it into a
+fresh browser. API routes still answer there, so copies of the app that are already open keep working.
 The Worker is still named `yappa` (the project started as a chat-color prank).
 
 ## Commands
@@ -54,5 +57,5 @@ Tokens never reach the browser.
 ## Rules
 
 - **Never put the user's real name or Twitch login anywhere in the repo:** code, placeholders, examples, test data, comments or commit messages. Use neutral stand-ins (`testuser`, "your nickname"). Grep diffs for it (as a whole word) before committing.
-- Config (`wrangler.jsonc` vars): `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` (the existing Access app's audience tag) and `TWITCH_CLIENT_ID`. Secret: `TWITCH_CLIENT_SECRET`. The Twitch app's redirect URL is `https://yappa.0x9.ca/auth/callback`.
+- Config (`wrangler.jsonc` vars): `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` (the existing Access app's audience tag) and `TWITCH_CLIENT_ID`. Secret: `TWITCH_CLIENT_SECRET`. Var `APP_HOST` is the canonical hostname. The Twitch app's redirect URL is `https://yappa.0x9.ca/auth/callback`. The OAuth redirect is built from the request's origin, so every hostname in use must be registered with Twitch and covered by the Access app (same AUD).
 - There is no git remote. Commits are local unless the user asks otherwise.

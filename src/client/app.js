@@ -30,6 +30,22 @@ const sentIds = new Set();     // message ids sent from this app (for color cycl
 const inflightSends = new Set();
 let sending = false;
 
+// Arriving from the app's old address with that browser's data (see src/moved.ts). Only
+// fills a fresh browser, so a crafted link can't overwrite what's already here.
+(() => {
+  const m = /^#import=(.*)$/.exec(location.hash);
+  if (!m) return;
+  try {
+    const data = JSON.parse(decodeURIComponent(m[1]));
+    if (safeGet("settings") == null && safeGet("tabs") == null) {
+      for (const k of ["settings", "tabs", "lastChannel", "recentEmotes", "dismissedPins"]) {
+        if (typeof data[k] === "string" && data[k].length < 100000) safeSet(k, data[k]);
+      }
+    }
+  } catch {}
+  history.replaceState(null, "", "/");
+})();
+
 const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true };
 let settings = loadSettings();
 function loadSettings() {
@@ -306,6 +322,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("hashchange", () => {
+  if (location.hash.startsWith("#import=")) { history.replaceState(null, "", "#" + (active ? active.login : "")); return; }
   const h = normalizeChannel(location.hash.slice(1));
   if (h && me && (!active || h !== active.login)) openTab(h);
 });

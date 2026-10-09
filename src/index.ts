@@ -1,4 +1,5 @@
 import { verifyAccess } from "./access";
+import { renderMoved } from "./moved";
 import { PAGE_HEADERS, renderPage } from "./page";
 import { staticFiles } from "./static";
 import { authorizeUrl } from "./twitch";
@@ -32,6 +33,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (!user) return new Response("Forbidden", { status: 403 });
 
   const url = new URL(request.url);
+  // The old address: send the page (only) to the new one. API calls keep working so
+  // already-open copies of the app don't break mid-session.
+  if (env.APP_HOST && url.hostname !== env.APP_HOST && request.method === "GET" && url.pathname === "/") {
+    return new Response(renderMoved(env.APP_HOST), {
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY" },
+    });
+  }
   const file = request.method === "GET" ? staticFiles[url.pathname] : undefined;
   if (file) {
     return new Response(file.body, { headers: { "Content-Type": file.type, "Cache-Control": file.cache } });

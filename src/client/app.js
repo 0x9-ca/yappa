@@ -91,12 +91,6 @@ function el(tag, cls, text) {
   return n;
 }
 
-function escapeText(t) {
-  const d = document.createElement("div");
-  d.textContent = t;
-  return d.innerHTML;
-}
-
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
 
@@ -107,11 +101,28 @@ async function api(path, body) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
   } catch {
+    if (await sessionExpired()) return { ok: false, error: "Your sign-in expired. Reload to sign in again." };
     // Offline, or the phone just woke up: callers treat this like any failed request.
     return { ok: false, error: "Network error; check your connection.", retry: true };
   }
+  if (!$("expired").hidden) show("expired", false); // signed in again (e.g. in another tab)
   try { return await res.json(); } catch { return { ok: false, error: "Request failed (" + res.status + ")", retry: res.status >= 500 }; }
 }
+
+// When the Cloudflare Access session ends, Access answers every request with a redirect to
+// its login page. A page can't follow that cross-origin, so each call just looks like a
+// network error, forever. Ask for a file with the redirect left unfollowed to tell the two apart.
+let sessionProbe = null;
+function sessionExpired() {
+  if (navigator.onLine === false) return Promise.resolve(false);
+  sessionProbe = sessionProbe || fetch("/manifest.webmanifest", { redirect: "manual", cache: "no-store" })
+    .then((r) => r.type === "opaqueredirect")
+    .catch(() => false)
+    .then((expired) => { show("expired", expired); return expired; })
+    .finally(() => { setTimeout(() => { sessionProbe = null; }, 5000); });
+  return sessionProbe;
+}
+$("expired-reload").addEventListener("click", () => location.reload());
 
 function setError(msg) { $("error").textContent = msg || ""; show("error", !!msg); }
 const qsError = new URLSearchParams(location.search).get("error");
@@ -147,7 +158,7 @@ async function refreshStatus() {
   if (tw) $("settings-btn").title = "Settings (signed in to Twitch as " + tw.login + ")";
 
   renderCycle(s.cycle);
-  if (first && tw && tw.missingScopes.length === 0) restoreTabs(null);
+  if (first && tw && tw.missingScopes.length === 0) restoreTabs();
 }
 
 function renderCycle(cycle) {
@@ -174,8 +185,7 @@ cycleBtn.addEventListener("click", async () => {
 
 async function logout() {
   for (const t of [...tabs.values()]) closeTab(t, { keepSaved: true });
-  hideChatEmbed();
-  for (const login of [...embedFrames.keys()]) dropChatEmbed(login);
+  hideChatEmbed(); // (closing each tab already dropped its loaded chat)
   dropSocket();
   await api("/auth/logout", {});
   status = null;
@@ -189,13 +199,13 @@ function saveTabs() {
   if (active) safeSet("lastChannel", active.login);
 }
 
-function restoreTabs(cycling) {
+function restoreTabs() {
   let saved = [];
   try { saved = JSON.parse(safeGet("tabs") || "[]"); } catch {}
   if (!Array.isArray(saved)) saved = [];
   const fromHash = normalizeChannel(location.hash.slice(1));
   const legacy = safeGet("lastChannel");
-  const names = [...saved, fromHash, cycling, saved.length ? null : legacy].map(normalizeChannel).filter(Boolean);
+  const names = [...saved, fromHash, saved.length ? null : legacy].map(normalizeChannel).filter(Boolean);
   for (const n of names) openTab(n, false);
   const pick = (fromHash && tabs.get(fromHash)) || tabs.get(normalizeChannel(legacy)) || tabs.values().next().value;
   if (pick) activate(pick);
@@ -610,6 +620,7 @@ function updateTitle() {
   }
 }
 
+let joinRetryMs = 5000;
 async function subscribeTab(tab) {
   const sid = sessionId;
   if (!sid || tab.joining === sid) return;
@@ -623,9 +634,16 @@ async function subscribeTab(tab) {
   if (sid !== sessionId) return; // the socket changed; the new welcome resubscribes
   if (!r.ok) {
     sysLine(tab, "Couldn't join #" + tab.login + ": " + r.error, "err");
-    if (r.retry) setTimeout(() => { if (tabs.has(tab.login) && !tab.joined) subscribeTab(tab); }, 10000);
+    // Network blips, Twitch 5xx/429 and "the server is updating" pass; a wrong channel name or
+    // a missing permission won't, so those aren't retried.
+    const transient = r.retry || /\((429|5\d\d)\)/.test(r.error || "");
+    tab.joinTries = (tab.joinTries || 0) + 1;
+    if (transient && tab.joinTries <= 4) {
+      setTimeout(() => { if (tabs.has(tab.login) && !tab.joined) subscribeTab(tab); }, Math.min(60000, joinRetryMs * 2 ** (tab.joinTries - 1)));
+    }
     return;
   }
+  tab.joinTries = 0;
   retries = 0;
   const rejoin = !!tab.broadcaster;
   // Pin the backfill window now: live messages arriving meanwhile must not narrow it.
@@ -706,7 +724,8 @@ function keepScroll(tab, fn) {
 /** One divider above the oldest loaded history, saying whether more can be loaded. */
 function placeHistoryDivider(tab) {
   let d = tab.list.querySelector(".history-divider");
-  const first = [...tab.list.children].find((n) => n.dataset.recv);
+  let first = tab.list.firstElementChild;
+  while (first && !first.dataset.recv) first = first.nextElementSibling;
   if (!first) { if (d) d.remove(); return; }
   if (!d) d = el("li", "sys history-divider");
   d.textContent = tab.historyDone
@@ -748,15 +767,17 @@ async function backfill(tab, { since, until, marker }) {
 
 /** Keeps loading pages until the visible list can scroll (else you can't scroll up for more). */
 function fillScreen(tab) {
-  if (tab === active && !tab.list.hidden && tab.list.scrollHeight <= tab.list.clientHeight + 400) loadOlder(tab).then(() => {
-    if (!tab.historyDone && !tab.olderRetryAt) fillScreen(tab);
+  // Only continue after a page actually loaded: a call that returns early (history switched
+  // off, another load already running) must not re-enter, or this spins without yielding.
+  if (tab === active && !tab.list.hidden && tab.list.scrollHeight <= tab.list.clientHeight + 400) loadOlder(tab).then((loaded) => {
+    if (loaded && !tab.historyDone) fillScreen(tab);
   });
 }
 
-/** Scrolled near the top: fetch the next page of older history. */
+/** Scrolled near the top: fetch the next page of older history. Resolves true if a page was added. */
 async function loadOlder(tab) {
-  if (settings.history !== true || tab.loadingOlder || tab.historyDone || !tab.historyBefore) return;
-  if (Date.now() < (tab.olderRetryAt || 0)) return;
+  if (settings.history !== true || tab.loadingOlder || tab.historyDone || !tab.historyBefore) return false;
+  if (Date.now() < (tab.olderRetryAt || 0)) return false;
   tab.loadingOlder = true;
   const spinner = el("li", "sys history-loading", "Loading earlier messages…");
   spinner.dataset.ts = "0";
@@ -771,6 +792,7 @@ async function loadOlder(tab) {
     placeHistoryDivider(tab);
   });
   tab.loadingOlder = false;
+  return !!lines;
 }
 
 /** The service's guidelines: ask before using it, say what it does, and link to it. */
@@ -880,12 +902,17 @@ async function loadTabExtras(tab) {
     api("/api/chat/emotes?broadcaster_id=" + encodeURIComponent(id)),
     api("/api/chat/cheermotes?broadcaster_id=" + encodeURIComponent(id)),
   ]);
-  tab.badges = badges || {};
+  // The server answers {ok: false} (not an empty list) when Twitch couldn't be reached; ask
+  // again at the next (re)join instead of living without badges or cheermotes all session.
+  const badgesFailed = !!(badges && badges.ok === false);
+  const failed = badgesFailed || !Array.isArray(cheermotes);
+  tab.badges = badgesFailed || !badges ? {} : badges;
   tab.ext = ext;
   tab.twitchEmotes = emotes;
   tab.cheermotes = new Map((Array.isArray(cheermotes) ? cheermotes : []).map((c) => [c.prefix.toLowerCase(), c]));
+  if (failed) tab.loadedExtras = false;
   const counts = EXT_SOURCES.map((src) => [src, [...ext.values()].filter((e) => e.source === src).length]).filter(([, n]) => n);
-  if (counts.length) sysLine(tab, "Channel emotes: " + counts.map(([src, n]) => n + " " + src).join(" · ") + ".");
+  if (counts.length && !tab.emotesLogged) { tab.emotesLogged = true; sysLine(tab, "Channel emotes: " + counts.map(([src, n]) => n + " " + src).join(" · ") + "."); }
   if (tab === active && !$("picker").hidden) renderPicker();
 }
 
@@ -1098,17 +1125,20 @@ function insertByTime(tab, node, ts) {
 /** Drops the oldest items past MAX_MESSAGES; scrolling up can load them again from history. */
 function trimList(tab) {
   const list = tab.list;
-  if (list.children.length <= MAX_MESSAGES) return;
-  while (list.children.length > MAX_MESSAGES) {
-    const n = list.firstChild;
+  if (list.childElementCount <= MAX_MESSAGES) return;
+  while (list.childElementCount > MAX_MESSAGES) {
+    const n = list.firstElementChild;
     if (n.dataset.id) tab.seen.delete(n.dataset.id); // so a reload from history isn't skipped
     n.remove();
   }
-  const first = [...list.children].find((n) => n.dataset.ts && n.dataset.ts !== "0");
-  if (first && settings.history === true) {
-    tab.historyBefore = Number(first.dataset.recv || first.dataset.ts);
-    tab.historyDone = false;
-    placeHistoryDivider(tab);
+  if (settings.history !== true) return;
+  for (let n = list.firstElementChild; n; n = n.nextElementSibling) {
+    if (n.dataset.ts && n.dataset.ts !== "0") {
+      tab.historyBefore = Number(n.dataset.recv || n.dataset.ts);
+      tab.historyDone = false;
+      placeHistoryDivider(tab);
+      return;
+    }
   }
 }
 
@@ -1306,8 +1336,9 @@ function renderFragments(tab, parent, fragments, skipPrefix, hasBits) {
   }
 }
 
+const timeFormat = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
 function timeLabel(ts) {
-  return new Date(ts || Date.now()).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return timeFormat.format(ts || Date.now());
 }
 
 function nameNode(ev) {
@@ -1609,8 +1640,11 @@ function allEmotes(tab) {
 /** An emote usable in this tab by that name ({ name, url }), Twitch first, else null. */
 function emoteInChannel(tab, name) {
   if (!tab) return null;
-  if (tab.twitchEmotes && tab.twitchEmotes.ok) {
-    const e = tab.twitchEmotes.emotes.find((x) => x.name === name);
+  const te = tab.twitchEmotes;
+  if (te && te.ok) {
+    // Looked up for every word you type, so index the list by name once.
+    te.byName = te.byName || new Map(te.emotes.map((x) => [x.name, x]));
+    const e = te.byName.get(name);
     if (e) return { name, url: twitchEmoteUrl(e) };
   }
   const ext = findExt(tab, name);
@@ -1682,12 +1716,15 @@ function renderPicker() {
   for (const src of EXT_SOURCES) add(src + " · global", ext(extGlobal, src));
   add("Twitch · other", tw("Other"));
 
-  let note = "";
+  let note = null;
   const te = tab && tab.twitchEmotes;
   if (tab && tab.broadcaster && !te) note = "Loading your Twitch emotes…";
-  else if (te && te.needsScope) note = '<a href="/auth/login">Reconnect Twitch</a> to include your Twitch emotes.';
-  else if (te && !te.ok) note = "Couldn't load Twitch emotes: " + escapeText(te.error || "unknown error");
-  $("picker-note").innerHTML = note;
+  else if (te && te.needsScope) {
+    const a = el("a", null, "Reconnect Twitch");
+    a.href = "/auth/login";
+    note = [a, " to include your Twitch emotes."];
+  } else if (te && !te.ok) note = "Couldn't load Twitch emotes: " + (te.error || "unknown error");
+  $("picker-note").replaceChildren(...[].concat(note || []));
   show("picker-note", !!note);
 
   const list = $("picker-list");
@@ -1728,6 +1765,26 @@ function insertEmote(name) {
 }
 
 $("emote-btn").addEventListener("click", () => ($("picker").hidden ? openPicker() : closePicker()));
+
+// Rebuilding the grid (thousands of buttons) on every keystroke is slow on phones.
+let pickerTimer = null;
+$("emote-search").addEventListener("input", () => { clearTimeout(pickerTimer); pickerTimer = setTimeout(renderPicker, 120); });
+$("emote-search").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closePicker(); composer.focus(); }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    clearTimeout(pickerTimer);
+    renderPicker(); // so Enter picks from what was just typed
+    const first = $("picker-list").querySelector(".grid button");
+    if (first) first.click();
+  }
+});
+$("picker-list").addEventListener("click", (e) => {
+  const b = e.target.closest(".grid button");
+  if (!b) return;
+  insertEmote(b.dataset.name);
+  rememberEmote(b.dataset.name, b.dataset.url);
+});
 
 // ---------- Bits and channel points: hand off to Twitch ----------
 
@@ -1842,22 +1899,6 @@ function dropChatEmbed(login) {
 $("embed-close").addEventListener("click", hideChatEmbed);
 $("embed-modal").addEventListener("click", (e) => { if (e.target === $("embed-modal")) hideChatEmbed(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("embed-modal").hidden) hideChatEmbed(); });
-$("emote-search").addEventListener("input", renderPicker);
-$("emote-search").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closePicker(); composer.focus(); }
-  if (e.key === "Enter") {
-    e.preventDefault();
-    const first = $("picker-list").querySelector(".grid button");
-    if (first) first.click();
-  }
-});
-$("picker-list").addEventListener("click", (e) => {
-  const b = e.target.closest(".grid button");
-  if (!b) return;
-  insertEmote(b.dataset.name);
-  rememberEmote(b.dataset.name, b.dataset.url);
-});
-
 // ---------- autocomplete ----------
 
 let suggestions = [];
@@ -2199,7 +2240,10 @@ $("send-form").addEventListener("submit", async (e) => {
   const r = await pending;
   inflightSends.delete(pending);
   sending = false;
-  if (r.ok && r.messageId) sentIds.add(r.messageId);
+  if (r.ok && r.messageId) {
+    sentIds.add(r.messageId);
+    if (sentIds.size > 200) sentIds.delete(sentIds.values().next().value);
+  }
   updateComposer();
   if (r.ok) {
     lastSent = text;
@@ -2241,7 +2285,7 @@ async function refreshStreams() {
   const ids = [...tabs.values()].filter((t) => t.broadcaster).map((t) => t.broadcaster.id);
   if (!ids.length || document.hidden) return;
   const list = await api("/api/streams?ids=" + ids.join(","));
-  if (!Array.isArray(list)) return;
+  if (!Array.isArray(list)) return; // a failed lookup says nothing about who's live: keep what we had
   const byId = new Map(list.map((st) => [st.user_id, st]));
   for (const t of tabs.values()) {
     if (!t.broadcaster) continue;
@@ -2564,7 +2608,9 @@ function hlsErrorText(data) {
   const code = data.response && data.response.code;
   // Status 0 means the browser refused the response, usually missing CORS headers.
   const http = code === 0 ? " (blocked by the browser, likely CORS)" : code ? " (HTTP " + code + ")" : "";
-  return (data.details || data.type || "playback error") + http + (data.url ? " loading " + new URL(data.url).host : "");
+  let host = "";
+  try { host = data.url ? " loading " + new URL(data.url).host : ""; } catch {}
+  return (data.details || data.type || "playback error") + http + host;
 }
 
 function mediaErrorText(err) {
@@ -2827,8 +2873,12 @@ function filterNode(node) {
 }
 
 function applyFilter() {
-  for (const t of tabs.values()) for (const n of t.list.children) if (t !== active || !filterText) n.classList.remove("filtered");
-  if (!active || !filterText) { $("search-count").textContent = ""; return; }
+  // Only the visible list: another tab re-filters itself when it's activated.
+  if (!active || !filterText) {
+    if (active) for (const n of active.list.children) n.classList.remove("filtered");
+    $("search-count").textContent = "";
+    return;
+  }
   let shown = 0;
   for (const n of active.list.children) { filterNode(n); if (!n.classList.contains("filtered")) shown++; }
   $("search-count").textContent = shown + " match" + (shown === 1 ? "" : "es");
@@ -2943,10 +2993,18 @@ function setHidden(u, hide) {
 
 // ---------- highlights, notifications, sound ----------
 
+const phraseRegexes = new Map(); // phrase -> RegExp (checked for every message, so compile once)
+
 /** Whole-word/phrase, case-insensitive. */
 function containsPhrase(text, phrase) {
-  const esc = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  return new RegExp("(^|[^\\p{L}\\p{N}_])" + esc + "($|[^\\p{L}\\p{N}_])", "iu").test(text || "");
+  let re = phraseRegexes.get(phrase);
+  if (!re) {
+    const esc = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    re = new RegExp("(^|[^\\p{L}\\p{N}_])" + esc + "($|[^\\p{L}\\p{N}_])", "iu");
+    if (phraseRegexes.size > 200) phraseRegexes.clear();
+    phraseRegexes.set(phrase, re);
+  }
+  return re.test(text || "");
 }
 
 /** What to type to @mention someone: their display name, unless it isn't their login (localized names). */
@@ -3211,7 +3269,6 @@ if (vv) {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 applySettings();
-try { localStorage.removeItem("dismissedPins"); } catch {} // left over from the removed pinned-message feature
 loadExtGlobal();
 refreshStatus();
 // Everything that changes the status from here refreshes it (sending, the cycle toggle,

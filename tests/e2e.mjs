@@ -31,7 +31,7 @@ await page.addInitScript(() => {
 });
 // Console errors the checks provoke on purpose: the CSP check, the 503 status, the aborted request.
 // The CSP one is allowed once, so a real violation by the app still fails the run.
-const expectedErrors = [/status of 503/, /net::ERR_FAILED/];
+const expectedErrors = [/status of 503/, /status of 502/, /net::ERR_FAILED/];
 let allowedCspErrors = 1;
 const expected = (t) => expectedErrors.some((re) => re.test(t)) || (/Content Security Policy/.test(t) && allowedCspErrors-- > 0);
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && !expected(m.text()) && errors.push(m.text()));
@@ -46,6 +46,8 @@ let statusDown = false, slowSend = 0;
 const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
 let followingMode = "ok";
 let embedScriptFails = false;
+let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
+const subFailures = []; // queued error messages for the next /api/chat/subscribe calls
 const svg = (h) => `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><circle cx="28" cy="28" r="26" fill="hsl(${h},70%,55%)"/></svg>`;
 await ctx.route("**/*", async (route) => {
   const u = new URL(route.request().url());
@@ -62,10 +64,15 @@ await ctx.route("**/*", async (route) => {
         attachMedia(v) { this.calls.push(["attachMedia", v.tagName]); } destroy() { this.calls.push(["destroy"]); this.destroyed = true; }
         fire(ev, data) { this.handlers[ev] && this.handlers[ev](ev, data); } };
       Hls.Events = { ERROR: "hlsError", MANIFEST_PARSED: "hlsManifestParsed" };` });
+    // An expired Cloudflare Access session: every request is redirected to Access's login page.
+    if (u.pathname === "/manifest.webmanifest" && sessionExpiredMock) return route.fulfill({ status: 302, headers: { location: "https://access.example.com/login" } });
     const f = staticFiles[u.pathname];
     if (f) return route.fulfill({ body: f.type === "image/png" ? Buffer.from(f.body, "base64") : f.body, contentType: f.type });
     if (u.pathname === "/api/cycle") { cycle.enabled = body().enabled; if (cycle.enabled) { cycle.lastColor = "#11AA22"; cycle.changes++; } log.cycle.push(cycle.enabled); return j({ ok: true, cycle }); }
     if (u.pathname === "/api/netfail") return route.abort();
+    if (streamsFail && u.pathname === "/api/streams") return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
+    if (extrasFail && (u.pathname === "/api/chat/badges" || u.pathname === "/api/chat/cheermotes")) return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
+    if (u.pathname === "/api/chat/subscribe" && subFailures.length) { log.subs.push("failed:" + route.request().postDataJSON().channel); return route.fulfill({ status: 502, json: { ok: false, error: subFailures.shift() } }); }
     if (u.pathname === "/api/following") {
       log.following = (log.following || 0) + 1;
       if (followingMode === "scope") return j({ ok: false, error: "Missing user:read:follows", needsScope: true });
@@ -1191,6 +1198,89 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const ev = ircToEvent("@id=d1;tmi-sent-ts=1;user-id=9;display-name=X;rm-deleted=1 :x!x@x PRIVMSG #c :gone");
   return ev.deleted === true;
 }));
+
+// =============== review fixes (second pass) ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  // Expired Access session: say so, instead of "network error" forever.
+  sessionExpiredMock = true;
+  await page.evaluate(() => { sessionProbe = null; });
+  const exp = await page.evaluate(() => api("/api/netfail"));
+  check("expired sign-in is detected and explained (with a reload button)", exp.ok === false && /sign-in expired/.test(exp.error) && !(await page.$eval("#expired", (b) => b.hidden)) && !!(await page.$("#expired-reload")), JSON.stringify(exp));
+  sessionExpiredMock = false;
+  await page.evaluate(() => { sessionProbe = null; });
+  const offline = await page.evaluate(() => api("/api/netfail"));
+  check("a plain network error is still just a network error", offline.retry === true && /Network error/.test(offline.error));
+  await page.evaluate(() => api("/api/status"));
+  check("banner clears once requests work again", await page.$eval("#expired", (b) => b.hidden));
+
+  // A failed live-status lookup must not mark everyone offline (and pause the video).
+  await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "t", game_name: "g", viewer_count: 1, started_at: new Date().toISOString() }; });
+  streamsFail = true;
+  await page.evaluate(() => refreshStreams());
+  await sleep(200);
+  check("failed live-status lookup keeps the previous state", await page.evaluate(() => !!tabs.get("uwoslab").stream));
+  streamsFail = false;
+
+  // A failed badge/cheermote lookup is retried at the next join, not forgotten all session.
+  extrasFail = true;
+  await page.evaluate(() => { const t = tabs.get("uwoslab"); t.loadedExtras = true; return loadTabExtras(t); });
+  check("failed badges/cheermotes lookup → empty for now, retried next join", await page.evaluate(() => tabs.get("uwoslab").loadedExtras === false && Object.keys(tabs.get("uwoslab").badges).length === 0));
+  extrasFail = false;
+  await page.evaluate(() => { const t = tabs.get("uwoslab"); return loadTabExtras(t).then(() => { t.loadedExtras = true; }); });
+  check("…and a later success sticks", await page.evaluate(() => tabs.get("uwoslab").loadedExtras === true));
+
+  // Joining: transient failures retry, permanent ones don't.
+  await page.evaluate(() => { joinRetryMs = 100; });
+  ids.retrychan = "555";
+  const joinsBefore = log.subs.length;
+  subFailures.push("Subscribe to channel.chat.message failed (503): temporarily unavailable");
+  await page.evaluate(() => openTab("retrychan", false));
+  await page.waitForFunction(() => tabs.get("retrychan") && tabs.get("retrychan").joined, null, { timeout: 8000 });
+  check("transient join failure (503) is retried and succeeds", log.subs.slice(joinsBefore).filter((x) => x.includes("retrychan")).join(",") === "failed:retrychan,retrychan@" + log.subs.at(-1).split("@")[1], JSON.stringify(log.subs.slice(joinsBefore)));
+  await page.evaluate(() => closeTab(tabs.get("retrychan")));
+  ids.nopechan = "556";
+  const before2 = log.subs.length;
+  subFailures.push("No Twitch channel named nopechan.");
+  await page.evaluate(() => openTab("nopechan", false));
+  await sleep(800);
+  check("a permanent join failure ('No Twitch channel…') is not retried", log.subs.slice(before2).length === 1 && !(await page.evaluate(() => tabs.get("nopechan").joined)), JSON.stringify(log.subs.slice(before2)));
+  await page.evaluate(() => closeTab(tabs.get("nopechan")));
+
+  // History auto-fill must never spin when its load returns early (history off, load in progress).
+  const spun = await page.evaluate(async () => {
+    const t = active;
+    Object.defineProperty(t.list, "scrollHeight", { get: () => 100, configurable: true });
+    t.historyDone = false; t.historyBefore = 123;
+    const was = settings.history;
+    settings.history = false;
+    fillScreen(t);                         // before the fix this re-entered itself without yielding, freezing the page
+    await new Promise((r) => setTimeout(r, 50));
+    settings.history = was;
+    delete t.list.scrollHeight;
+    return "responsive";
+  });
+  check("history auto-fill can't freeze the page when history is off", spun === "responsive");
+  check("loadOlder reports whether it loaded", await page.evaluate(async () => { const was = settings.history; settings.history = false; const r = await loadOlder(active); settings.history = was; return r === false; }));
+
+  // Search filtering: another tab's stale filter marks don't linger.
+  await page.evaluate(() => { document.getElementById("search-btn").click(); });
+  await page.fill("#search", "zzzz-no-match");
+  await page.evaluate(() => { filterText = "zzzz-no-match"; applyFilter(); });
+  const hiddenA = await page.evaluate(() => active.list.querySelectorAll(".filtered").length);
+  await page.click(".tab:nth-child(2) .tab-name");
+  await page.click("#search-close");
+  await page.click(".tab:first-child .tab-name");
+  check("filter marks are cleared when you come back to a tab after clearing the search", hiddenA > 0 && (await page.evaluate(() => active.list.querySelectorAll(".filtered").length)) === 0, String(hiddenA));
+
+  // Emote picker: Enter picks from what was just typed (the grid is debounced).
+  await page.evaluate(() => composer.setText(""));
+  await page.click("#emote-btn");
+  await page.fill("#emote-search", "uwoH");
+  await page.press("#emote-search", "Enter");
+  check("emote picker: Enter right after typing picks the matching emote", (await page.evaluate(() => composer.getText())).startsWith("uwoHype"), await page.evaluate(() => composer.getText()));
+  await page.evaluate(() => { composer.setText(""); closePicker(); });
+}
 
 // =============== moving to a new address ===============
 {

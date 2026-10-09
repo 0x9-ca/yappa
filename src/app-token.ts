@@ -49,32 +49,22 @@ async function withAppToken<T>(env: Env, origin: string, fn: (token: string) => 
   }
 }
 
-export async function streams(env: Env, origin: string, ids: string[]): Promise<unknown[]> {
+/**
+ * These return null when Twitch can't be reached, which callers must not confuse with a real
+ * empty answer: "no live streams" would mark every channel offline and pause the video.
+ */
+async function lookup<T>(env: Env, origin: string, fn: (token: string) => Promise<T>): Promise<T | null> {
   try {
-    return await withAppToken(env, origin, (t) => getStreamsByIds(env, t, ids));
+    return await withAppToken(env, origin, fn);
   } catch (err) {
     console.error("app-token lookup failed", (err as Error).message);
-    return [];
+    return null;
   }
 }
 
-export async function cheermotes(env: Env, origin: string, broadcasterId: string): Promise<unknown[]> {
-  try {
-    return await withAppToken(env, origin, (t) => getCheermotes(env, t, broadcasterId));
-  } catch (err) {
-    console.error("app-token lookup failed", (err as Error).message);
-    return [];
-  }
-}
-
-export async function badges(env: Env, origin: string, broadcasterId: string): Promise<Record<string, { url: string; title: string }>> {
-  try {
-    return await withAppToken(env, origin, (t) => getBadges(env, t, broadcasterId));
-  } catch (err) {
-    console.error("app-token lookup failed", (err as Error).message);
-    return {};
-  }
-}
+export const streams = (env: Env, origin: string, ids: string[]) => lookup(env, origin, (t) => getStreamsByIds(env, t, ids));
+export const cheermotes = (env: Env, origin: string, broadcasterId: string) => lookup(env, origin, (t) => getCheermotes(env, t, broadcasterId));
+export const badges = (env: Env, origin: string, broadcasterId: string) => lookup(env, origin, (t) => getBadges(env, t, broadcasterId));
 
 /** Clip details for link cards in chat. */
 export async function clip(env: Env, origin: string, id: string): Promise<{ ok: true; clip: unknown } | { ok: false; error: string }> {

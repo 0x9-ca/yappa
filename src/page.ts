@@ -53,6 +53,7 @@ export function renderPage(user: string): string {
     <nav class="tabs" id="tabs" aria-label="Open channels" hidden></nav>
     <div id="banners">
       <div class="banner error" id="error" hidden></div>
+      <div class="banner error" id="expired" hidden>Your sign-in has expired. <button class="link" id="expired-reload" type="button">Reload to sign in again</button></div>
       <div class="banner info" id="reauth" hidden>Twitch needs extra permissions to read and send chat. <a href="/auth/login">Reconnect Twitch</a></div>
       <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels and mod tools.</div>
       <div class="banner info" id="cycle-status" hidden></div>

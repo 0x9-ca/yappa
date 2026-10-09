@@ -101,8 +101,7 @@ export class ColorLoop extends DurableObject<Env> {
   }
 
   async status(): Promise<Status> {
-    let [tokens, cycle] = await Promise.all([this.getTokens(), this.getCycle()]);
-    if (tokens && !tokens.scopes) tokens = await this.backfillScopes(tokens);
+    const [tokens, cycle] = await Promise.all([this.getTokens(), this.getCycle()]);
     return {
       twitch: tokens
         ? {
@@ -114,20 +113,6 @@ export class ColorLoop extends DurableObject<Env> {
         : null,
       cycle,
     };
-  }
-
-  /** Tokens saved by older code lack the scope list; ask Twitch for it. */
-  private async backfillScopes(tokens: Tokens): Promise<Tokens> {
-    try {
-      const info = await this.withToken((t) => validateToken(t.accessToken));
-      const current = await this.getTokens();
-      if (!current) return tokens;
-      const next = { ...current, scopes: info.scopes, validatedAt: Date.now() };
-      await this.ctx.storage.put("tokens", next);
-      return next;
-    } catch {
-      return tokens;
-    }
   }
 
   async connectTwitch(code: string, redirectUri: string): Promise<void> {
@@ -365,8 +350,6 @@ export class ColorLoop extends DurableObject<Env> {
     }
   }
 
-
-
   /**
    * The user chatted from somewhere else (e.g. the official app): next color, if cycling.
    * Every open copy of the app reports the same message, so each id only counts once.
@@ -383,8 +366,6 @@ export class ColorLoop extends DurableObject<Env> {
     if (this.colored.size > 500) this.colored.delete(this.colored.values().next().value!);
     return true;
   }
-
-
 
   /** Channels the user follows, and which of them are live (for the channel picker). */
   async followed(): Promise<({ ok: true } & Following) | { ok: false; error: string; needsScope?: boolean }> {

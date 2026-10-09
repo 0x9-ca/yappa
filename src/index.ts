@@ -13,6 +13,11 @@ function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+/** A lookup's result, or a 502 the client can tell apart from a genuinely empty answer. */
+function orFail(data: unknown): Response {
+  return data === null ? json({ ok: false, error: "Couldn't reach Twitch." }, 502) : json(data);
+}
+
 function getCookie(request: Request, name: string): string | undefined {
   const header = request.headers.get("Cookie") ?? "";
   for (const part of header.split(";")) {
@@ -36,7 +41,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   // The old address: send the page (only) to the new one. API calls keep working so
   // already-open copies of the app don't break mid-session.
-  if (env.APP_HOST && url.hostname !== env.APP_HOST && request.method === "GET" && url.pathname === "/") {
+  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1"; // wrangler dev
+  if (env.APP_HOST && !isLocal && url.hostname !== env.APP_HOST && request.method === "GET" && url.pathname === "/") {
     return new Response(renderMoved(env.APP_HOST), {
       headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY" },
     });
@@ -55,17 +61,17 @@ async function handle(request: Request, env: Env): Promise<Response> {
   switch (`${request.method} ${url.pathname}`) {
     case "GET /api/streams": {
       const ids = (url.searchParams.get("ids") ?? "").split(",").filter((x) => /^\d+$/.test(x)).slice(0, 100);
-      return json(await publicApi.streams(env, url.origin, ids));
+      return orFail(await publicApi.streams(env, url.origin, ids));
     }
     case "GET /api/chat/cheermotes": {
       const id = url.searchParams.get("broadcaster_id");
-      if (!id) return json([], 400);
-      return json(await publicApi.cheermotes(env, url.origin, id));
+      if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);
+      return orFail(await publicApi.cheermotes(env, url.origin, id));
     }
     case "GET /api/chat/badges": {
       const id = url.searchParams.get("broadcaster_id");
-      if (!id) return json({}, 400);
-      return json(await publicApi.badges(env, url.origin, id));
+      if (!id) return json({ ok: false, error: "Missing broadcaster_id." }, 400);
+      return orFail(await publicApi.badges(env, url.origin, id));
     }
     case "GET /api/chat/clip": {
       const id = url.searchParams.get("id") ?? "";

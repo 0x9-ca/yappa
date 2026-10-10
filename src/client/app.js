@@ -48,7 +48,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto" };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -2379,6 +2379,10 @@ function canPlaySound() {
 }
 
 async function renderVideo() {
+  try { await renderVideoNow(); } finally { renderQuality(); }
+}
+
+async function renderVideoNow() {
   const box = videoBox;
   const tab = active;
   const want = !!(settings.video && me && tab && tab.stream);
@@ -2486,7 +2490,8 @@ let hlsScript = null;
 
 const useNative = () => settings.player === "native" && !nativeFailed;
 
-async function hlsUrl(login) {
+/** Twitch's playback token for a live channel (what usher needs to hand out a playlist). */
+async function playbackToken(login) {
   const res = await fetch("https://gql.twitch.tv/gql", {
     method: "POST",
     headers: { "Client-Id": TWITCH_WEB_CLIENT_ID, "Content-Type": "application/json" },
@@ -2502,12 +2507,178 @@ async function hlsUrl(login) {
   let info = {};
   try { info = JSON.parse(t.value); } catch {}
   if (info.authorization && info.authorization.forbidden) throw new Error("Twitch won't play this stream here (" + (info.authorization.reason || "forbidden") + ")");
+  return { sig: t.signature, token: t.value };
+}
+
+/**
+ * The master playlist address: the player picks a quality itself (adaptive). Audio-only is
+ * deliberately not offered here, since an adaptive player might choose it on a slow connection.
+ */
+function usherUrl(login, tok) {
   const params = new URLSearchParams({
-    sig: t.signature, token: t.value, allow_source: "true", fast_bwe: "true",
+    sig: tok.sig, token: tok.token, allow_source: "true", fast_bwe: "true",
     p: String(Math.floor(Math.random() * 1e7)), player: "twitchweb", playlist_include_framerate: "true", supported_codecs: "avc1",
   });
   return "https://usher.ttvnw.net/api/channel/hls/" + encodeURIComponent(login) + ".m3u8?" + params;
 }
+
+async function hlsUrl(login) { return usherUrl(login, await playbackToken(login)); }
+
+// ---------- native player: choosing the quality ----------
+
+// A <video> using the browser's built-in HLS picks its own quality and web pages can't tell it
+// otherwise. To choose one, we play that quality's own playlist address, which means reading the
+// master playlist, and Twitch doesn't let pages read it (CORS), so the Worker relays that one
+// small text file (src/usher.ts). The video itself never goes through the Worker.
+
+/** The renditions a master playlist offers, best first ({ group, name, height, fps, bandwidth, url }). */
+function parseMaster(text) {
+  const attrs = (line) => {
+    const out = {};
+    for (const m of line.slice(line.indexOf(":") + 1).matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g)) out[m[1]] = m[2].replace(/^"|"$/g, "");
+    return out;
+  };
+  const lines = text.split(/\r?\n/);
+  const names = new Map(); // GROUP-ID -> display name, from the #EXT-X-MEDIA lines
+  const list = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith("#EXT-X-MEDIA:")) {
+      const a = attrs(lines[i]);
+      if (a.TYPE === "VIDEO" && a["GROUP-ID"]) names.set(a["GROUP-ID"], a.NAME || a["GROUP-ID"]);
+    } else if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+      const a = attrs(lines[i]);
+      let url = "";
+      for (let j = i + 1; j < lines.length; j++) if (lines[j] && !lines[j].startsWith("#")) { url = lines[j].trim(); i = j; break; }
+      if (!/^https:\/\//.test(url)) continue;
+      const group = a.VIDEO || "";
+      list.push({
+        group, name: names.get(group) || group || "Stream", url,
+        height: Number((/x(\d+)$/.exec(a.RESOLUTION || "") || [])[1]) || 0,
+        fps: Number(a["FRAME-RATE"]) || 0, bandwidth: Number(a.BANDWIDTH) || 0,
+      });
+    }
+  }
+  return list.sort((x, y) => y.bandwidth - x.bandwidth); // audio-only comes out last
+}
+
+/**
+ * Which rendition to play for a saved choice: the exact one if this channel offers it, else the
+ * best that's no taller (so "720p60" on a channel with only 480p gets 480p), else Auto (null).
+ */
+function pickVariant(list, pref) {
+  if (!list.length || !pref || pref === "auto") return null;
+  const exact = list.find((v) => v.group === pref);
+  if (exact || pref === "audio_only") return exact || null;
+  const want = pref === "chunked" ? Infinity : Number((/^(\d+)p/.exec(pref) || [])[1]) || 0;
+  if (!want) return null;
+  const video = list.filter((v) => v.group !== "audio_only");
+  return video.find((v) => v.height <= want) || video[video.length - 1] || null;
+}
+
+const qualityText = (v) => (v.group === "audio_only" ? "Audio only" : v.name);
+const qualityShort = (v) => (v.group === "audio_only" ? "Audio" : v.group === "chunked" ? "Source" : v.name);
+
+/** Asks the Worker for the master playlist and parses it. Never throws: { list, error }. */
+async function fetchVariants(login, tok) {
+  const r = await api("/api/hls/master", { login, sig: tok.sig, token: tok.token });
+  if (!r.ok || typeof r.playlist !== "string") return { list: [], error: r.error || "unknown error" };
+  return { list: parseMaster(r.playlist), error: null };
+}
+
+/**
+ * Everything needed to start the stream: a token, the master URL and the quality list. With Auto
+ * the stream starts at once and the list arrives later (`variantsP`); a chosen quality needs the
+ * list to know its address, so wait for it, but not for long.
+ */
+async function prepareStream(login) {
+  const tok = await playbackToken(login);
+  const master = usherUrl(login, tok);
+  const variantsP = fetchVariants(login, tok);
+  let first = null;
+  if ((settings.nativeQuality || "auto") !== "auto") first = await Promise.race([variantsP, new Promise((r) => setTimeout(() => r(null), 4000))]);
+  return { master, variants: first ? first.list : [], variantsP };
+}
+
+/** Records a prepared stream on the player and returns the address to play. */
+function adoptStream(n, prep) {
+  n.master = prep.master;
+  n.variants = prep.variants;
+  const v = pickVariant(prep.variants, settings.nativeQuality);
+  n.activeGroup = v ? v.group : "auto";
+  prep.variantsP.then(({ list, error }) => {
+    if (native !== n || n.master !== prep.master) return; // the stream changed meanwhile
+    n.variants = list;
+    const pref = settings.nativeQuality || "auto";
+    if (error && pref !== "auto" && active) sysLine(active, "Couldn't load the quality list (" + error + "); playing Auto.");
+    // We started on Auto because the list was slow; now that it's here, honor the saved choice.
+    const want = pickVariant(list, pref);
+    if (want && n.activeGroup === "auto") { n.activeGroup = want.group; playUrl(n, want.url); }
+    renderQuality();
+  });
+  renderQuality();
+  return v ? v.url : prep.master;
+}
+
+/** Switches the rendition being played (the built-in player only). */
+function playUrl(n, url) {
+  if (n.way !== "built-in") return;
+  n.video.src = url;
+  n.progressAt = Date.now(); // loading a new playlist isn't a stall
+  n.lastTime = 0;
+  startNative(n.video);
+}
+
+/** The user's pick from the menu: remembered, and applied to this and later streams. */
+function chooseQuality(group) {
+  const n = native;
+  if (!n) return;
+  settings.nativeQuality = group;
+  saveSettings();
+  const v = pickVariant(n.variants, group);
+  n.activeGroup = v ? v.group : "auto";
+  playUrl(n, v ? v.url : n.master);
+  hideQualityMenu();
+  renderQuality();
+}
+
+function renderQuality() {
+  const n = native, btn = $("quality-btn");
+  const on = !!(n && n.variants && n.variants.length && !videoBox.hidden);
+  btn.hidden = !on;
+  if (!on) { hideQualityMenu(); return; }
+  const cur = n.variants.find((v) => v.group === n.activeGroup);
+  btn.textContent = cur ? qualityShort(cur) : "Auto";
+}
+
+function hideQualityMenu() {
+  show("quality-menu", false);
+  $("quality-btn").setAttribute("aria-expanded", "false");
+}
+
+function toggleQualityMenu() {
+  const menu = $("quality-menu");
+  if (!menu.hidden) { hideQualityMenu(); return; }
+  const n = native;
+  if (!n || !n.variants.length) return;
+  menu.replaceChildren(el("div", "qm-title", "Quality"));
+  const option = (group, label) => {
+    const b = el("button", n.activeGroup === group ? "on" : null, label);
+    b.type = "button";
+    b.setAttribute("role", "menuitemradio");
+    b.setAttribute("aria-checked", String(n.activeGroup === group));
+    b.addEventListener("click", () => chooseQuality(group));
+    menu.appendChild(b);
+  };
+  option("auto", "Auto");
+  for (const v of n.variants) option(v.group, qualityText(v));
+  menu.style.top = $("infobar").offsetHeight + "px";
+  show("quality-menu", true);
+  $("quality-btn").setAttribute("aria-expanded", "true");
+}
+
+$("quality-btn").addEventListener("click", toggleQualityMenu);
+document.addEventListener("pointerdown", (e) => { if (!$("quality-menu").hidden && !e.target.closest("#quality-menu, #quality-btn")) hideQualityMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("quality-menu").hidden) hideQualityMenu(); });
 
 function loadHlsJs() {
   hlsScript = hlsScript || new Promise((resolve, reject) => {
@@ -2556,11 +2727,12 @@ async function renderNative(box, channel, wasHidden) {
     };
   }
   native.channel = channel;
-  Object.assign(native, { hasPlayed: false, events: [], restartTimes: [], progressAt: Date.now(), lastTime: 0 });
-  let url;
-  try { url = await hlsUrl(channel); } catch (err) { if (gen === nativeGen) nativeFail("token: " + err.message); return; }
+  Object.assign(native, { hasPlayed: false, events: [], restartTimes: [], progressAt: Date.now(), lastTime: 0, variants: [], master: null, activeGroup: "auto" });
+  renderQuality();
+  let prep;
+  try { prep = await prepareStream(channel); } catch (err) { if (gen === nativeGen) nativeFail("token: " + err.message); return; }
   if (gen !== nativeGen || !native) return;
-  playNext(gen, url, playWays(), []);
+  playNext(gen, adoptStream(native, prep), playWays(), []);
 }
 
 /**
@@ -2604,11 +2776,11 @@ async function nativeRestart(reason) {
       (n.events.slice(-4).join(", ") || "no events") + "). Reconnecting…");
   }
   try {
-    const url = await hlsUrl(n.channel);
+    const prep = await prepareStream(n.channel);
     if (gen !== nativeGen || native !== n) return;
     n.progressAt = now;
     n.lastTime = n.video.currentTime;
-    await playNext(gen, url, playWays(), []);
+    await playNext(gen, adoptStream(n, prep), playWays(), []);
   } catch (err) {
     if (gen === nativeGen && native === n) nativeFail("token: " + err.message);
   } finally {
@@ -2687,6 +2859,7 @@ function teardownNative() {
   stopMedia();
   native.video.remove();
   native = null;
+  renderQuality();
 }
 
 function nativeFail(reason) {

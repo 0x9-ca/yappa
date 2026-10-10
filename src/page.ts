@@ -74,8 +74,10 @@ export function renderPage(user: string): string {
       <button class="icon-btn" id="search-btn" type="button" title="Search chat" aria-label="Search chat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </button>
+      <button class="ghost small" id="quality-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Video quality" hidden>Auto</button>
       <button class="ghost small" id="modes-btn" type="button" hidden>Modes</button>
     </div>
+    <div class="quality-menu" id="quality-menu" role="menu" aria-label="Video quality" hidden></div>
     <div class="searchbar" id="searchbar" hidden>
       <input id="search" placeholder="Filter: words, or from:name" autocomplete="off" spellcheck="false" aria-label="Filter chat">
       <span class="search-count" id="search-count"></span>

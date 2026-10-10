@@ -311,3 +311,10 @@ button.small { padding: 3px 9px; font-size: 12px; }
 /* GIFs from Tier 2+ subscribers: on their own line under the text, capped so one can't take over the chat. */
 .chat-gif { display: block; max-width: min(100%, 320px); max-height: 160px; margin: 4px 0; border-radius: 6px; }
 .chat-gif:not(.loaded) { min-width: 96px; min-height: 64px; background: var(--hover); }
+
+/* Video quality menu (native player), under the info bar */
+.quality-menu { position: absolute; right: 8px; top: 40px; z-index: 25; min-width: 190px; max-height: calc(100% - 48px); overflow-y: auto; display: flex; flex-direction: column; padding: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px var(--shadow); }
+.quality-menu .qm-title { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding: 6px 10px 2px; }
+.quality-menu button { text-align: left; background: none; color: var(--text); font-weight: 500; padding: 11px 10px; min-height: 44px; border-radius: 6px; }
+.quality-menu button:hover { background: var(--hover); }
+.quality-menu button.on { background: var(--accent); color: #fff; }

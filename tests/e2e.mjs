@@ -10,11 +10,11 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = fileURLToPath(new URL("./output", import.meta.url)); // screenshots + bundle (git-ignored)
 mkdirSync(dir, { recursive: true });
 await build({
-  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { renderMoved } from "./src/moved.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
+  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { renderMoved } from "./src/moved.ts"; export { relayMaster } from "./src/usher.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
   bundle: true, format: "esm", outfile: dir + "/page.bundle.mjs", logLevel: "warning",
   loader: { ".css": "text", ".js": "text", ".png": "base64" },
 });
-const { renderPage, PAGE_HEADERS, renderMoved, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
+const { renderPage, PAGE_HEADERS, renderMoved, relayMaster, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
 const html = renderPage("testuser@example.com");
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
@@ -47,6 +47,14 @@ const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "6
 let followingMode = "ok";
 let embedScriptFails = false;
 let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
+let masterFails = false;
+// A master playlist shaped like Twitch's: best first (the source last in the file, as seen live), audio-only at the end.
+const rendition = (group, name, w, h, fps, bw) => `#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="${group}",NAME="${name}",AUTOSELECT=YES,DEFAULT=YES\n#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${w}x${h},CODECS="avc1.4D401F,mp4a.40.2",VIDEO="${group}",FRAME-RATE=${fps}.000\nhttps://use23.playlist.ttvnw.net/v1/playlist/${group}.m3u8`;
+const MASTER = ["#EXTM3U", '#EXT-X-TWITCH-INFO:NODE="x",USER-IP="1.2.3.4"',
+  rendition("720p60", "720p60", 1280, 720, 60, 3400000), rendition("480p30", "480p", 852, 480, 30, 1428000),
+  rendition("360p30", "360p", 640, 360, 30, 630000), rendition("160p30", "160p", 284, 160, 30, 230000),
+  rendition("chunked", "1080p60 (source)", 1920, 1080, 60, 6890302),
+  '#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="audio_only",NAME="audio_only",AUTOSELECT=NO,DEFAULT=NO\n#EXT-X-STREAM-INF:BANDWIDTH=160000,CODECS="mp4a.40.2",VIDEO="audio_only"\nhttps://use23.playlist.ttvnw.net/v1/playlist/audio_only.m3u8'].join("\n") + "\n";
 const subFailures = []; // queued error messages for the next /api/chat/subscribe calls
 const svg = (h) => `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><circle cx="28" cy="28" r="26" fill="hsl(${h},70%,55%)"/></svg>`;
 await ctx.route("**/*", async (route) => {
@@ -70,6 +78,11 @@ await ctx.route("**/*", async (route) => {
     if (f) return route.fulfill({ body: f.type === "image/png" ? Buffer.from(f.body, "base64") : f.body, contentType: f.type });
     if (u.pathname === "/api/cycle") { cycle.enabled = body().enabled; if (cycle.enabled) { cycle.lastColor = "#11AA22"; cycle.changes++; } log.cycle.push(cycle.enabled); return j({ ok: true, cycle }); }
     if (u.pathname === "/api/netfail") return route.abort();
+    if (u.pathname === "/api/hls/master") {
+      log.master = [...(log.master || []), body()];
+      if (masterFails) return route.fulfill({ status: 502, json: { ok: false, error: "Twitch's playlist server answered 403." } });
+      return j({ ok: true, playlist: MASTER });
+    }
     if (streamsFail && u.pathname === "/api/streams") return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
     if (extrasFail && (u.pathname === "/api/chat/badges" || u.pathname === "/api/chat/cheermotes")) return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
     if (u.pathname === "/api/chat/subscribe" && subFailures.length) { log.subs.push("failed:" + route.request().postDataJSON().channel); return route.fulfill({ status: 502, json: { ok: false, error: subFailures.shift() } }); }
@@ -109,7 +122,7 @@ await ctx.route("**/*", async (route) => {
   // The app's old address (src/moved.ts).
   if (u.host === "old.test") return route.fulfill({ body: u.pathname === "/" ? renderMoved("yappa.test") : "<p>old</p>", contentType: "text/html" });
   // The built-in player really fetches the playlist; answer slowly so the test decides the outcome.
-  if (u.host === "usher.ttvnw.net") { await sleep(4000); return route.fulfill({ body: "#EXTM3U\n", contentType: "application/vnd.apple.mpegurl", headers: { "access-control-allow-origin": "*" } }).catch(() => {}); }
+  if (u.host === "usher.ttvnw.net" || /\.ttvnw\.net$/.test(u.host)) { await sleep(30000); return route.fulfill({ body: "#EXTM3U\n", contentType: "application/vnd.apple.mpegurl", headers: { "access-control-allow-origin": "*" } }).catch(() => {}); }
   if (u.host === "gql.twitch.tv") {
     const b = route.request().postDataJSON();
     log.gql = [...(log.gql || []), { clientId: route.request().headers()["client-id"], login: b.variables && b.variables.login }];
@@ -893,6 +906,97 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.evaluate(() => { setPlayer("embed"); HTMLMediaElement.prototype.canPlayType = () => ""; });
   await page.waitForSelector("#video iframe", { timeout: 5000 });
   check("no watchdog left running after teardown", await page.evaluate(() => native === null));
+}
+
+// =============== native player: choosing the quality ===============
+{
+  // The Worker's relay: strict about its inputs, only ever talks to usher.
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { calls.push(String(url)); return new Response(globalThis.__usherBody ?? MASTER, { status: globalThis.__usherStatus ?? 200 }); };
+  const sig = "f9db5ddefa11ef4ea9e92a6cafaa1b6c3d52d387", tokenFor = (c) => JSON.stringify({ channel: c, authorization: { forbidden: false } });
+  const bads = [
+    relayMaster({ login: "../etc", sig, token: tokenFor("x") }), relayMaster({ login: "uwoslab", sig: "zz", token: tokenFor("uwoslab") }),
+    relayMaster({ login: "uwoslab", sig, token: tokenFor("someoneelse") }), relayMaster({ login: "uwoslab", sig, token: "not json" }),
+    relayMaster({ login: "uwoslab", sig, token: "x".repeat(9000) }), relayMaster({}),
+  ];
+  check("relay refuses bad channel names, signatures, tokens for another channel, and junk (without calling Twitch)", (await Promise.all(bads)).every((r) => r.ok === false && r.status === 400) && calls.length === 0, JSON.stringify(await Promise.all(bads)));
+  const good = await relayMaster({ login: "UwoSlab", sig, token: tokenFor("uwoslab") });
+  check("relay fetches only usher, for that channel, asking for audio-only too", good.ok && good.playlist.startsWith("#EXTM3U") && calls.length === 1 &&
+    calls[0].startsWith("https://usher.ttvnw.net/api/channel/hls/uwoslab.m3u8?") && new URL(calls[0]).searchParams.get("allow_audio_only") === "true" && new URL(calls[0]).searchParams.get("sig") === sig, calls[0]);
+  globalThis.__usherStatus = 403;
+  const realErr = console.error; console.error = () => {}; // the relay logs refusals for the Worker's logs
+  const denied = await relayMaster({ login: "uwoslab", sig, token: tokenFor("uwoslab") });
+  console.error = realErr;
+  check("relay reports Twitch refusing", denied.ok === false && denied.status === 502 && /403/.test(denied.error), JSON.stringify(denied));
+  globalThis.__usherStatus = 200; globalThis.__usherBody = "<html>not a playlist</html>";
+  check("relay rejects something that isn't a playlist", (await relayMaster({ login: "uwoslab", sig, token: tokenFor("uwoslab") })).ok === false);
+  globalThis.fetch = realFetch; delete globalThis.__usherBody; delete globalThis.__usherStatus;
+
+  // Parsing and choosing.
+  const parsed = await page.evaluate((text) => parseMaster(text).map((v) => [v.group, v.name, v.height, v.fps]), MASTER);
+  check("master playlist parsed: best first, source included, audio-only last", JSON.stringify(parsed) === JSON.stringify([["chunked", "1080p60 (source)", 1080, 60], ["720p60", "720p60", 720, 60], ["480p30", "480p", 480, 30], ["360p30", "360p", 360, 30], ["160p30", "160p", 160, 30], ["audio_only", "audio_only", 0, 0]]), JSON.stringify(parsed));
+  const picks = await page.evaluate((text) => { const l = parseMaster(text); const g = (p) => { const v = pickVariant(l, p); return v ? v.group : null; }; return { auto: g("auto"), exact: g("360p30"), source: g("chunked"), audio: g("audio_only"), higher: g("1440p60"), missing: g("720p30"), small: g("100p30"), none: g(undefined), empty: pickVariant([], "720p60") }; }, MASTER);
+  check("a saved choice maps to what the channel offers (exact, else best that's no taller)", JSON.stringify(picks) === JSON.stringify({ auto: null, exact: "360p30", source: "chunked", audio: "audio_only", higher: "chunked", missing: "720p60", small: "160p30", none: null, empty: null }), JSON.stringify(picks));
+
+  // In the page.
+  await page.click(".tab:first-child .tab-name");
+  await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => "maybe"; settings.nativeQuality = "auto"; setPlayer("native"); });
+  await page.waitForFunction(() => native && native.way === "built-in" && native.variants.length === 6, null, { timeout: 8000 });
+  const startSrc = await page.evaluate(() => document.querySelector("#video video").getAttribute("src"));
+  check("Auto starts right away on the usher master playlist", startSrc.includes("usher.ttvnw.net") && !startSrc.includes("allow_audio_only"), startSrc);
+  const lastMaster = log.master.at(-1);
+  check("the page asked the Worker for the quality list, with the playback token", lastMaster.login === "uwoslab" && lastMaster.sig === "sig-uwoslab" && JSON.parse(lastMaster.token).channel === "uwoslab", JSON.stringify(lastMaster).slice(0, 120));
+  check("quality button appears, showing Auto", await page.$eval("#quality-btn", (b) => !b.hidden && b.textContent === "Auto"));
+  await page.click("#quality-btn");
+  const menu = await page.$$eval("#quality-menu button", (bs) => bs.map((b) => b.textContent + (b.classList.contains("on") ? "*" : "")));
+  check("menu lists Auto (current), each rendition and Audio only", JSON.stringify(menu) === JSON.stringify(["Auto*", "1080p60 (source)", "720p60", "480p", "360p", "160p", "Audio only"]), JSON.stringify(menu));
+  const tapH = await page.$eval("#quality-menu button", (b) => Math.round(b.getBoundingClientRect().height));
+  check("menu rows are touch-sized", tapH >= 44, String(tapH));
+  await page.screenshot({ path: dir + "/t30-quality-menu.png" });
+  await page.click('#quality-menu button:has-text("480p")');
+  const picked = await page.evaluate(() => ({ src: document.querySelector("#video video").getAttribute("src"), saved: JSON.parse(localStorage.getItem("settings")).nativeQuality, label: document.getElementById("quality-btn").textContent, open: !document.getElementById("quality-menu").hidden }));
+  check("picking 480p plays that rendition's own playlist, remembers it, shows it, closes the menu",
+    picked.src === "https://use23.playlist.ttvnw.net/v1/playlist/480p30.m3u8" && picked.saved === "480p30" && picked.label === "480p" && !picked.open, JSON.stringify(picked));
+  await page.click("#quality-btn");
+  await page.click('#quality-menu button:has-text("Audio only")');
+  check("Audio only works too, button says Audio", (await page.getAttribute("#video video", "src")).endsWith("/audio_only.m3u8") && (await page.textContent("#quality-btn")) === "Audio");
+  await page.click("#quality-btn");
+  await page.click('#quality-menu button:has-text("1080p60")');
+  check("Source is labelled Source on the button", (await page.textContent("#quality-btn")) === "Source" && (await page.getAttribute("#video video", "src")).endsWith("/chunked.m3u8"));
+  await page.click("#quality-btn");
+  await page.click('#quality-menu button:has-text("Auto")');
+  check("back to Auto: the master playlist again", (await page.getAttribute("#video video", "src")).includes("usher.ttvnw.net") && (await page.textContent("#quality-btn")) === "Auto" && JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).nativeQuality === "auto");
+  await page.click("#quality-btn");
+  await page.keyboard.press("Escape");
+  check("Escape closes the menu", await page.$eval("#quality-menu", (m) => m.hidden));
+
+  // A saved choice is applied when the stream (re)starts, with a fresh token.
+  await page.evaluate(() => { settings.nativeQuality = "720p60"; saveSettings(); });
+  const masters0 = log.master.length;
+  await page.evaluate(() => nativeRestart("test"));
+  await page.waitForFunction(() => (document.querySelector("#video video").getAttribute("src") || "").endsWith("/720p60.m3u8"), null, { timeout: 8000 });
+  check("a restart plays the saved quality (waiting for the list first)", log.master.length === masters0 + 1 && (await page.textContent("#quality-btn")) === "720p60");
+  // ...and when you open another channel.
+  await page.evaluate(() => { tabs.get("otherchan").stream = { user_id: "888", title: "x", game_name: "y", viewer_count: 5, started_at: new Date().toISOString() }; });
+  await page.click(".tab:nth-child(2) .tab-name");
+  await page.waitForFunction(() => native && native.master && native.master.includes("/otherchan.m3u8") && native.activeGroup === "720p60" && (document.querySelector("#video video").getAttribute("src") || "").endsWith("/720p60.m3u8"), null, { timeout: 8000 });
+  check("the choice follows you to another channel", log.master.at(-1).login === "otherchan");
+  await page.evaluate(() => { tabs.get("otherchan").stream = null; });
+  await page.click(".tab:first-child .tab-name");
+
+  // If the list can't be had: play Auto, say why once, and don't show a useless button.
+  masterFails = true;
+  await page.evaluate(() => nativeRestart("test"));
+  await page.waitForFunction(() => native && (document.querySelector("#video video").getAttribute("src") || "").includes("usher.ttvnw.net"), null, { timeout: 8000 });
+  await page.waitForFunction(() => [...active.list.querySelectorAll(".sys")].some((l) => l.textContent.startsWith("Couldn't load the quality list")), null, { timeout: 8000 });
+  const noList = await page.evaluate(() => ({ btn: document.getElementById("quality-btn").hidden, msg: [...active.list.querySelectorAll(".sys")].filter((l) => l.textContent.startsWith("Couldn't load the quality list")).at(-1).textContent }));
+  check("relay failure: plays Auto, no quality button, explains why", noList.btn && noList.msg.includes("answered 403"), JSON.stringify(noList));
+  masterFails = false;
+  // Leaving native hides the button and menu.
+  await page.evaluate(() => { settings.nativeQuality = "auto"; saveSettings(); setPlayer("embed"); HTMLMediaElement.prototype.canPlayType = () => ""; });
+  await page.waitForSelector("#video iframe", { timeout: 5000 });
+  check("back on Twitch's player: no quality button", await page.$eval("#quality-btn", (b) => b.hidden) && await page.$eval("#quality-menu", (m) => m.hidden));
 }
 
 // =============== recent emotes: only what works in this channel ===============

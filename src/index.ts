@@ -3,6 +3,7 @@ import * as publicApi from "./app-token";
 import { renderMoved } from "./moved";
 import { PAGE_HEADERS, renderPage } from "./page";
 import { staticFiles } from "./static";
+import { relayMaster } from "./usher";
 import { authorizeUrl } from "./twitch";
 
 export { ColorLoop } from "./color-loop";
@@ -78,6 +79,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(id)) return json({ ok: false, error: "Bad clip id." }, 400);
       const result = await publicApi.clip(env, url.origin, id);
       return json(result, result.ok ? 200 : 502);
+    }
+    // The native player's quality list (see src/usher.ts). No Durable Object needed.
+    case "POST /api/hls/master": {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const result = await relayMaster(body);
+      return json(result, result.ok ? 200 : result.status);
     }
   }
 

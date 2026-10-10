@@ -1463,6 +1463,35 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("a history GIF message renders the image", await page.$eval('li[data-id="hist-gif"]', (li) => !!li.querySelector("img.chat-gif")));
 }
 
+// =============== Gigantify an Emote (Bits Power-up) ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  const emote = (id, name) => ({ type: "emote", text: name, emote: { id } });
+  const text = (t) => ({ type: "text", text: t });
+  cur().send(chat("999", "giga1", "Spender", "951", "hi Kappa and PogChamp", { message_type: "power_ups_gigantified_emote", fragments: [text("hi "), emote("25", "Kappa"), text(" and "), emote("88", "PogChamp")] }));
+  cur().send(chat("999", "giga2", "Spender", "951", "Kappa PogChamp", { message_type: "text", fragments: [emote("25", "Kappa"), text(" "), emote("88", "PogChamp")] }));
+  cur().send(chat("999", "giga3", "Spender", "951", "no emote here", { message_type: "power_ups_gigantified_emote" }));
+  await page.waitForSelector('li[data-id="giga3"]');
+  await sleep(300);
+  const look = (id) => page.$$eval('li[data-id="' + id + '"] .body img', (imgs) => imgs.map((i) => ({ alt: i.alt, giant: i.classList.contains("giant"), h: Math.round(i.getBoundingClientRect().height), scale: i.src.split("/").pop() })));
+  const g1 = await look("giga1");
+  check("gigantified message: only the LAST emote is enlarged (bigger image, larger height)", JSON.stringify(g1.map((x) => [x.alt, x.giant, x.scale])) === '[["Kappa",false,"2.0"],["PogChamp",true,"4.0"]]' && g1[0].h <= 40 && g1[1].h >= 90, JSON.stringify(g1));
+  const g2 = await look("giga2");
+  check("an ordinary message with the same emotes is unchanged", g2.every((x) => !x.giant && x.scale === "2.0" && x.h <= 40), JSON.stringify(g2));
+  check("a gigantified message without any emote doesn't break", await page.$eval('li[data-id="giga3"] .body', (b) => b.textContent === "no emote here") && (await look("giga3")).length === 0);
+  await page.evaluate(() => document.querySelector('li[data-id="giga1"]').scrollIntoView());
+  await page.screenshot({ path: dir + "/t31-gigantified.png" });
+  // History: the raw IRC line carries msg-id=gigantified-emote-message (shape taken from real chat).
+  const hist = await page.evaluate(() => {
+    const ev = ircToEvent("@badge-info=;badges=;color=#FF7F50;display-name=Spender;emotes=25:0-4;id=giga-hist;msg-id=gigantified-emote-message;tmi-sent-ts=" + (Date.now() - 9000) + ";user-id=951 :spender!spender@spender.tmi.twitch.tv PRIVMSG #uwoslab :Kappa");
+    renderMessage(active, ev, { merge: true, historical: true });
+    const img = document.querySelector('li[data-id="giga-hist"] .body img');
+    return { type: ev.message_type, giant: !!img && img.classList.contains("giant"), src: img && img.src };
+  });
+  check("history: msg-id=gigantified-emote-message gives a giant emote too", hist.type === "power_ups_gigantified_emote" && hist.giant && hist.src.endsWith("/25/default/dark/4.0"), JSON.stringify(hist));
+  check("history: other messages keep type 'text'", await page.evaluate(() => ircToEvent("@id=z;tmi-sent-ts=1;user-id=9;display-name=X :x!x@x PRIVMSG #c :hi").message_type === "text"));
+}
+
 // =============== moving to a new address ===============
 {
   const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });

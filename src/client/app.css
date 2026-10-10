@@ -87,6 +87,8 @@ footer { grid-area: footer; }
 .msg .name.dark { text-shadow: 0 0 1px #fff, 0 0 3px #ffffff80; }
 .emote-wrap { display: inline-grid; vertical-align: middle; margin: -4px 0; }
 .emote-wrap > img { grid-area: 1/1; justify-self: center; align-self: center; height: 28px; }
+/* A gigantified emote (Bits Power-up). Height is fixed so the line doesn't jump when the image loads. */
+.emote-wrap > img.giant { height: 96px; min-width: 48px; margin: 4px 0; }
 .msg .mention { font-weight: 700; }
 .cheer-bits { font-weight: 700; margin: 0 2px 0 1px; }
 /* Channel points redemptions (highlighted / sub-only-mode / reward messages). Defined before

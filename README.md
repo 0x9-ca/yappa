@@ -55,6 +55,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
   `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
 - Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
+- "Gigantify an Emote" (Bits Power-up) messages show the emote enlarged.
 - GIFs sent by Tier 2+ subscribers are shown inline (Settings → Show GIFs turns them into links).
 - Channel points redemptions that show up in chat (highlighted messages, sub-only-mode messages and
   reward messages) are marked; Twitch only exposes the full redemption feed to the broadcaster.

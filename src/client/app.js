@@ -829,7 +829,11 @@ function setHistory(on) {
   if (on) for (const t of tabs.values()) if (t.joined) backfill(t, { since: 0, until: Date.now() });
 }
 
-const IRC_MESSAGE_TYPES = { "highlighted-message": "channel_points_highlighted", "skip-subs-mode-message": "channel_points_sub_only" };
+const IRC_MESSAGE_TYPES = {
+  "highlighted-message": "channel_points_highlighted",
+  "skip-subs-mode-message": "channel_points_sub_only",
+  "gigantified-emote-message": "power_ups_gigantified_emote", // seen in real chat; not in Twitch's IRC docs
+};
 
 // "@a=b;c=d :nick!nick@host PRIVMSG #chan :text" -> an object shaped like an EventSub chat event.
 function ircToEvent(line) {
@@ -1357,13 +1361,20 @@ function appendGif(parent, f) {
   parent.appendChild(img);
 }
 
-function renderFragments(tab, parent, fragments, skipPrefix, hasBits) {
+function renderFragments(tab, parent, fragments, skipPrefix, hasBits, gigantify) {
   let skip = skipPrefix;
-  for (const f of fragments || []) {
+  // "Gigantify an Emote" (a Bits Power-up): Twitch marks the message and enlarges its last emote.
+  // That rule isn't in Twitch's docs; it matches how the messages look in practice.
+  let giantAt = -1;
+  if (gigantify) (fragments || []).forEach((f, k) => { if (f.type === "emote" && f.emote) giantAt = k; });
+  for (const [k, f] of (fragments || []).entries()) {
     if (f.type === "cheermote" && f.cheermote) {
       appendCheer(tab, parent, f.cheermote.prefix, f.cheermote.bits, f.text);
     } else if (f.type === "emote" && f.emote) {
-      appendEmote(parent, emoteImg("https://static-cdn.jtvnw.net/emoticons/v2/" + f.emote.id + "/default/dark/2.0", f.text, "Twitch"), false);
+      const giant = k === giantAt;
+      const img = emoteImg("https://static-cdn.jtvnw.net/emoticons/v2/" + f.emote.id + "/default/dark/" + (giant ? "4.0" : "2.0"), f.text, giant ? "Twitch, gigantified" : "Twitch");
+      if (giant) img.classList.add("giant");
+      appendEmote(parent, img, false);
     } else if (f.type === "gif" && f.gif) {
       appendGif(parent, f);
     } else if (f.type === "mention") {
@@ -1464,7 +1475,7 @@ function renderMessage(tab, ev, opts = {}) {
   const mine = me && ev.chatter_user_id === me.userId;
   li.appendChild(document.createTextNode(": "));
   const body = el("span", "body");
-  renderFragments(tab, body, ev.message.fragments, !!ev.reply, !!ev.bits);
+  renderFragments(tab, body, ev.message.fragments, !!ev.reply, !!ev.bits, ev.message_type === "power_ups_gigantified_emote");
   li.appendChild(body);
 
   const mentioned = me && (ev.message.fragments || []).some((f) => (f.type === "mention" && f.mention && f.mention.user_id === me.userId) || f.mentionsMe);

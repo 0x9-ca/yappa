@@ -48,7 +48,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch" };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -853,16 +853,23 @@ function ircToEvent(line) {
     if (!id || !spans) continue;
     for (const span of spans.split(",")) {
       const [a, b] = span.split("-").map(Number);
-      ranges.push([a, b, id]);
+      ranges.push([a, b, id, null]);
     }
+  }
+  // GIFs (Tier 2+ subscribers) are listed the same way: "start-end|id|url,start-end|id|url".
+  // URLs aren't escaped, so only split at a comma that starts another "start-end|" entry.
+  for (const entry of (tags.gifs || "").split(/,(?=\d+-\d+\|)/)) {
+    const g = /^(\d+)-(\d+)\|([^|]*)\|([\s\S]+)$/.exec(entry);
+    if (g) ranges.push([Number(g[1]), Number(g[2]), g[3], { id: g[3], url: g[4] }]);
   }
   ranges.sort((x, y) => x[0] - y[0]);
   const chars = Array.from(text);
   const fragments = [];
   let pos = 0;
-  for (const [a, b, id] of ranges) {
+  for (const [a, b, id, gif] of ranges) {
     if (a > pos) fragments.push({ type: "text", text: chars.slice(pos, a).join("") });
-    fragments.push({ type: "emote", text: chars.slice(a, b + 1).join(""), emote: { id } });
+    const covered = chars.slice(a, b + 1).join("");
+    fragments.push(gif ? { type: "gif", text: covered, gif } : { type: "emote", text: covered, emote: { id } });
     pos = b + 1;
   }
   if (pos < chars.length) fragments.push({ type: "text", text: chars.slice(pos).join("") });
@@ -1323,6 +1330,33 @@ function attachClipCards(tab, li, body) {
   }
 }
 
+/**
+ * A GIF that a Tier 2+ subscriber sent. `f.text` is Twitch's placeholder ("[Description GIF by
+ * Someone]"). Twitch requires the URL to be used exactly as sent, so it's never altered; only
+ * https is ever loaded, and the request doesn't tell the GIF host which page asked.
+ */
+function appendGif(parent, f) {
+  const url = f.gif.url;
+  const label = f.text || "GIF";
+  if (typeof url !== "string" || !/^https:\/\//i.test(url)) { parent.appendChild(document.createTextNode(label)); return; }
+  if (settings.gifs === false) {
+    const a = el("a", "link", label);
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer nofollow";
+    parent.appendChild(a);
+    return;
+  }
+  const img = document.createElement("img");
+  img.className = "chat-gif";
+  img.src = url;
+  img.alt = img.title = label;
+  img.loading = "lazy";
+  img.referrerPolicy = "no-referrer";
+  img.addEventListener("load", () => img.classList.add("loaded"));
+  parent.appendChild(img);
+}
+
 function renderFragments(tab, parent, fragments, skipPrefix, hasBits) {
   let skip = skipPrefix;
   for (const f of fragments || []) {
@@ -1330,6 +1364,8 @@ function renderFragments(tab, parent, fragments, skipPrefix, hasBits) {
       appendCheer(tab, parent, f.cheermote.prefix, f.cheermote.bits, f.text);
     } else if (f.type === "emote" && f.emote) {
       appendEmote(parent, emoteImg("https://static-cdn.jtvnw.net/emoticons/v2/" + f.emote.id + "/default/dark/2.0", f.text, "Twitch"), false);
+    } else if (f.type === "gif" && f.gif) {
+      appendGif(parent, f);
     } else if (f.type === "mention") {
       if (skip && f.mention) { skip = false; continue; } // reply prefix "@user "
       parent.appendChild(el("span", "mention", f.text));
@@ -3263,6 +3299,9 @@ function openSettings() {
     themeSeg,
     el("h3", null, "Chat text size"),
     seg,
+    el("h3", null, "GIFs"),
+    row("Show GIFs", checkbox(settings.gifs !== false, (c) => { settings.gifs = c.checked; saveSettings(); }),
+      "Tier 2 and 3 subscribers can send GIFs. They're big and animated, so turn this off to get a link instead (applies to new messages)."),
     el("h3", null, "Ignored users"),
     hiddenList,
   );

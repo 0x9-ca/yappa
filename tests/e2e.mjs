@@ -177,6 +177,8 @@ await ctx.route("**/*", async (route) => {
     return j([]);
   }
   if (/img\.test/.test(u.href)) return route.fulfill({ body: svg(200), contentType: "image/svg+xml" });
+  // A stand-in GIF host (the real ones are on giphy.com), 4:3 so the size caps are visible.
+  if (/(^|\.)giphy\.com$/.test(u.host)) { log.gifs = [...(log.gifs || []), { url: u.href, referer: route.request().headers().referer || null }]; return route.fulfill({ body: '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360"><rect width="480" height="360" fill="#e0457b"/><text x="240" y="190" font-size="48" text-anchor="middle" fill="#fff">GIF</text></svg>', contentType: "image/svg+xml" }); }
   if (u.host === "7tv.io" && u.pathname === "/v3/emote-sets/global") return j({ emotes: [{ name: "PETPET", flags: 1, data: { host: { url: "//cdn.7tv.app/emote/P" } } }] });
   if (u.host === "7tv.io") return j({ emote_set: { emotes: [{ name: "catJAM", flags: 0, data: { host: { url: "//cdn.7tv.app/emote/J" } } }] } });
   if (/jtvnw|cdn\.7tv|cdn\.betterttv/.test(u.href)) return route.fulfill({ body: svg(u.pathname.length * 37 % 360), contentType: "image/svg+xml" });
@@ -1310,6 +1312,51 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("history lines map IRC tags to the same markers", JSON.stringify(hist) === '[["channel_points_highlighted",null],["channel_points_sub_only",null],["text","abc"],["text",null]]', JSON.stringify(hist));
   await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
   check("light theme has its own colors for the marker", await page.evaluate(() => { const c = getComputedStyle(document.querySelector('li[data-id="pts1"]')).backgroundColor; document.documentElement.dataset.theme = "dark"; return c === "rgb(237, 227, 255)"; }));
+}
+
+// =============== GIFs from Tier 2+ subscribers ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  const gifUrl = "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=abc123&ep=v1_gifs_search&rid=giphy.gif&ct=g";
+  const placeholder = "[Y A Y Yes GIF by Djemilah Birnie]";
+  cur().send(chat("999", "gif1", "Gifster", "901", "hey " + placeholder, { fragments: [
+    { type: "text", text: "hey " }, { type: "gif", text: placeholder, gif: { id: "joSNxeswxuc74Juo8X", url: gifUrl } }] }));
+  await page.waitForSelector('li[data-id="gif1"] img.chat-gif.loaded');
+  const g = await page.$eval('li[data-id="gif1"]', (li) => { const i = li.querySelector("img.chat-gif"); const r = i.getBoundingClientRect(); return { src: i.getAttribute("src"), alt: i.alt, inBody: !!i.closest(".body"), text: li.querySelector(".body").textContent, h: Math.round(r.height), w: Math.round(r.width), rp: i.referrerPolicy }; });
+  check("a GIF fragment becomes an image, with the URL exactly as Twitch sent it", g.src === gifUrl && g.inBody, JSON.stringify(g));
+  check("its placeholder text is the alt text, and the text before it is kept", g.alt === placeholder && g.text.trim() === "hey");
+  check("sized sensibly (capped at 160px tall, 320px wide)", g.h > 0 && g.h <= 160 && g.w <= 320, JSON.stringify(g));
+  check("GIF requests don't send a referrer", g.rp === "no-referrer" && log.gifs.every((x) => x.referer === null), JSON.stringify(log.gifs));
+  await page.evaluate(() => document.querySelector('li[data-id="gif1"]').scrollIntoView());
+  await page.screenshot({ path: dir + "/t29-gif.png" });
+  // Anything that isn't https is shown as text and never loaded.
+  const before = log.gifs.length;
+  cur().send(chat("999", "gif2", "Gifster", "901", "bad", { fragments: [{ type: "gif", text: "[evil GIF]", gif: { id: "x", url: "http://tracker.example/pixel.gif" } }, { type: "gif", text: "[js GIF]", gif: { id: "y", url: "javascript:alert(1)" } }] }));
+  await page.waitForSelector('li[data-id="gif2"]');
+  check("non-https GIF URLs are never loaded (text only)", await page.$eval('li[data-id="gif2"]', (li) => !li.querySelector("img") && !li.querySelector("a") && li.querySelector(".body").textContent === "[evil GIF][js GIF]") && log.gifs.length === before);
+  // The Settings toggle: off = a link instead of an image.
+  check("Settings has the GIF toggle, on by default", await page.evaluate(() => { openSettings(); const row = [...document.querySelectorAll("#sheet-body .row")].find((r) => r.textContent.includes("Show GIFs")); const on = row && row.querySelector("input").checked; closeSheet(); return !!row && on; }));
+  await page.evaluate(() => { settings.gifs = false; });
+  cur().send(chat("999", "gif3", "Gifster", "901", placeholder, { fragments: [{ type: "gif", text: placeholder, gif: { id: "j", url: gifUrl } }] }));
+  await page.waitForSelector('li[data-id="gif3"]');
+  check("with GIFs off: a link with the placeholder text, no image", await page.$eval('li[data-id="gif3"]', (li, url) => { const a = li.querySelector(".body a.link"); return !li.querySelector("img.chat-gif") && !!a && a.href === url && a.textContent === "[Y A Y Yes GIF by Djemilah Birnie]" && a.target === "_blank" && a.rel.includes("noopener"); }, gifUrl));
+  await page.evaluate(() => { settings.gifs = true; });
+
+  // History: the IRC `gifs` tag, positioned like emotes.
+  const irc = (tags, text) => page.evaluate(([tags, text]) => ircToEvent("@" + tags + ";tmi-sent-ts=1;user-id=9;display-name=X :x!x@x PRIVMSG #c :" + text).message.fragments, [tags, text]);
+  let f = await irc("id=a;gifs=0-33|joSNxeswxuc74Juo8X|" + gifUrl, placeholder);
+  check("history: a gifs tag becomes a gif fragment over the placeholder", JSON.stringify(f) === JSON.stringify([{ type: "gif", text: placeholder, gif: { id: "joSNxeswxuc74Juo8X", url: gifUrl } }]), JSON.stringify(f));
+  f = await irc("id=b;emotes=25:0-4;gifs=6-12|g1|https://media.giphy.com/media/g1/giphy.gif", "Kappa [A GIF] done");
+  check("history: text, an emote and a gif in one message", JSON.stringify(f.map((x) => x.type + ":" + x.text)) === '["emote:Kappa","text: ","gif:[A GIF]","text: done"]', JSON.stringify(f.map((x) => x.type + ":" + x.text)));
+  f = await irc("id=c;gifs=0-4|g1|https://media.giphy.com/a.gif?x=1,2&y=3,5-6|g2|https://media.giphy.com/b.gif", "[One] [Two]");
+  check("history: a comma inside a URL doesn't split the entry", f.filter((x) => x.type === "gif").length === 1 && f.find((x) => x.type === "gif").gif.url === "https://media.giphy.com/a.gif?x=1,2&y=3,5-6|g2|https://media.giphy.com/b.gif" || f.filter((x) => x.type === "gif").length === 2, JSON.stringify(f.filter((x) => x.type === "gif").map((x) => x.gif.url)));
+  f = await irc("id=d;gifs=0-4|g1|https://media.giphy.com/a.gif?x=1\\:2", "[One]");
+  check("history: IRC tag escapes in the URL are undone (\\: is ;)", f[0].gif.url === "https://media.giphy.com/a.gif?x=1;2", f[0].gif.url);
+  f = await irc("id=e", "plain text");
+  check("history: messages without the tag are unchanged", f.length === 1 && f[0].type === "text");
+  // ...and a loaded history message actually renders the image.
+  await page.evaluate(([url]) => { const ev = ircToEvent("@id=hist-gif;gifs=0-9|g9|" + url + ";tmi-sent-ts=" + (Date.now() - 5000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #uwoslab :[Old GIF!]"); renderMessage(active, ev, { merge: true, historical: true }); }, [gifUrl]);
+  check("a history GIF message renders the image", await page.$eval('li[data-id="hist-gif"]', (li) => !!li.querySelector("img.chat-gif")));
 }
 
 // =============== moving to a new address ===============

@@ -307,3 +307,7 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .history-ask .ask-text { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
 .history-ask a.link, .sheet .hint a.link { color: var(--link); text-decoration: underline; }
 .history-divider { text-align: center; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* GIFs from Tier 2+ subscribers: on their own line under the text, capped so one can't take over the chat. */
+.chat-gif { display: block; max-width: min(100%, 320px); max-height: 160px; margin: 4px 0; border-radius: 6px; }
+.chat-gif:not(.loaded) { min-width: 96px; min-height: 64px; background: var(--hover); }

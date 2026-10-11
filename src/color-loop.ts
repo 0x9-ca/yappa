@@ -444,10 +444,10 @@ export class ColorLoop extends DurableObject<Env> {
   }
 
   /** Channels the user follows, and which of them are live (for the channel picker). */
-  async followed(): Promise<({ ok: true } & Following) | { ok: false; error: string; needsScope?: boolean }> {
+  async followed(fresh = false): Promise<({ ok: true } & Following) | { ok: false; error: string; needsScope?: boolean }> {
     const tokens = await this.getTokens();
     if (!tokens?.scopes?.includes("user:read:follows")) return { ok: false, error: "Missing user:read:follows", needsScope: true };
-    if (this.following && Date.now() - this.following.at < 2 * 60_000) return { ok: true, ...this.following.data };
+    if (!fresh && this.following && Date.now() - this.following.at < 2 * 60_000) return { ok: true, ...this.following.data };
     try {
       const data = await this.withToken(async (t) => {
         const [channels, live] = await Promise.all([

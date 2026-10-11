@@ -373,3 +373,5 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .brow .bcard { flex: 1; min-width: 0; }
 .brow.fresh .bcard { background: var(--points-bg); }
 .bshare { flex: none; margin-top: 6px; }
+#follow-btn.on { color: var(--accent); }
+#follow-btn.on svg { fill: currentColor; }

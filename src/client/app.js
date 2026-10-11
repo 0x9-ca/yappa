@@ -3007,7 +3007,38 @@ function renderInfo() {
   }
   $("modes").replaceChildren(...modeLabels(tab.settings).map((l) => el("span", "chip", l)));
   show("modes-btn", !!tab.isMod);
+  renderFollowBtn();
 }
+
+// Twitch has no API to follow or unfollow (it was removed in 2023), so the button shows
+// whether you follow the channel (from the followed list) and opens Twitch's page to change it.
+let followHandoff = false;
+
+function renderFollowBtn() {
+  const tab = active;
+  const btn = $("follow-btn");
+  const known = tab && tab.broadcaster && me && tab.broadcaster.id !== me.userId && following && following.ok;
+  btn.hidden = !known;
+  if (!known) { if (tab && tab.broadcaster && me && !following) loadFollowing().then(renderFollowBtn); return; }
+  const on = following.channels.some((c) => c.id === tab.broadcaster.id);
+  btn.classList.toggle("on", on);
+  btn.setAttribute("aria-pressed", String(on));
+  const name = tab.broadcaster.name;
+  btn.title = btn.ariaLabel = on ? "You follow " + name + ". Open Twitch to unfollow." : "Follow " + name + " on Twitch";
+}
+
+$("follow-btn").addEventListener("click", () => {
+  if (!active) return;
+  followHandoff = true;
+  launchers.window(twitchLinks(active.login).web, "_blank");
+});
+
+// Coming back from Twitch after following or unfollowing: refresh the status.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !followHandoff) return;
+  followHandoff = false;
+  api("/api/following?fresh=1").then((r) => { if (r.ok) { following = r; followingAt = Date.now(); renderFollowBtn(); } });
+});
 
 $("modes-btn").addEventListener("click", () => {
   const panel = $("modes-panel");

@@ -56,6 +56,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
 - Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
 - "Gigantify an Emote" (Bits Power-up) messages show the emote enlarged.
+- Follow button: a heart in the info bar shows whether you follow the channel. Twitch removed its follow API, so tapping it opens the channel on Twitch to follow or unfollow, and Yappa refreshes the status when you come back.
 - Account menu: your Twitch picture in the corner opens a menu with your name, Settings, "Your clips" (the
   clips you made through Yappa) and Log out.
 - Clips & VODs: browse a channel's clips (most viewed by period), past broadcasts, highlights and uploads,
@@ -73,3 +74,182 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Twitch only allows hex colors for **Turbo or Prime** accounts; otherwise the
   first color change fails with a 400 error and cycling switches off.
 - Chat color is account-wide on Twitch, so it changes in every channel, not only the selected one.
+
+## Screenshots
+
+Each state is shown on a phone (390×760) and on a desktop-sized window (1280×800). They come from the end-to-end test, which fakes every Twitch response, so the names, pictures and thumbnails are placeholders and the video box is a stand-in for Twitch's player. Regenerate them with `SHOTS=1 npm run test:e2e` (they land in `docs/screenshots/`).
+
+### Chat
+
+**Chat tabs, history, first-time chatter flag, live status**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/chat-mobile.png" width="240" alt="Chat tabs, history, first-time chatter flag, live status (phone)"> | <img src="docs/screenshots/chat-desktop.png" width="520" alt="Chat tabs, history, first-time chatter flag, live status (desktop)"> |
+
+**Composer with emotes rendered inline**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/composer-mobile.png" width="240" alt="Composer with emotes rendered inline (phone)"> | <img src="docs/screenshots/composer-desktop.png" width="520" alt="Composer with emotes rendered inline (desktop)"> |
+
+**Emote autocomplete**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/emote-autocomplete-mobile.png" width="240" alt="Emote autocomplete (phone)"> | <img src="docs/screenshots/emote-autocomplete-desktop.png" width="520" alt="Emote autocomplete (desktop)"> |
+
+**Highlights, mentions, deleted and ignored messages**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/message-flags-mobile.png" width="240" alt="Highlights, mentions, deleted and ignored messages (phone)"> | <img src="docs/screenshots/message-flags-desktop.png" width="520" alt="Highlights, mentions, deleted and ignored messages (desktop)"> |
+
+**Clip links shown as cards**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/clip-cards-mobile.png" width="240" alt="Clip links shown as cards (phone)"> | <img src="docs/screenshots/clip-cards-desktop.png" width="520" alt="Clip links shown as cards (desktop)"> |
+
+**Raid notices**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/raid-mobile.png" width="240" alt="Raid notices (phone)"> | <img src="docs/screenshots/raid-desktop.png" width="520" alt="Raid notices (desktop)"> |
+
+**GIFs from Tier 2+ subscribers**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/gifs-mobile.png" width="240" alt="GIFs from Tier 2+ subscribers (phone)"> | <img src="docs/screenshots/gifs-desktop.png" width="520" alt="GIFs from Tier 2+ subscribers (desktop)"> |
+
+**"Gigantify an Emote" messages**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/giant-emotes-mobile.png" width="240" alt=""Gigantify an Emote" messages (phone)"> | <img src="docs/screenshots/giant-emotes-desktop.png" width="520" alt=""Gigantify an Emote" messages (desktop)"> |
+
+**Channel points redemptions that show in chat**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/channel-points-mobile.png" width="240" alt="Channel points redemptions that show in chat (phone)"> | <img src="docs/screenshots/channel-points-desktop.png" width="520" alt="Channel points redemptions that show in chat (desktop)"> |
+
+**Chat history opt-in prompt**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/history-optin-mobile.png" width="240" alt="Chat history opt-in prompt (phone)"> | <img src="docs/screenshots/history-optin-desktop.png" width="520" alt="Chat history opt-in prompt (desktop)"> |
+
+### Channels and account
+
+**Followed channels, live ones first**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/channel-picker-mobile.png" width="240" alt="Followed channels, live ones first (phone)"> | <img src="docs/screenshots/channel-picker-desktop.png" width="520" alt="Followed channels, live ones first (desktop)"> |
+
+**Follow status in the info bar (opens Twitch to change it)**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/follow-button-mobile.png" width="240" alt="Follow status in the info bar (opens Twitch to change it) (phone)"> | <img src="docs/screenshots/follow-button-desktop.png" width="520" alt="Follow status in the info bar (opens Twitch to change it) (desktop)"> |
+
+**Account menu: Settings, Your clips, Log out**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/account-menu-mobile.png" width="240" alt="Account menu: Settings, Your clips, Log out (phone)"> | <img src="docs/screenshots/account-menu-desktop.png" width="520" alt="Account menu: Settings, Your clips, Log out (desktop)"> |
+
+### Video
+
+**Embedded Twitch player**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/video-mobile.png" width="240" alt="Embedded Twitch player (phone)"> | <img src="docs/screenshots/video-desktop.png" width="520" alt="Embedded Twitch player (desktop)"> |
+
+**Native player quality menu**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/video-quality-mobile.png" width="240" alt="Native player quality menu (phone)"> | <img src="docs/screenshots/video-quality-desktop.png" width="520" alt="Native player quality menu (desktop)"> |
+
+**Bits and channel points hand-off button**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/bits-and-points-mobile.png" width="240" alt="Bits and channel points hand-off button (phone)"> | <img src="docs/screenshots/bits-and-points-desktop.png" width="520" alt="Bits and channel points hand-off button (desktop)"> |
+
+### Clips and VODs
+
+**Browse a channel's clips and VODs**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/browse-clips-mobile.png" width="240" alt="Browse a channel's clips and VODs (phone)"> | <img src="docs/screenshots/browse-clips-desktop.png" width="520" alt="Browse a channel's clips and VODs (desktop)"> |
+
+**Playing a clip, with Share**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/clip-player-mobile.png" width="240" alt="Playing a clip, with Share (phone)"> | <img src="docs/screenshots/clip-player-desktop.png" width="520" alt="Playing a clip, with Share (desktop)"> |
+
+**Create a clip of the live stream**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/create-clip-mobile.png" width="240" alt="Create a clip of the live stream (phone)"> | <img src="docs/screenshots/create-clip-desktop.png" width="520" alt="Create a clip of the live stream (desktop)"> |
+
+**Clips you made through Yappa**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/your-clips-mobile.png" width="240" alt="Clips you made through Yappa (phone)"> | <img src="docs/screenshots/your-clips-desktop.png" width="520" alt="Clips you made through Yappa (desktop)"> |
+
+### Moderation
+
+**Message actions**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/mod-actions-mobile.png" width="240" alt="Message actions (phone)"> | <img src="docs/screenshots/mod-actions-desktop.png" width="520" alt="Message actions (desktop)"> |
+
+**Chat modes**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/chat-modes-mobile.png" width="240" alt="Chat modes (phone)"> | <img src="docs/screenshots/chat-modes-desktop.png" width="520" alt="Chat modes (desktop)"> |
+
+**AutoMod queue**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/automod-mobile.png" width="240" alt="AutoMod queue (phone)"> | <img src="docs/screenshots/automod-desktop.png" width="520" alt="AutoMod queue (desktop)"> |
+
+**User card with follow age and quick timeouts**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/user-card-mobile.png" width="240" alt="User card with follow age and quick timeouts (phone)"> | <img src="docs/screenshots/user-card-desktop.png" width="520" alt="User card with follow age and quick timeouts (desktop)"> |
+
+### Settings and color cycling
+
+**Settings**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/settings-mobile.png" width="240" alt="Settings (phone)"> | <img src="docs/screenshots/settings-desktop.png" width="520" alt="Settings (desktop)"> |
+
+**Light theme**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/light-theme-mobile.png" width="240" alt="Light theme (phone)"> | <img src="docs/screenshots/light-theme-desktop.png" width="520" alt="Light theme (desktop)"> |
+
+**Chat color cycling**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/color-cycling-mobile.png" width="240" alt="Chat color cycling (phone)"> | <img src="docs/screenshots/color-cycling-desktop.png" width="520" alt="Chat color cycling (desktop)"> |
+

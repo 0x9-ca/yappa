@@ -143,7 +143,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       return json({ ok: true });
 
     case "GET /api/following":
-      return json(await stub.followed());
+      return json(await stub.followed(url.searchParams.has("fresh")));
 
     case "GET /api/status":
       return json(await stub.status());

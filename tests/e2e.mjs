@@ -21,6 +21,20 @@ const browser = await chromium.launch({
 });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true });
 const page = await ctx.newPage();
+// README gallery: `SHOTS=1 npm run test:e2e` also saves each state at phone and desktop size to docs/screenshots.
+const galleryDir = fileURLToPath(new URL("../docs/screenshots", import.meta.url));
+async function shot(name) {
+  if (!process.env.SHOTS) return;
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(galleryDir, { recursive: true });
+  await page.screenshot({ path: galleryDir + "/" + name + "-mobile.png" });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await sleep(350);
+  await page.screenshot({ path: galleryDir + "/" + name + "-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 760 });
+  await sleep(350);
+}
+
 await page.addInitScript(() => {
   // Stand-in for Document Picture-in-Picture (not available headless): a same-origin popup.
   window.documentPictureInPicture = { requestWindow: async (o) => window.open("", "pip", "width=" + o.width + ",height=" + o.height) };
@@ -45,6 +59,7 @@ let statusCalls = 0;
 let statusDown = false, slowSend = 0;
 const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
 let followingMode = "ok";
+let followedExtra = false;
 let embedScriptFails = false;
 let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
 let masterFails = false;
@@ -113,11 +128,12 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/api/chat/subscribe" && subFailures.length) { log.subs.push("failed:" + route.request().postDataJSON().channel); return route.fulfill({ status: 502, json: { ok: false, error: subFailures.shift() } }); }
     if (u.pathname === "/api/following") {
       log.following = (log.following || 0) + 1;
+      if (u.searchParams.has("fresh")) log.followingFresh = (log.followingFresh || 0) + 1;
       if (followingMode === "scope") return j({ ok: false, error: "Missing user:read:follows", needsScope: true });
       return j({ ok: true,
         live: [{ id: "777", login: "targetchan", name: "TargetChan", title: "speedrun attempts", game: "Celeste", viewers: 4321, startedAt: new Date().toISOString() },
                { id: "999", login: "uwoslab", name: "UwoSlab", title: "Building a chat app", game: "Software and Game Development", viewers: 1234, startedAt: new Date().toISOString() }],
-        channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "uwoslab", name: "UwoSlab" }] });
+        channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "uwoslab", name: "UwoSlab" }, ...(followedExtra ? [{ id: ids.otherchan, login: "otherchan", name: "OtherChan" }] : [])] });
     }
     if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
     if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", displayName: "TestUser", avatar: noAvatar ? null : "https://img.test/avatar.png", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
@@ -216,7 +232,7 @@ await ctx.route("**/*", async (route) => {
     } };
     Object.assign(Twitch.Player, { PLAYBACK_BLOCKED: "playbackBlocked", PLAY: "play", PLAYING: "playing", PAUSE: "pause", ENDED: "ended", OFFLINE: "offline", ONLINE: "online" });` });
   if (u.host === "clips.twitch.tv" && u.pathname === "/embed") { log.clipEmbeds = [...(log.clipEmbeds || []), u.search]; return route.fulfill({ body: "<body style='margin:0;background:#111;color:#bf94ff;display:grid;place-items:center;height:100vh;font:16px sans-serif'>clip embed (test)</body>", contentType: "text/html" }); }
-  if (u.host === "player.twitch.tv") { log.player.push(u.search); return route.fulfill({ body: "<body style='margin:0;background:#111;color:#9147ff;display:grid;place-items:center;height:100vh;font:20px sans-serif'>▶ " + u.searchParams.get("channel") + "</body>", contentType: "text/html" }); }
+  if (u.host === "player.twitch.tv") { log.player.push(u.search); return route.fulfill({ body: "<meta charset=utf-8><body style='margin:0;background:#111;color:#9147ff;display:grid;place-items:center;height:100vh;font:20px sans-serif'>Twitch player (test stand-in): " + u.searchParams.get("channel") + "</body>", contentType: "text/html; charset=utf-8" }); }
   if (u.host === "www.twitch.tv" && u.pathname.startsWith("/embed/")) { log.chatEmbeds = [...(log.chatEmbeds || []), u.pathname + u.search]; return route.fulfill({ body: "<body style='margin:0;background:#18181b;color:#adadb8;display:grid;place-items:center;height:100vh;font:15px sans-serif'>Twitch chat embed (test)</body>", contentType: "text/html" }); }
   if (u.host === "api.betterttv.net") {
     if (u.pathname === "/3/cached/emotes/global") return j([{ id: "bg1", code: "OMEGALUL" }]);
@@ -224,7 +240,12 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/3/cached/frankerfacez/emotes/global") return j([{ id: 9, code: "ZrehplaR", images: { "1x": "https://cdn.betterttv.net/frankerfacez_emote/9/1", "2x": "https://cdn.betterttv.net/frankerfacez_emote/9/2" } }]);
     return j([]);
   }
-  if (/img\.test/.test(u.href)) return route.fulfill({ body: svg(200), contentType: "image/svg+xml" });
+  if (/img\.test/.test(u.href)) {
+    // Varied stand-in pictures (so screenshots aren't a wall of identical blobs): a 16:9 tile for thumbnails, a disc otherwise.
+    const hue = [...u.pathname].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+    const wide = /clip-|vod|thumb/.test(u.pathname);
+    return route.fulfill({ body: wide ? `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue},60%,45%)"/><stop offset="1" stop-color="hsl(${(hue + 60) % 360},60%,25%)"/></linearGradient></defs><rect width="320" height="180" fill="url(#g)"/></svg>` : svg(hue), contentType: "image/svg+xml" });
+  }
   // A stand-in GIF host (the real ones are on giphy.com), 4:3 so the size caps are visible.
   if (/(^|\.)giphy\.com$/.test(u.host)) { log.gifs = [...(log.gifs || []), { url: u.href, referer: route.request().headers().referer || null }]; return route.fulfill({ body: '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360"><rect width="480" height="360" fill="#e0457b"/><text x="240" y="190" font-size="48" text-anchor="middle" fill="#fff">GIF</text></svg>', contentType: "image/svg+xml" }); }
   if (u.host === "7tv.io" && u.pathname === "/v3/emote-sets/global") return j({ emotes: [{ name: "PETPET", flags: 1, data: { host: { url: "//cdn.7tv.app/emote/P" } } }] });
@@ -288,6 +309,7 @@ s = await state();
 check("unread + mention badge on background tab", s.tabs === "UwoSlab[MOD](2!) | OtherChan*", s.tabs);
 check("active tab shows only its own messages", s.visibleMsgs.some((t) => t.includes("hello other chan")) && !s.visibleMsgs.some((t) => t.includes("buy followers")));
 await page.screenshot({ path: dir + "/t1-tabs.png" });
+await shot("chat");
 
 await page.click(".tab:first-child .tab-name");
 s = await state();
@@ -299,6 +321,7 @@ check("mod actions on others' messages", modBtns.join(",") === "Reply,Delete,Tim
 await page.tap('li[data-id="u2"] .body');
 await sleep(100);
 await page.screenshot({ path: dir + "/t2-actions.png" });
+await shot("mod-actions");
 await page.click('li[data-id="u2"] .actions button:has-text("Timeout")');
 await page.tap('li[data-id="u2"] .body'); await page.click('li[data-id="u2"] .actions button:has-text("Ban")');
 await sleep(150);
@@ -317,6 +340,7 @@ await page.keyboard.type("hi :cat");
 s = await state();
 check(":prefix popup", s.suggest && s.suggest.startsWith("catJAM"), s.suggest);
 await page.screenshot({ path: dir + "/t3-suggest.png" });
+await shot("emote-autocomplete");
 await page.keyboard.press("Enter");
 s = await state();
 check("Enter accepts after ':'", s.input === "hi catJAM ", JSON.stringify(s.input));
@@ -374,6 +398,7 @@ await page.click("#cycle");
 await page.waitForFunction(() => document.getElementById("cycle").textContent === "Stop cycling");
 check("toggle on → POST /api/cycle and header shows new color", JSON.stringify(log.cycle) === "[true]" && (await page.textContent("#color")) === "#11AA22 - 1", await page.textContent("#color"));
 await page.screenshot({ path: dir + "/t5-cycle.png" });
+await shot("color-cycling");
 await page.click("#sheet-close");
 await page.fill("#message", "colorful message");
 await page.press("#message", "Enter");
@@ -418,6 +443,7 @@ check("deleted message keeps its content + flag", await page.$eval('li[data-id="
 check("banned user's message keeps content + flag", await page.$eval('li[data-id="ban1"]', (l) => l.classList.contains("deleted") && l.querySelector(".body").textContent === "spam spam" && l.textContent.includes("timed out or banned")));
 await page.evaluate(() => document.querySelector('.messages:not([hidden])').scrollTop = 1e9);
 await page.screenshot({ path: dir + "/t4-flags.png" });
+await shot("message-flags");
 
 // ---- hidden: unread in title ----
 await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); });
@@ -461,6 +487,7 @@ await page.click("#modes-panel input[type=checkbox] >> nth=1"); // emote-only
 await page.waitForFunction(() => document.getElementById("modes").textContent.includes("Emote-only"), null, { timeout: 3000 });
 check("modes panel → emote-only toggle", log.settings.at(-1).emote_mode === true);
 await page.screenshot({ path: dir + "/t7-modes.png" });
+await shot("chat-modes");
 await page.click("#modes-panel .panel-title button");
 // live settings event
 cur().send(msg("notification", { subscription: { type: "channel.chat_settings.update" }, event: { broadcaster_user_id: "999", emote_mode: false, follower_mode: true, follower_mode_duration_minutes: 10, slow_mode: false, slow_mode_wait_time_seconds: null, subscriber_mode: true, unique_chat_mode: false } }));
@@ -484,6 +511,7 @@ cur().send(msg("notification", { subscription: { type: "automod.message.update" 
 await sleep(100);
 check("AutoMod resolution shown", (await page.textContent('.automod[data-automod-id="held1"] .am-actions')) === "Allowed by testuser");
 await page.screenshot({ path: dir + "/t8-automod.png" });
+await shot("automod");
 // User card
 cur().send(chat("999", "card1", "Spammer", "333", "buy followers again"));
 await page.waitForSelector('li[data-id="card1"]');
@@ -492,6 +520,7 @@ await page.waitForFunction(() => document.getElementById("sheet-body").textConte
 const card = await page.textContent("#sheet-body");
 check("user card: profile, follow age, recent messages, mod timeouts", card.includes("Following since") && card.includes("I sell followers") && card.includes("Recent messages here (1)") && card.includes("Timeout 1h"), card.slice(0, 200));
 await page.screenshot({ path: dir + "/t9-card.png" });
+await shot("user-card");
 await page.click('#sheet-body button:has-text("Timeout 1h")');
 check("card timeout 1h", log.mods.at(-1).action === "timeout" && log.mods.at(-1).duration === 3600 && log.mods.at(-1).user_id === "333", JSON.stringify(log.mods.at(-1)));
 // Hide user
@@ -528,6 +557,7 @@ await page.click('#sheet-body .rule-form button');
 check("rules editor lists both rules", (await page.textContent("#sheet-body .rules")).includes("“deploy now”only from @host2"), await page.textContent("#sheet-body .rules"));
 await page.click('#sheet-body .seg button:has-text("XL")');
 await page.screenshot({ path: dir + "/t10-settings.png" });
+await shot("settings");
 await page.click("#sheet-close");
 cur().send(chat("999", "hl1", "Host", "704", "GIVEAWAY starts now"));
 cur().send(chat("999", "hl2", "Host", "704", "giveaways are fun")); // not a whole-word match
@@ -569,6 +599,7 @@ await page.waitForSelector("#video:not([hidden]) iframe", { timeout: 5000 });
 const src = await page.getAttribute("#video iframe", "src");
 check("player for the live tab, with parent=", src.includes("channel=uwoslab") && src.includes("parent=yappa.test"), src);
 await page.screenshot({ path: dir + "/t11-video-phone.png" });
+await shot("video");
 const vbox = await page.$eval("#video", (v) => { const r = v.getBoundingClientRect(); return { w: r.width, h: r.height }; });
 check("phone: video full width and exactly 16:9, so no letterbox bars", vbox.w >= 388 && Math.abs(vbox.w / vbox.h - 16 / 9) < 0.02, JSON.stringify(vbox));
 await page.setViewportSize({ width: 430, height: 932 });
@@ -729,6 +760,7 @@ await page.setViewportSize({ width: 390, height: 760 });
   const btn = await page.$eval("#twitch-btn", (b) => ({ disabled: b.disabled, label: b.getAttribute("aria-label"), next: b.previousElementSibling.id, w: Math.round(b.getBoundingClientRect().width) }));
   check("button sits right after the emote button, small, labelled", !btn.disabled && btn.next === "emote-btn" && btn.w < 44 && btn.label.includes("Bits and channel points"), JSON.stringify(btn));
   await page.screenshot({ path: dir + "/t26-twitch-btn.png" });
+  await shot("bits-and-points");
   await page.evaluate(() => {
     window.__calls = [];
     appFallbackMs = 150;
@@ -991,6 +1023,7 @@ await page.setViewportSize({ width: 390, height: 760 });
   const tapH = await page.$eval("#quality-menu button", (b) => Math.round(b.getBoundingClientRect().height));
   check("menu rows are touch-sized", tapH >= 44, String(tapH));
   await page.screenshot({ path: dir + "/t30-quality-menu.png" });
+  await shot("video-quality");
   await page.click('#quality-menu button:has-text("480p")');
   const picked = await page.evaluate(() => ({ src: document.querySelector("#video video").getAttribute("src"), saved: JSON.parse(localStorage.getItem("settings")).nativeQuality, label: document.getElementById("quality-btn").textContent, open: !document.getElementById("quality-menu").hidden }));
   check("picking 480p plays that rendition's own playlist, remembers it, shows it, closes the menu",
@@ -1067,6 +1100,7 @@ ce = await page.evaluate(() => ({ text: composer.getText(), imgs: [...document.q
 check("typing continues normally after conversion (caret stays at end)", ce.imgs.join(",") === "Kappa,catJAM,OMEGALUL" && ce.text === "hi Kappa catJAM OMEGALUL and more" && ce.caretAtEnd, JSON.stringify(ce));
 await sleep(400);
 await page.screenshot({ path: dir + "/t14-composer.png" });
+await shot("composer");
 check("emotes stay real text in the box (what phone keyboards read for predictions)", await page.evaluate(() => {
   const box = document.getElementById("message");
   return !box.querySelector("img") && box.textContent.replace(/\u00a0/g, " ") === composer.getText();
@@ -1127,6 +1161,7 @@ check("repeated clip fetched once; missing clip shows no card",
   JSON.stringify(log.clips));
 await page.evaluate(() => document.querySelector('li[data-id="clip1"]').scrollIntoView());
 await page.screenshot({ path: dir + "/t16-clips.png" });
+await shot("clip-cards");
 
 // =============== raids ===============
 const raid = (fromId, fromName, to, viewers) => msg("notification", { subscription: { type: "channel.raid" }, event: { from_broadcaster_user_id: fromId, from_broadcaster_user_login: fromName.toLowerCase(), from_broadcaster_user_name: fromName, to_broadcaster_user_id: ids[to] || "1", to_broadcaster_user_login: to, to_broadcaster_user_name: to === "targetchan" ? "TargetChan" : to, viewers } });
@@ -1136,6 +1171,7 @@ await page.waitForSelector(".messages:not([hidden]) .notice.raid");
 const raidText = await page.textContent(".messages:not([hidden]) .notice.raid");
 check("raid notice + countdown on watched tab", raidText.includes("UwoSlab raided TargetChan with 1,234 viewers.") && raidText.includes("Following in 5s"), raidText);
 await page.screenshot({ path: dir + "/t13-raid.png" });
+await shot("raid");
 await page.waitForFunction(() => location.hash === "#targetchan", null, { timeout: 8000 });
 await page.waitForFunction(() => document.body.innerText.includes("Joined #TargetChan"), null, { timeout: 5000 });
 check("followed the raid: new tab opened, active, joined", (await state()).tabs.includes("TargetChan*") && log.subs.some((x) => x.startsWith("targetchan@")), (await state()).tabs);
@@ -1208,6 +1244,7 @@ check("focusing the channel box lists followed channels: live first by viewers, 
 const flBox = await page.$eval("#follow-list", (b) => { const r = b.getBoundingClientRect(), h = document.querySelector("header").getBoundingClientRect(); return { top: Math.round(r.top - h.bottom), w: Math.round(r.width) }; });
 check("dropdown sits under the header, full width on phones", flBox.top <= 0 && flBox.w >= 360, JSON.stringify(flBox));
 await page.screenshot({ path: dir + "/t20-following.png" });
+await shot("channel-picker");
 await page.type("#channel", "zet");
 check("typing filters the list", JSON.stringify(await page.$$eval("#follow-list .fl-row", (r) => r.map((x) => x.textContent))) === '["ZetaChan"]');
 await page.fill("#channel", "");
@@ -1233,6 +1270,31 @@ await page.keyboard.press("Escape");
 check("Escape closes the list", await page.$eval("#follow-list", (b) => b.hidden));
 followingMode = "ok";
 
+// =============== follow button ===============
+{
+  await page.evaluate(() => { following = null; });
+  await page.evaluate(() => openTab("uwoslab"));
+  await page.waitForFunction(() => active && active.login === "uwoslab" && active.broadcaster);
+  await page.waitForSelector("#follow-btn:not([hidden])");
+  check("follow button shows 'following' for a followed channel", await page.$eval("#follow-btn", (b) => b.classList.contains("on") && b.getAttribute("aria-pressed") === "true" && /unfollow/i.test(b.title)));
+  await page.screenshot({ path: dir + "/t60-follow-on.png" });
+  await shot("follow-button");
+  await page.evaluate(() => openTab("otherchan"));
+  await page.waitForFunction(() => active && active.login === "otherchan" && active.broadcaster);
+  await page.waitForFunction(() => !document.getElementById("follow-btn").classList.contains("on"));
+  check("follow button is outline and offers Follow for a channel you don't follow", await page.$eval("#follow-btn", (b) => !b.hidden && b.getAttribute("aria-pressed") === "false" && /^Follow /.test(b.title)), await page.$eval("#follow-btn", (b) => b.title));
+  await page.evaluate(() => { window.__calls = []; launchers.window = (u, n) => { __calls.push(["window", u, n || ""]); return {}; }; });
+  const fb = log.following;
+  await page.tap("#follow-btn");
+  check("tapping it opens the channel on Twitch", JSON.stringify(await page.evaluate(() => __calls)) === '[["window","https://www.twitch.tv/otherchan","_blank"]]', JSON.stringify(await page.evaluate(() => __calls)));
+  followedExtra = true; // the user followed on Twitch meanwhile
+  await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); document.dispatchEvent(new Event("visibilitychange")); });
+  await page.waitForFunction(() => document.getElementById("follow-btn").classList.contains("on"));
+  check("coming back refreshes it (fresh fetch)", log.following === fb + 1 && log.followingFresh === 1, String(log.followingFresh));
+  await page.evaluate(() => openTab("uwoslab"));
+  followedExtra = false;
+}
+
 // =============== chat history opt-in ===============
 {
   await page.evaluate(() => { settings.history = null; saveSettings(); });
@@ -1244,6 +1306,7 @@ followingMode = "ok";
     log.history.length === histBefore && ask.includes("Load chat history?") && ask.includes("recent-messages.robotty.de") &&
     (await page.getAttribute(".history-ask a.link", "href")) === "https://recent-messages.robotty.de/", ask);
   await page.screenshot({ path: dir + "/t21-history-optin.png" });
+  await shot("history-optin");
   // A live message arrives before opting in; history must merge in above it, in time order.
   cur().send(chat("666", "live-before-optin", "Viewer", "701", "live message before opting in"));
   await page.waitForSelector('li[data-id="live-before-optin"]');
@@ -1320,6 +1383,7 @@ followingMode = "ok";
   check("Light: bright names darkened enough to read on white", lum(lt.yellow) <= 0.31 && lum(lt.yellow) > 0.2, lt.yellow);
   await page.click("#sheet-close");
   await page.screenshot({ path: dir + "/t23-light.png" });
+  await shot("light-theme");
   await openSettingsUI();
   await page.screenshot({ path: dir + "/t24-light-settings.png" });
   await page.click("#sheet-close");
@@ -1445,6 +1509,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("marked messages get their own background; a mention in one still shows as a mention", colors.pts1 !== colors.pts4 && colors.pts5 === "rgb(92, 22, 24)", JSON.stringify(colors));
   await page.evaluate(() => document.querySelector('li[data-id="pts1"]').scrollIntoView());
   await page.screenshot({ path: dir + "/t28-points.png" });
+  await shot("channel-points");
   // Loaded history uses IRC tags for the same things.
   const hist = await page.evaluate(() => {
     const line = (tags) => ircToEvent("@" + tags + ";tmi-sent-ts=1;user-id=9;display-name=X :x!x@x PRIVMSG #c :hi");
@@ -1470,6 +1535,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("GIF requests don't send a referrer", g.rp === "no-referrer" && log.gifs.every((x) => x.referer === null), JSON.stringify(log.gifs));
   await page.evaluate(() => document.querySelector('li[data-id="gif1"]').scrollIntoView());
   await page.screenshot({ path: dir + "/t29-gif.png" });
+  await shot("gifs");
   // Anything that isn't https is shown as text and never loaded.
   const before = log.gifs.length;
   cur().send(chat("999", "gif2", "Gifster", "901", "bad", { fragments: [{ type: "gif", text: "[evil GIF]", gif: { id: "x", url: "http://tracker.example/pixel.gif" } }, { type: "gif", text: "[js GIF]", gif: { id: "y", url: "javascript:alert(1)" } }] }));
@@ -1518,6 +1584,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("a gigantified message without any emote doesn't break", await page.$eval('li[data-id="giga3"] .body', (b) => b.textContent === "no emote here") && (await look("giga3")).length === 0);
   await page.evaluate(() => document.querySelector('li[data-id="giga1"]').scrollIntoView());
   await page.screenshot({ path: dir + "/t31-gigantified.png" });
+  await shot("giant-emotes");
   // History: the raw IRC line carries msg-id=gigantified-emote-message (shape taken from real chat).
   const hist = await page.evaluate(() => {
     const ev = ircToEvent("@badge-info=;badges=;color=#FF7F50;display-name=Spender;emotes=25:0-4;id=giga-hist;msg-id=gigantified-emote-message;tmi-sent-ts=" + (Date.now() - 9000) + ";user-id=951 :spender!spender@spender.tmi.twitch.tv PRIVMSG #uwoslab :Kappa");
@@ -1562,6 +1629,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const cards = await page.$$eval("#browse-body .bcard", (cs) => cs.map((c) => ({ t: c.querySelector(".bt").textContent, s: c.querySelector(".bs").textContent, d: c.querySelector(".dur").textContent, img: c.querySelector("img").getAttribute("src") })));
   check("cards show thumbnail, length, title, views, age, category and clipper", cards.length === 3 && cards[0].d === "0:27" && cards[0].s === "12.3k views · 2d ago · Just Chatting · by ClipperT1".replace("T1", "1") && cards[0].img === "https://img.test/clip-TopClip1.jpg", JSON.stringify(cards[0]));
   await page.screenshot({ path: dir + "/t32-browse.png" });
+  await shot("browse-clips");
   await page.click('#browse-body .browse-more');
   await page.waitForFunction(() => document.querySelectorAll("#browse-body .bcard").length === 5);
   check("Load more fetches the next page by cursor, then the button goes away", log.browse.at(-1) === "/api/channel/clips?broadcaster_id=999&period=all&after=c1" && !(await page.$("#browse-body .browse-more")));
@@ -1590,6 +1658,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const vp = await page.evaluate(() => ({ src: document.querySelector(".browse-player").src, link: document.querySelector("#browse-body a.btn.small").href, title: document.querySelector("#browse-body .ptitle").textContent }));
   check("a VOD plays in Twitch's own embed (with parent=), and can be opened on Twitch", vp.src === "https://player.twitch.tv/?video=v2002&parent=yappa.test&autoplay=true" && vp.link === "https://www.twitch.tv/videos/2002", JSON.stringify(vp));
   await page.screenshot({ path: dir + "/t33-browse-player.png" });
+  await shot("clip-player");
   await page.click('#browse-body button:has-text("Back")');
   await page.waitForSelector("#browse-body .bcard");
   check("Back returns to the list (same tab, no player)", !(await page.$("#browse-body iframe")) && (await page.$$("#browse-body .bcard")).length === 1);
@@ -1634,6 +1703,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const lens = await page.$$eval("#browse-body .clipper button", (bs) => bs.map((b) => b.textContent));
   check("live with the permission: a title box and 15 / 30 / 60 second buttons", JSON.stringify(lens) === '["Clip last 15s","Clip last 30s","Clip last 60s"]' && !!(await page.$("#clip-title")), JSON.stringify(lens));
   await page.screenshot({ path: dir + "/t34-clipper.png" });
+  await shot("create-clip");
   await page.fill("#clip-title", "great play");
   await page.evaluate(() => composer.setText(""));
   const sentBeforeClip = log.sent.length;
@@ -1705,6 +1775,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
     menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items) === '["Settings","Your clips","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
   await page.screenshot({ path: dir + "/t35-account-menu.png" });
+  await shot("account-menu");
   await page.keyboard.press("Escape");
   check("Escape closes it", await page.$eval("#account-menu", (m) => m.hidden) && (await page.getAttribute("#profile-btn", "aria-expanded")) === "false");
   await page.click("#profile-btn");
@@ -1736,6 +1807,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("Your clips lists the clips you made through Yappa (no tabs or create box), and says why only those",
     mine.title === "Your clips" && !mine.tabs && !mine.clipper && /made with Yappa/.test(mine.note) && /aren't here/.test(mine.note) && JSON.stringify(mine.titles) === '["My first clip","My second clip"]', JSON.stringify(mine));
   await page.screenshot({ path: dir + "/t36-your-clips.png" });
+  await shot("your-clips");
   await page.click("#browse-body .browse-more");
   await page.waitForFunction(() => document.querySelectorAll("#browse-body .bcard").length === 3);
   check("Load more pages through them", log.mine.at(-1) === "?after=20" && !(await page.$("#browse-body .browse-more")));

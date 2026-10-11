@@ -1284,15 +1284,48 @@ function clipIdFrom(href) {
   return id && /^[A-Za-z0-9_-]{1,100}$/.test(id) ? id : null;
 }
 
-const clipCache = new Map(); // id -> Promise<clip | null>
-function fetchClip(id) {
-  if (!clipCache.has(id)) {
-    clipCache.set(id, api("/api/chat/clip?id=" + encodeURIComponent(id)).then((r) => {
-      if (!r.ok) clipCache.delete(id); // retry later if it was an error, not a missing clip
-      return r.ok ? r.clip : null;
-    }));
+const clipCache = new Map(); // id -> { promise: Promise<clip | null>, expires }
+const CLIP_RETRY_MS = [2000, 6000, 15000]; // after a failed lookup (Twitch busy, server updating, offline)
+const CLIP_MISSING_MS = 60000; // a clip Twitch doesn't know yet (brand new) or any more is looked up again after this
+let clipLookups = 0;
+const clipQueue = [];
+
+/** At most a few clip lookups at once: a page of history can link dozens of clips. */
+function queuedClipLookup(id) {
+  return new Promise((resolve) => {
+    const run = () => {
+      clipLookups++;
+      api("/api/chat/clip?id=" + encodeURIComponent(id)).then(resolve).finally(() => {
+        clipLookups--;
+        const next = clipQueue.shift();
+        if (next) next();
+      });
+    };
+    if (clipLookups < 4) run(); else clipQueue.push(run);
+  });
+}
+
+/** The clip, null if Twitch has none by that id, undefined if the lookup kept failing. */
+async function lookupClip(id) {
+  for (let attempt = 0; ; attempt++) {
+    const r = await queuedClipLookup(id);
+    if (r.ok) return r.clip;
+    if (attempt >= CLIP_RETRY_MS.length) return undefined;
+    await new Promise((res) => setTimeout(res, CLIP_RETRY_MS[attempt]));
   }
-  return clipCache.get(id);
+}
+
+function fetchClip(id) {
+  const hit = clipCache.get(id);
+  if (hit && hit.expires > Date.now()) return hit.promise;
+  const entry = { expires: Infinity };
+  entry.promise = lookupClip(id).then((clip) => {
+    if (clip === undefined) { clipCache.delete(id); return null; } // gave up: try again on the next message
+    if (clip === null) entry.expires = Date.now() + CLIP_MISSING_MS;
+    return clip;
+  });
+  clipCache.set(id, entry);
+  return entry.promise;
 }
 
 function fmtDuration(secs) {

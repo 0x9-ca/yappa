@@ -60,6 +60,7 @@ let statusDown = false, slowSend = 0;
 const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
 let followingMode = "ok";
 let followedExtra = false;
+let flakyClip = 0;
 let embedScriptFails = false;
 let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
 let masterFails = false;
@@ -153,6 +154,7 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/api/chat/clip") {
       const id = u.searchParams.get("id"); log.clips.push(id);
       if (id === "MissingClip") return j({ ok: true, clip: null });
+      if (id === "FlakySlug" && flakyClip++ < 1) return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
       if (id === "NewClip1" && newClipPolls++ < 1) return j({ ok: true, clip: null }); // not published yet
       return j({ ok: true, clip: { id, url: "https://clips.twitch.tv/" + id, title: id === "SecondSlug" ? "Second clip" : "An incredible play nobody saw coming and a very long title that wraps", broadcaster: "UwoSlab", creator: "Clipper", views: 12345, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting" } });
     }
@@ -1162,6 +1164,26 @@ check("repeated clip fetched once; missing clip shows no card",
 await page.evaluate(() => document.querySelector('li[data-id="clip1"]').scrollIntoView());
 await page.screenshot({ path: dir + "/t16-clips.png" });
 await shot("clip-cards");
+// A clip link in chat history gets its card too (merged in by time, like scrolled-back history).
+await page.evaluate(() => {
+  const ev = ircToEvent("@id=hist-clip;tmi-sent-ts=" + (Date.now() - 90000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #uwoslab :earlier https://clips.twitch.tv/SecondSlug");
+  renderMessage(active, ev, { merge: true, historical: true });
+});
+await page.waitForSelector('li[data-id="hist-clip"] .clip-card', { timeout: 3000 }).catch(() => {});
+check("clip link in history shows its card", (await page.$$('li[data-id="hist-clip"] .clip-card')).length === 1);
+await page.evaluate(() => {
+  const t = [...tabs.values()].find((x) => x !== active);
+  const ev = ircToEvent("@id=hist-clip2;tmi-sent-ts=" + (Date.now() - 80000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #" + t.login + " :bg https://clips.twitch.tv/FunnyClipSlug-AbC123");
+  renderMessage(t, ev, { merge: true, historical: true });
+});
+await sleep(300);
+check("clip card also appears in a background tab's history", (await page.$$('li[data-id="hist-clip2"] .clip-card')).length === 1);
+await page.evaluate(() => {
+  const ev = ircToEvent("@id=hist-flaky;tmi-sent-ts=" + (Date.now() - 70000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #uwoslab :try https://clips.twitch.tv/FlakySlug");
+  renderMessage(active, ev, { merge: true, historical: true });
+});
+await page.waitForSelector('li[data-id="hist-flaky"] .clip-card', { timeout: 6000 }).catch(() => {});
+check("a clip lookup that fails once is retried and the card appears", (await page.$$('li[data-id="hist-flaky"] .clip-card')).length === 1 && log.clips.filter((x) => x === "FlakySlug").length === 2, JSON.stringify(log.clips.filter((x) => x === "FlakySlug")));
 
 // =============== raids ===============
 const raid = (fromId, fromName, to, viewers) => msg("notification", { subscription: { type: "channel.raid" }, event: { from_broadcaster_user_id: fromId, from_broadcaster_user_login: fromName.toLowerCase(), from_broadcaster_user_name: fromName, to_broadcaster_user_id: ids[to] || "1", to_broadcaster_user_login: to, to_broadcaster_user_name: to === "targetchan" ? "TargetChan" : to, viewers } });

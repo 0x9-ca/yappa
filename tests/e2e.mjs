@@ -1838,6 +1838,22 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { window.__shared = []; navigator.share = async (d) => { window.__shared.push(d); }; });
   await page.click("#browse-body .brow >> nth=0 >> .bshare");
   check("Share on a card opens the share sheet with the clip's title and link", JSON.stringify(await page.evaluate(() => window.__shared)) === '[{"title":"My first clip","text":"My first clip","url":"https://clips.twitch.tv/MineOne"}]', JSON.stringify(await page.evaluate(() => window.__shared)));
+  // A share that never finishes (some Android browsers) makes later ones throw: copy instead of going dead.
+  await page.evaluate(() => {
+    window.__copied = []; window.__shareCalls = 0;
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t) => { window.__copied.push(t); } }, configurable: true });
+    navigator.share = (d) => { window.__shareCalls++; return window.__shareCalls === 1 ? new Promise(() => {}) : Promise.reject(new DOMException("An earlier share has not yet completed.", "InvalidStateError")); };
+  });
+  await page.click("#browse-body .brow >> nth=0 >> .bshare"); // never settles
+  await page.click("#browse-body .brow >> nth=1 >> .bshare");
+  await page.waitForFunction(() => window.__copied.length === 1);
+  check("after a share that never finished, the next one falls back to copying the link", JSON.stringify(await page.evaluate(() => window.__copied)) === '["https://clips.twitch.tv/MineTwo"]');
+  await page.waitForFunction(() => document.querySelectorAll("#browse-body .bshare")[1].textContent === "Share", null, { timeout: 4000 });
+  await page.evaluate(() => { navigator.share = () => Promise.reject(new DOMException("closed", "AbortError")); window.__copied = []; });
+  await page.click("#browse-body .brow >> nth=1 >> .bshare");
+  await sleep(150);
+  check("closing the share sheet is silent (no copy, label unchanged)", (await page.evaluate(() => window.__copied.length)) === 0 && (await page.textContent("#browse-body .brow >> nth=1 >> .bshare")) === "Share");
+  await page.waitForFunction(() => document.querySelectorAll("#browse-body .bshare")[1].textContent === "Share", null, { timeout: 4000 });
   // ...otherwise it copies the link.
   await page.evaluate(() => { delete navigator.share; window.__copied = []; Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t) => { window.__copied.push(t); } }, configurable: true }); });
   await page.click("#browse-body .brow >> nth=1 >> .bshare");

@@ -3267,14 +3267,18 @@ function browseSubline(item) {
 async function shareItem(item, button) {
   const data = { title: item.title || "Twitch", text: item.title || "", url: item.url };
   if (navigator.share) {
-    try { await navigator.share(data); } catch {} // closing the share sheet counts as an error; nothing to report
-    return;
+    try { await navigator.share(data); return; } catch (err) {
+      if (err && err.name === "AbortError") return; // closed the share sheet: nothing to report
+      // Anything else (some Android browsers never finish a share that went to another app and
+      // then refuse every later one with InvalidStateError) falls back to copying the link.
+    }
   }
-  const label = button.textContent;
+  const label = button.dataset.label || (button.dataset.label = button.textContent);
   let said;
   try { await navigator.clipboard.writeText(item.url); said = "Copied!"; } catch { said = "Couldn't copy"; }
   button.textContent = said;
-  setTimeout(() => { button.textContent = label; }, 1500);
+  clearTimeout(button.labelTimer);
+  button.labelTimer = setTimeout(() => { button.textContent = label; }, 1500);
 }
 
 function browseCard(b, item) {

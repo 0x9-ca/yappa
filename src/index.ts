@@ -4,7 +4,7 @@ import { renderMoved } from "./moved";
 import { PAGE_HEADERS, renderPage } from "./page";
 import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
-import { parseClipsQuery, parseCreateClip, parseVideosQuery } from "./browse";
+import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
 import { authorizeUrl } from "./twitch";
 
 export { ColorLoop } from "./color-loop";
@@ -236,6 +236,18 @@ async function handle(request: Request, env: Env): Promise<Response> {
       }
       const result = await stub.updateSettings(body.broadcaster_id, patch);
       return json(result, result.ok ? 200 : 502);
+    }
+
+    // Clips this user made through Yappa (Twitch can't list them by creator), with fresh details.
+    case "GET /api/my/clips": {
+      const offset = parseOffset(url.searchParams);
+      if (typeof offset === "string") return json({ ok: false, error: offset }, 400);
+      const page = await stub.myClips(offset, PAGE_SIZE);
+      if (!page.ids.length) return json({ ok: true, clips: [], cursor: null });
+      const clips = await publicApi.clipsByIds(env, url.origin, page.ids);
+      if (clips === null) return json({ ok: false, error: "Couldn't reach Twitch." }, 502);
+      const next = offset + page.ids.length;
+      return json({ ok: true, clips, cursor: next < page.total ? String(next) : null });
     }
 
     // Creating a clip needs the user's own token, so it goes through their Durable Object.

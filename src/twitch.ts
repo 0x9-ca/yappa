@@ -476,6 +476,15 @@ export async function getClipsPage(
   return { clips: body.data, cursor: body.pagination?.cursor ?? null };
 }
 
+/** Specific clips by id (up to 100). Unknown or deleted ids are simply left out. */
+export async function getClipsByIds(env: Env, accessToken: string, ids: string[]): Promise<Clip[]> {
+  if (!ids.length) return [];
+  const url = new URL(`${API_BASE}/clips`);
+  for (const id of ids.slice(0, 100)) url.searchParams.append("id", id);
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Clips");
+  return ((await res.json()) as { data: Clip[] }).data;
+}
+
 export interface Video {
   id: string;
   url: string;

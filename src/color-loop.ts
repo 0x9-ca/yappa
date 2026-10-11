@@ -60,9 +60,27 @@ interface Cycle {
 }
 
 export interface Status {
-  twitch: { login: string; userId: string; missingScopes: string[]; missingOptionalScopes: string[] } | null;
+  twitch: {
+    login: string;
+    userId: string;
+    displayName: string;
+    avatar: string | null;
+    missingScopes: string[];
+    missingOptionalScopes: string[];
+  } | null;
   cycle: Cycle;
 }
+
+/** Who the connected account is, for the account menu. Cached: it rarely changes. */
+interface Profile {
+  userId: string;
+  displayName: string;
+  avatar: string | null;
+  at: number;
+}
+
+const PROFILE_TTL_MS = 24 * 3600_000;
+const MAX_CLIP_HISTORY = 500;
 
 interface Following {
   channels: { id: string; login: string; name: string }[];
@@ -104,17 +122,35 @@ export class ColorLoop extends DurableObject<Env> {
 
   async status(): Promise<Status> {
     const [tokens, cycle] = await Promise.all([this.getTokens(), this.getCycle()]);
+    const profile = tokens ? await this.getProfile(tokens) : null;
     return {
       twitch: tokens
         ? {
             login: tokens.login,
             userId: tokens.userId,
+            displayName: profile?.displayName ?? tokens.login,
+            avatar: profile?.avatar ?? null,
             missingScopes: SCOPES.filter((s) => !tokens.scopes?.includes(s)),
             missingOptionalScopes: OPTIONAL_SCOPES.filter((s) => !tokens.scopes?.includes(s)),
           }
         : null,
       cycle,
     };
+  }
+
+  /** The account's display name and picture, refreshed at most daily. Never fails the caller. */
+  private async getProfile(tokens: Tokens): Promise<Profile | undefined> {
+    const stored = await this.ctx.storage.get<Profile>("profile");
+    if (stored && stored.userId === tokens.userId && Date.now() - stored.at < PROFILE_TTL_MS) return stored;
+    try {
+      const u = await this.withToken((t) => getUserById(this.env, t.accessToken, tokens.userId));
+      if (!u) return stored;
+      const fresh: Profile = { userId: tokens.userId, displayName: u.display_name, avatar: u.profile_image_url || null, at: Date.now() };
+      await this.ctx.storage.put("profile", fresh);
+      return fresh;
+    } catch {
+      return stored?.userId === tokens.userId ? stored : undefined; // try again next time
+    }
   }
 
   async connectTwitch(code: string, redirectUri: string): Promise<void> {
@@ -381,6 +417,9 @@ export class ColorLoop extends DurableObject<Env> {
     if (!tokens?.scopes?.includes("clips:edit")) return { ok: false, error: "Missing clips:edit", needsScope: true };
     try {
       const r = await this.withToken((t) => createClip(this.env, t.accessToken, broadcasterId, opts));
+      // Twitch can't list the clips someone made, so keep our own list (newest first).
+      const ids = await this.clipHistory(tokens.userId);
+      await this.ctx.storage.put("clips", { userId: tokens.userId, ids: [r.id, ...ids.filter((id) => id !== r.id)].slice(0, MAX_CLIP_HISTORY) });
       return { ok: true, id: r.id, editUrl: r.edit_url };
     } catch (err) {
       if (err instanceof TwitchError) {
@@ -389,6 +428,19 @@ export class ColorLoop extends DurableObject<Env> {
       }
       return { ok: false, error: (err as Error).message };
     }
+  }
+
+  /** Clip ids made through Yappa by this account (a different account's history doesn't count). */
+  private async clipHistory(userId: string): Promise<string[]> {
+    const stored = await this.ctx.storage.get<{ userId: string; ids: string[] }>("clips");
+    return stored && stored.userId === userId ? stored.ids : [];
+  }
+
+  /** One page of the ids of clips made through Yappa, newest first. */
+  async myClips(offset: number, limit: number): Promise<{ ids: string[]; total: number }> {
+    const tokens = await this.getTokens();
+    const history = tokens ? await this.clipHistory(tokens.userId) : [];
+    return { ids: history.slice(offset, offset + limit), total: history.length };
   }
 
   /** Channels the user follows, and which of them are live (for the channel picker). */
@@ -418,6 +470,7 @@ export class ColorLoop extends DurableObject<Env> {
   }
 
   async disconnectTwitch(): Promise<void> {
+    await this.ctx.storage.delete("profile");
     this.following = undefined;
     this.moderated = undefined;
     await this.setCycle(false);

@@ -35,6 +35,12 @@ export function parseClipsQuery(p: URLSearchParams, now = Date.now()): ClipsQuer
   return q;
 }
 
+/** Validates ?after= for the list of clips made through Yappa: a plain offset into it. */
+export function parseOffset(p: URLSearchParams): number | string {
+  const after = p.get("after") ?? "0";
+  return /^\d{1,6}$/.test(after) ? Number(after) : "Bad cursor.";
+}
+
 export interface VideosQuery {
   userId: string;
   type: "all" | "archive" | "highlight" | "upload";

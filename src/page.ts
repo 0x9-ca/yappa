@@ -44,11 +44,13 @@ export function renderPage(user: string): string {
         <button class="ghost" type="submit">Open</button>
       </form>
       <div class="account" id="account" hidden>
-        <button class="icon-btn" id="settings-btn" type="button" title="Settings" aria-label="Settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <button class="avatar-btn" id="profile-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account" aria-label="Account menu">
+          <span class="avatar-letter" id="avatar-letter"></span>
+          <img id="avatar-img" alt="" referrerpolicy="no-referrer" hidden>
         </button>
       </div>
       <div class="follow-list" id="follow-list" role="listbox" aria-label="Channels you follow" hidden></div>
+      <div class="account-menu" id="account-menu" role="menu" aria-label="Account" hidden></div>
     </header>
     <nav class="tabs" id="tabs" aria-label="Open channels" hidden></nav>
     <div id="banners">

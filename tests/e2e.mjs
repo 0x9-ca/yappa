@@ -48,6 +48,7 @@ let followingMode = "ok";
 let embedScriptFails = false;
 let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
 let masterFails = false;
+let noAvatar = false, noMyClips = false;
 let browseFails = false, noClipsScope = false, clipCreateError = null, newClipPolls = 0, sendFailure = null;
 const mkClip = (id, title, views, extra = {}) => ({ id, url: "https://clips.twitch.tv/" + id, title, creator: "Clipper" + id.slice(-1), broadcaster: "UwoSlab", views, createdAt: new Date(Date.now() - 2 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting", ...extra });
 const mkVideo = (id, title, views, seconds, type = "archive") => ({ id, url: "https://www.twitch.tv/videos/" + id, title, type, views, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/vod-" + id + ".jpg", seconds });
@@ -119,7 +120,14 @@ await ctx.route("**/*", async (route) => {
         channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "uwoslab", name: "UwoSlab" }] });
     }
     if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
-    if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
+    if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", displayName: "TestUser", avatar: noAvatar ? null : "https://img.test/avatar.png", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
+    if (u.pathname === "/auth/logout") { log.logouts = (log.logouts || 0) + 1; return j({ ok: true }); }
+    if (u.pathname === "/api/my/clips") {
+      log.mine = [...(log.mine || []), u.search];
+      if (noMyClips) return j({ ok: true, clips: [], cursor: null });
+      if (u.searchParams.get("after") === "20") return j({ ok: true, clips: [mkClip("MineThree", "Third of mine", 7)], cursor: null });
+      return j({ ok: true, clips: [mkClip("MineOne", "My first clip", 120), mkClip("MineTwo", "My second clip", 80)], cursor: "20" });
+    }
     if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan", alphachan: "AlphaChan" }[b.channel] || b.channel }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
     if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: new Date(Date.now() - 3 * 3600e3).toISOString() }]);
     if (u.pathname === "/api/chat/settings") { const b = body(); log.settings.push(b); Object.assign(chatSettings, b); delete chatSettings.broadcaster_id; return j({ ok: true, settings: chatSettings }); }
@@ -244,6 +252,8 @@ const state = () => page.evaluate(() => ({
   visibleMsgs: [...document.querySelectorAll(".messages:not([hidden]) > li")].map((l) => l.textContent.replace(/(Reply|Delete|Timeout|Ban)+$/, "")).slice(-4),
 }));
 let passed = 0, failed = 0;
+// Settings now lives in the account menu (your picture in the corner).
+const openSettingsUI = async () => { await page.click("#profile-btn"); await page.click('#account-menu button:has-text("Settings")'); };
 const check = (label, cond, extra = "") => {
   cond ? passed++ : failed++;
   console.log((cond ? "PASS " : "FAIL ") + label + (extra && !cond ? "  → " + extra : ""));
@@ -356,9 +366,9 @@ check("reload restores tabs", s.tabs.replace("*", "") === "UwoSlab[MOD] | OtherC
 check("no pinned-message requests", log.pinGets.length === 0, JSON.stringify(log.pinGets));
 
 // ---- color cycling: per message ----
-const hdr = await page.evaluate(() => { const h = document.querySelector("header"); const open = h.querySelector("form button").getBoundingClientRect(), gear = document.getElementById("settings-btn").getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), sameRow: Math.abs(open.top - gear.top) < 8 && gear.left > open.right, swatchInHeader: !!h.querySelector(".swatch") }; });
+const hdr = await page.evaluate(() => { const h = document.querySelector("header"); const open = h.querySelector("form button").getBoundingClientRect(), gear = document.getElementById("profile-btn").getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), sameRow: Math.abs(open.top - gear.top) < 8 && gear.left > open.right, swatchInHeader: !!h.querySelector(".swatch") }; });
 check("header is one row with ⚙ next to Open, no swatch", hdr.sameRow && !hdr.swatchInHeader && hdr.h < 70, JSON.stringify(hdr));
-await page.click("#settings-btn");
+await openSettingsUI();
 check("color controls in Settings", (await page.textContent("#sheet-body")).includes("Chat color") && !!(await page.$("#sheet-body #cycle")));
 await page.click("#cycle");
 await page.waitForFunction(() => document.getElementById("cycle").textContent === "Stop cycling");
@@ -368,7 +378,7 @@ await page.click("#sheet-close");
 await page.fill("#message", "colorful message");
 await page.press("#message", "Enter");
 await sleep(300);
-await page.click("#settings-btn");
+await openSettingsUI();
 await page.waitForFunction(() => document.getElementById("color").textContent.endsWith(" - 2"), null, { timeout: 3000 });
 check("sending a message updates the color (seen in Settings)", (await page.textContent("#color")).endsWith(" - 2"), await page.textContent("#color"));
 await page.click("#cycle");
@@ -491,7 +501,7 @@ check("hide user hides their messages", await page.$eval('li[data-id="card1"]', 
 cur().send(chat("999", "u2b", "Spammer", "333", "more spam"));
 await sleep(100);
 check("new messages from hidden user are hidden too", await page.$eval('li[data-id="u2b"]', (l) => getComputedStyle(l).display === "none"));
-await page.click("#settings-btn");
+await openSettingsUI();
 check("settings lists the ignored user, with Unignore", (await page.textContent("#sheet-body")).includes("Ignored users") && (await page.textContent("#sheet-body")).includes("Spammer") && !!(await page.$('#sheet-body button:has-text("Unignore")')));
 check("header shows the app icon (named for screen readers), not the word", await page.evaluate(() => { const h = document.querySelector("header h1"); const i = h.querySelector("img"); return !!i && i.alt === "Yappa" && h.textContent.trim() === "" && i.complete && i.naturalWidth > 0 && Math.round(i.getBoundingClientRect().width) === 30; }));
 await page.click('#sheet-body .row button:has-text("Unignore")');
@@ -509,7 +519,7 @@ check("search by text includes AutoMod items", (await page.textContent("#search-
 await page.click("#search-close");
 check("closing search restores all", await page.$$eval(".messages:not([hidden]) > li.filtered", (ls) => ls.length) === 0);
 // Highlights + font size
-await page.click("#settings-btn");
+await openSettingsUI();
 await page.fill('#sheet-body .rule-form input >> nth=0', "giveaway");
 await page.click('#sheet-body .rule-form button');
 await page.fill('#sheet-body .rule-form input >> nth=0', "deploy now");
@@ -637,7 +647,7 @@ await page.setViewportSize({ width: 390, height: 760 });
   await page.waitForSelector("#video:not([hidden]) iframe");
   // Make this browser take the hls.js path (headless Chromium may claim built-in HLS).
   await page.evaluate(() => { HTMLMediaElement.prototype.canPlayType = () => ""; });
-  await page.click("#settings-btn");
+  await openSettingsUI();
   check("Settings offers Twitch player / Native", (await page.textContent("#sheet-body")).includes("Native (HLS)"));
   await page.click('#sheet-body .seg button:has-text("Native (HLS)")');
   await page.click("#sheet-close");
@@ -760,7 +770,7 @@ await page.setViewportSize({ width: 390, height: 760 });
   check("default: gem button does not open the embed", await page.$eval("#embed-modal", (m) => m.hidden) && (await page.evaluate(() => __calls.length)) === 1);
   await sleep(400); // let that tap's website-fallback timer run out
   await page.evaluate(() => { __calls.length = 0; });
-  await page.click("#settings-btn");
+  await openSettingsUI();
   check("Settings has the Bits and channel points option", (await page.textContent("#sheet-body")).includes("Bits and channel points") && (await page.textContent("#sheet-body")).includes("Chat embed (experimental)"));
   await page.click('#sheet-body .seg button:has-text("Chat embed")');
   await page.click("#sheet-close");
@@ -1245,7 +1255,7 @@ followingMode = "ok";
   check("opting in merges history by time around what's on screen", iH1 >= 0 && iH1 < iH2 && iH2 < iLive && tsSorted && !(await page.$(".history-ask")), JSON.stringify(order));
   check("saved as opted in; asked for 100", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).history === true && log.history.at(-1) === "alphachan?limit=100", log.history.at(-1));
   // Opt out from Settings: the toggle carries the same info and link.
-  await page.click("#settings-btn");
+  await openSettingsUI();
   const histRow = page.locator('#sheet-body .row:has-text("Load chat history")');
   check("Settings has the history toggle with info and link", (await histRow.textContent()).includes("recent-messages.robotty.de") && await histRow.locator("input").isChecked());
   await histRow.locator("input").click();
@@ -1298,7 +1308,7 @@ followingMode = "ok";
   check("dark by default, applied before app.js", (await page.evaluate(() => document.documentElement.dataset.theme)) === "dark");
   cur().send(chat("999", "yellow1", "Sunny", "702", "bright name", { color: "#FFFF00" }));
   await page.waitForSelector('li[data-id="yellow1"]');
-  await page.click("#settings-btn");
+  await openSettingsUI();
   await page.click('#sheet-body .seg button:has-text("Light")');
   const lt = await page.evaluate(() => ({
     theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.querySelector(".app")).backgroundColor,
@@ -1310,7 +1320,7 @@ followingMode = "ok";
   check("Light: bright names darkened enough to read on white", lum(lt.yellow) <= 0.31 && lum(lt.yellow) > 0.2, lt.yellow);
   await page.click("#sheet-close");
   await page.screenshot({ path: dir + "/t23-light.png" });
-  await page.click("#settings-btn");
+  await openSettingsUI();
   await page.screenshot({ path: dir + "/t24-light-settings.png" });
   await page.click("#sheet-close");
   await page.reload();
@@ -1636,7 +1646,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
     log.clips.filter((x) => x === "NewClip1").length >= 2 && (await page.textContent("#browse-body .clipper .state")) === "Clip created, and its link is posted in chat." &&
     log.sent.length === sentBeforeClip + 1 && log.sent.at(-1) === "https://clips.twitch.tv/NewClip1", JSON.stringify(log.sent.slice(sentBeforeClip)));
   check("the posted message is tracked as sent from here (so color cycling doesn't count it twice)", await page.evaluate(() => [...sentIds].some((id) => id.startsWith("sent-"))));
-  check("the new clip is first in the list, highlighted", await page.$eval("#browse-body .bcard", (c) => c.classList.contains("fresh") && c.querySelector(".bt").textContent.length > 0));
+  check("the new clip is first in the list, highlighted", await page.$eval("#browse-body .brow", (r) => r.classList.contains("fresh") && r.querySelector(".bt").textContent.length > 0));
   const note = await page.evaluate(() => { const li = [...active.list.querySelectorAll("li.clip-made")].at(-1); return li && { head: li.querySelector(".sysmsg").textContent, card: !!li.querySelector("a.clip-card"), edit: (li.querySelector("a.btn") || {}).href, buttons: [...li.querySelectorAll("button")].map((b) => b.textContent) }; });
   check("chat also gets a 'Clip created and posted' notice with the Edit link and share buttons (the card is on the posted message)", note && !note.card && note.head === "Clip created and posted in chat" && note.edit === "https://clips.twitch.tv/NewClip1/edit" && note.buttons[0] === "Put link in chat box", JSON.stringify(note));
   await page.keyboard.press("Escape");
@@ -1681,6 +1691,88 @@ check("history marks messages deleted before they were loaded", await page.evalu
   sendFailure = null;
   await page.keyboard.press("Escape");
   await page.evaluate(() => { tabs.get("uwoslab").stream = null; });
+}
+
+// =============== account menu (profile picture), your clips, and sharing ===============
+{
+  await page.click(".tab:first-child .tab-name");
+  check("the gear is gone; your picture is in the corner", !(await page.$("#settings-btn")) && await page.evaluate(() => { const b = document.getElementById("profile-btn"), i = document.getElementById("avatar-img"); return !b.hidden === true && b.querySelector("img") === i; }));
+  await page.waitForFunction(() => { const i = document.getElementById("avatar-img"); return !i.hidden && i.naturalWidth > 0; });
+  const av = await page.evaluate(() => { const i = document.getElementById("avatar-img"), b = document.getElementById("profile-btn").getBoundingClientRect(), s = document.querySelector("header form button").getBoundingClientRect(); return { src: i.getAttribute("src"), title: document.getElementById("profile-btn").title, round: getComputedStyle(document.getElementById("profile-btn")).borderRadius, w: Math.round(b.width), sameRow: Math.abs(b.top + b.height / 2 - (s.top + s.height / 2)) < 12, rightOfOpen: b.left > s.right }; });
+  check("it shows your Twitch picture, round, on the header row next to Open", av.src === "https://img.test/avatar.png" && av.title === "Account: TestUser" && av.round === "50%" && av.w === 32 && av.sameRow && av.rightOfOpen, JSON.stringify(av));
+  await page.click("#profile-btn");
+  const menu = await page.evaluate(() => ({ expanded: document.getElementById("profile-btn").getAttribute("aria-expanded"), name: document.querySelector("#account-menu .dn").textContent, login: document.querySelector("#account-menu .ln").textContent, items: [...document.querySelectorAll("#account-menu button")].map((b) => b.textContent), h: Math.round(document.querySelector("#account-menu button").getBoundingClientRect().height), pic: !!document.querySelector("#account-menu .who img") }));
+  check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
+    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items) === '["Settings","Your clips","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
+  await page.screenshot({ path: dir + "/t35-account-menu.png" });
+  await page.keyboard.press("Escape");
+  check("Escape closes it", await page.$eval("#account-menu", (m) => m.hidden) && (await page.getAttribute("#profile-btn", "aria-expanded")) === "false");
+  await page.click("#profile-btn");
+  await page.mouse.click(200, 400);
+  check("tapping elsewhere closes it", await page.$eval("#account-menu", (m) => m.hidden));
+  await openSettingsUI();
+  check("Settings opens from the menu (and the menu closes)", (await page.textContent("#sheet-body")).includes("Settings") && await page.$eval("#account-menu", (m) => m.hidden));
+  await page.click("#sheet-close");
+  // Log out asks first.
+  await page.evaluate(() => { window.__realConfirm = window.confirm; window.confirm = (m) => { window.__asked = m; return false; }; });
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Log out")');
+  await sleep(200);
+  const asked = await page.evaluate(() => { window.confirm = window.__realConfirm; return window.__asked; });
+  check("Log out asks for confirmation, and cancelling does nothing", /Log out/.test(asked || "") && !(log.logouts || 0) && await page.evaluate(() => !!me));
+  // No picture (or it can't load): your initial instead.
+  noAvatar = true;
+  await page.evaluate(() => { document.getElementById("avatar-img").removeAttribute("src"); return refreshStatus(); });
+  check("no picture → your initial in the circle", await page.evaluate(() => document.getElementById("avatar-img").hidden && getComputedStyle(document.getElementById("avatar-letter")).display !== "none" && document.getElementById("avatar-letter").textContent === "T"));
+  noAvatar = false;
+  await page.evaluate(() => refreshStatus());
+  await page.waitForFunction(() => !document.getElementById("avatar-img").hidden);
+
+  // Your clips.
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Your clips")');
+  await page.waitForSelector("#browse-modal:not([hidden]) .bcard");
+  const mine = await page.evaluate(() => ({ title: document.getElementById("browse-title").textContent, tabs: !!document.querySelector("#browse-body .browse-tabs"), clipper: !!document.querySelector("#browse-body .clipper"), note: document.querySelector("#browse-body .browse-note").textContent, titles: [...document.querySelectorAll("#browse-body .bt")].map((x) => x.textContent) }));
+  check("Your clips lists the clips you made through Yappa (no tabs or create box), and says why only those",
+    mine.title === "Your clips" && !mine.tabs && !mine.clipper && /made with Yappa/.test(mine.note) && /aren't here/.test(mine.note) && JSON.stringify(mine.titles) === '["My first clip","My second clip"]', JSON.stringify(mine));
+  await page.screenshot({ path: dir + "/t36-your-clips.png" });
+  await page.click("#browse-body .browse-more");
+  await page.waitForFunction(() => document.querySelectorAll("#browse-body .bcard").length === 3);
+  check("Load more pages through them", log.mine.at(-1) === "?after=20" && !(await page.$("#browse-body .browse-more")));
+
+  // Sharing: the phone's share sheet when there is one...
+  await page.evaluate(() => { window.__shared = []; navigator.share = async (d) => { window.__shared.push(d); }; });
+  await page.click("#browse-body .brow >> nth=0 >> .bshare");
+  check("Share on a card opens the share sheet with the clip's title and link", JSON.stringify(await page.evaluate(() => window.__shared)) === '[{"title":"My first clip","text":"My first clip","url":"https://clips.twitch.tv/MineOne"}]', JSON.stringify(await page.evaluate(() => window.__shared)));
+  // ...otherwise it copies the link.
+  await page.evaluate(() => { delete navigator.share; window.__copied = []; Object.defineProperty(navigator, "clipboard", { value: { writeText: async (t) => { window.__copied.push(t); } }, configurable: true }); });
+  await page.click("#browse-body .brow >> nth=1 >> .bshare");
+  check("without a share sheet it copies the link and says so, then goes back to 'Share'", JSON.stringify(await page.evaluate(() => window.__copied)) === '["https://clips.twitch.tv/MineTwo"]' && (await page.textContent("#browse-body .brow >> nth=1 >> .bshare")) === "Copied!");
+  await page.waitForFunction(() => document.querySelectorAll("#browse-body .bshare")[1].textContent === "Share", null, { timeout: 4000 });
+  // In the player view too.
+  await page.click("#browse-body .brow >> nth=0 >> .bcard");
+  await page.waitForSelector("#browse-body iframe.browse-player");
+  await page.evaluate(() => { window.__copied = []; });
+  await page.click('#browse-body .browse-actions button:has-text("Share")');
+  check("the player view has Share too", JSON.stringify(await page.evaluate(() => window.__copied)) === '["https://clips.twitch.tv/MineOne"]');
+  await page.screenshot({ path: dir + "/t37-share-player.png" });
+  await page.keyboard.press("Escape");
+  // ...and on VODs.
+  await page.click("#clips-btn");
+  await page.click('#browse-body .browse-tabs button:has-text("Past broadcasts")');
+  await page.waitForFunction(() => document.querySelector("#browse-body .bt") && document.querySelector("#browse-body .bt").textContent === "Friday night stream");
+  await page.evaluate(() => { window.__copied = []; });
+  await page.click("#browse-body .brow >> nth=0 >> .bshare");
+  check("VODs can be shared too", JSON.stringify(await page.evaluate(() => window.__copied)) === '["https://www.twitch.tv/videos/1001"]');
+  await page.keyboard.press("Escape");
+  // Nothing made yet.
+  noMyClips = true;
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Your clips")');
+  await page.waitForFunction(() => document.getElementById("browse-body").textContent.includes("You haven't made any clips"));
+  check("empty state for no clips yet", (await page.textContent("#browse-body")).includes("You haven't made any clips with Yappa yet."));
+  noMyClips = false;
+  await page.keyboard.press("Escape");
 }
 
 // =============== moving to a new address ===============

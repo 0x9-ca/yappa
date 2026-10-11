@@ -1,6 +1,6 @@
 import { PAGE_SIZE, slimClip, slimVideo } from "./browse";
 import type { ClipsQuery, VideosQuery } from "./browse";
-import { TwitchError, getBadges, getCheermotes, getClip, getClipsPage, getGameName, getGameNames, getStreamsByIds, getVideosPage } from "./twitch";
+import { TwitchError, getBadges, getCheermotes, getClip, getClipsByIds, getClipsPage, getGameName, getGameNames, getStreamsByIds, getVideosPage } from "./twitch";
 
 /**
  * Public Twitch lookups (live status, clips, badges, cheermotes) don't need the user's own
@@ -106,4 +106,17 @@ export const videosPage = (env: Env, origin: string, q: VideosQuery) =>
   lookup(env, origin, async (t) => {
     const page = await getVideosPage(env, t, q.userId, { type: q.type, sort: q.sort, after: q.after, first: PAGE_SIZE });
     return { ok: true as const, videos: page.videos.map(slimVideo), cursor: page.cursor };
+  });
+
+/** Details for specific clips, in the order of `ids` (deleted ones drop out), or null if Twitch can't be reached. */
+export const clipsByIds = (env: Env, origin: string, ids: string[]) =>
+  lookup(env, origin, async (t) => {
+    const found = await getClipsByIds(env, t, ids);
+    const missing = [...new Set(found.map((c) => c.game_id).filter((id) => id && !gameNames.has(id)))];
+    for (const [id, name] of await getGameNames(env, t, missing).catch(() => new Map<string, string>())) gameNames.set(id, name);
+    const byId = new Map(found.map((c) => [c.id, c]));
+    return ids.flatMap((id) => {
+      const c = byId.get(id);
+      return c ? [slimClip(c, gameNames.get(c.game_id) ?? null)] : [];
+    });
   });

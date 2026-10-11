@@ -155,7 +155,7 @@ async function refreshStatus() {
   show("reauth", !!tw && tw.missingScopes.length > 0);
   const missingOptional = tw && tw.missingScopes.length === 0 ? tw.missingOptionalScopes || [] : [];
   show("reauth-optional", missingOptional.length > 0);
-  if (tw) $("settings-btn").title = "Settings (signed in to Twitch as " + tw.login + ")";
+  renderAccount();
 
   renderCycle(s.cycle);
   if (first && tw && tw.missingScopes.length === 0) restoreTabs();
@@ -3131,10 +3131,11 @@ let browse = null; // the open window: { tab, mode, period, sort, items, cursor,
 
 const hasScope = (scope) => !!(status && status.twitch && !(status.twitch.missingOptionalScopes || []).includes(scope));
 
-function openBrowse() {
-  const tab = active;
-  if (!tab || !tab.broadcaster) return;
-  browse = { tab, mode: "clips", period: "all", sort: "time", items: [], cursor: null, done: false, loading: false, error: null, req: 0, player: null, scroll: 0, clip: null };
+/** Opens the window for the active channel, or (mine) for the clips you made through Yappa. */
+function openBrowse(opts = {}) {
+  const tab = opts.mine ? null : active;
+  if (!opts.mine && (!tab || !tab.broadcaster)) return;
+  browse = { tab, mine: !!opts.mine, mode: "clips", period: "all", sort: "time", items: [], cursor: null, done: false, loading: false, error: null, req: 0, player: null, scroll: 0, clip: null };
   show("browse-modal", true);
   renderBrowse();
   loadBrowse(true);
@@ -3158,7 +3159,9 @@ async function loadBrowse(reset) {
   renderBrowse();
   const q = new URLSearchParams();
   let path;
-  if (b.mode === "clips") {
+  if (b.mine) {
+    path = "/api/my/clips";
+  } else if (b.mode === "clips") {
     path = "/api/channel/clips";
     q.set("broadcaster_id", b.tab.broadcaster.id);
     q.set("period", b.period);
@@ -3169,7 +3172,7 @@ async function loadBrowse(reset) {
     q.set("sort", b.sort);
   }
   if (b.cursor) q.set("after", b.cursor);
-  const kind = b.mode === "clips" ? "clip" : "video";
+  const kind = b.mine || b.mode === "clips" ? "clip" : "video";
   const r = await api(path + "?" + q);
   if (browse !== b || b.req !== req) return; // closed, or a newer filter owns the list now
   b.loading = false;
@@ -3196,8 +3199,23 @@ function browseSubline(item) {
   return bits.join(" · ");
 }
 
+/** Shares a clip or VOD link: the phone's share sheet if there is one, else copies it. */
+async function shareItem(item, button) {
+  const data = { title: item.title || "Twitch", text: item.title || "", url: item.url };
+  if (navigator.share) {
+    try { await navigator.share(data); } catch {} // closing the share sheet counts as an error; nothing to report
+    return;
+  }
+  const label = button.textContent;
+  let said;
+  try { await navigator.clipboard.writeText(item.url); said = "Copied!"; } catch { said = "Couldn't copy"; }
+  button.textContent = said;
+  setTimeout(() => { button.textContent = label; }, 1500);
+}
+
 function browseCard(b, item) {
-  const card = el("button", "bcard" + (item.fresh ? " fresh" : ""));
+  const row = el("div", "brow" + (item.fresh ? " fresh" : ""));
+  const card = el("button", "bcard");
   card.type = "button";
   const thumb = el("span", "bthumb");
   if (item.thumbnail) {
@@ -3213,7 +3231,11 @@ function browseCard(b, item) {
   meta.append(el("span", "bt", item.title || "(untitled)"), el("span", "bs", browseSubline(item)));
   card.append(thumb, meta);
   card.addEventListener("click", () => { b.scroll = $("browse-modal").querySelector(".sheet").scrollTop; b.player = item; renderBrowse(); });
-  return card;
+  const share = btn("Share", () => shareItem(item, share), "ghost small");
+  share.classList.add("bshare");
+  share.setAttribute("aria-label", "Share " + (item.title || "this"));
+  row.append(card, share);
+  return row;
 }
 
 function dropdown(options, value, onChange) {
@@ -3242,8 +3264,10 @@ function renderPlayer(b) {
   open.target = "_blank";
   open.rel = "noopener noreferrer";
   const actions = el("div", "browse-actions");
+  const share = btn("Share", () => shareItem(item, share), "small");
   actions.append(
     btn("← Back", () => { b.player = null; renderBrowse(); $("browse-modal").querySelector(".sheet").scrollTop = b.scroll; }, "small"),
+    share,
     open,
     btn("Put link in chat box", () => { closeBrowse(); insertEmote(item.url); }, "small"),
   );
@@ -3299,7 +3323,7 @@ function renderBrowse() {
   if (!b) return;
   const sheet = $("browse-modal").querySelector(".sheet");
   const scroll = sheet.scrollTop;
-  $("browse-title").textContent = "Clips & VODs: " + b.tab.broadcaster.name;
+  $("browse-title").textContent = b.mine ? "Your clips" : "Clips & VODs: " + b.tab.broadcaster.name;
   const body = $("browse-body");
   if (b.player) { body.replaceChildren(...renderPlayer(b)); sheet.scrollTop = 0; return; }
 
@@ -3315,14 +3339,16 @@ function renderBrowse() {
   } else {
     filter.append("Sort", dropdown([["time", "Newest"], ["views", "Most viewed"]], b.sort, (v) => { b.sort = v; loadBrowse(true); }));
   }
-  const parts = [clipControls(b), tabs, filter];
+  const parts = b.mine
+    ? [el("div", "browse-note", "Clips you made with Yappa, newest first. Twitch doesn't let apps list clips made elsewhere, so clips you made on Twitch itself aren't here.")]
+    : [clipControls(b), tabs, filter];
   for (const item of b.items) parts.push(browseCard(b, item));
   if (b.loading) parts.push(el("div", "browse-note", "Loading…"));
   else if (b.error) {
     const note = el("div", "browse-note", b.error + " ");
     note.appendChild(btn("Try again", () => loadBrowse(!b.items.length), "small"));
     parts.push(note);
-  } else if (!b.items.length) parts.push(el("div", "browse-note", "Nothing here yet."));
+  } else if (!b.items.length) parts.push(el("div", "browse-note", b.mine ? "You haven't made any clips with Yappa yet." : "Nothing here yet."));
   else if (!b.done) {
     const more = btn("Load more", () => loadBrowse(false), "ghost small");
     more.classList.add("browse-more");
@@ -3393,7 +3419,8 @@ function announceClip(tab, clip, editUrl, posted) {
     row.appendChild(edit);
   }
   row.appendChild(btn("Put link in chat box", () => insertEmote(clip.url), "small"));
-  if (navigator.clipboard) row.appendChild(btn("Copy link", () => navigator.clipboard.writeText(clip.url).catch(() => {}), "small ghost"));
+  const share = btn("Share", () => shareItem(clip, share), "small ghost");
+  row.appendChild(share);
   li.appendChild(row);
   append(tab, li, false);
 }
@@ -3629,7 +3656,68 @@ function maybeBumpColor(messageId) {
 
 // ---------- settings ----------
 
-$("settings-btn").addEventListener("click", openSettings);
+// ---------- account menu (your picture in the corner) ----------
+
+/** Shows your Twitch picture (or your initial until it loads, or if it can't) on the account button. */
+function renderAccount() {
+  const tw = status && status.twitch;
+  if (!tw) return;
+  const name = tw.displayName || tw.login;
+  $("profile-btn").title = "Account: " + name;
+  $("avatar-letter").textContent = (name[0] || "?").toUpperCase();
+  const img = $("avatar-img");
+  img.hidden = true;
+  if (tw.avatar) {
+    img.onload = () => { img.hidden = false; };
+    img.onerror = () => { img.hidden = true; };
+    if (img.getAttribute("src") !== tw.avatar) img.src = tw.avatar;
+    else img.hidden = !img.complete || !img.naturalWidth;
+  }
+}
+
+function closeAccountMenu() {
+  show("account-menu", false);
+  $("profile-btn").setAttribute("aria-expanded", "false");
+}
+
+function toggleAccountMenu() {
+  const menu = $("account-menu");
+  if (!menu.hidden) { closeAccountMenu(); return; }
+  const tw = status && status.twitch;
+  if (!tw) return;
+  const who = el("div", "who");
+  const pic = el("span", "pic", ((tw.displayName || tw.login)[0] || "?").toUpperCase());
+  if (tw.avatar) {
+    const img = document.createElement("img");
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => img.remove());
+    img.src = tw.avatar;
+    pic.appendChild(img);
+  }
+  const names = el("div", "names");
+  names.append(el("span", "dn", tw.displayName || tw.login), el("span", "ln", "@" + tw.login));
+  who.append(pic, names);
+  const item = (label, onClick, cls) => {
+    const b = el("button", cls || null, label);
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.addEventListener("click", () => { closeAccountMenu(); onClick(); });
+    return b;
+  };
+  menu.replaceChildren(
+    who,
+    item("Settings", openSettings),
+    item("Your clips", () => openBrowse({ mine: true })),
+    item("Log out", () => { if (confirm("Log out? This disconnects your Twitch account from Yappa.")) logout(); }, "danger"),
+  );
+  show("account-menu", true);
+  $("profile-btn").setAttribute("aria-expanded", "true");
+}
+
+$("profile-btn").addEventListener("click", toggleAccountMenu);
+document.addEventListener("pointerdown", (e) => { if (!$("account-menu").hidden && !e.target.closest("#account-menu, #profile-btn")) closeAccountMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("account-menu").hidden) closeAccountMenu(); });
 
 function openSettings() {
   const row = (labelText, control, hint) => {

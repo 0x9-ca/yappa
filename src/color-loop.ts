@@ -4,6 +4,7 @@ import {
   SCOPES,
   TwitchError,
   banUser,
+  createClip,
   createWebSocketSubscription,
   deleteChatMessages,
   deleteSubscription,
@@ -25,6 +26,7 @@ import {
   unbanUser,
   validateToken,
 } from "./twitch";
+import { clipFailure } from "./browse";
 
 // Twitch requires apps to re-validate held tokens at least hourly.
 const VALIDATE_EVERY_MS = 55 * 60_000;
@@ -365,6 +367,28 @@ export class ColorLoop extends DurableObject<Env> {
     this.colored.add(messageId);
     if (this.colored.size > 500) this.colored.delete(this.colored.values().next().value!);
     return true;
+  }
+
+  /**
+   * Creates a clip of the channel's live stream as the user (needs the clips:edit permission).
+   * Asynchronous on Twitch's side: the caller polls for the clip with the returned id.
+   */
+  async createClip(
+    broadcasterId: string,
+    opts: { title?: string; duration?: number },
+  ): Promise<{ ok: true; id: string; editUrl: string } | { ok: false; error: string; needsScope?: boolean }> {
+    const tokens = await this.getTokens();
+    if (!tokens?.scopes?.includes("clips:edit")) return { ok: false, error: "Missing clips:edit", needsScope: true };
+    try {
+      const r = await this.withToken((t) => createClip(this.env, t.accessToken, broadcasterId, opts));
+      return { ok: true, id: r.id, editUrl: r.edit_url };
+    } catch (err) {
+      if (err instanceof TwitchError) {
+        // The message is "Create Clip failed (404): detail"; keep only the detail.
+        return { ok: false, error: clipFailure(err.status, err.message.replace(/^[^:]*(?:\(\d+\))?:?\s*/, "")) };
+      }
+      return { ok: false, error: (err as Error).message };
+    }
   }
 
   /** Channels the user follows, and which of them are live (for the channel picker). */

@@ -49,13 +49,16 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Twitch scopes: `user:manage:chat_color`, `user:read:chat`, `user:write:chat` (required);
   `user:read:emotes`, `user:read:moderated_channels`, `moderator:manage:chat_messages`,
   `moderator:manage:banned_users`, `moderator:read:followers`, `moderator:manage:automod`,
-  `moderator:manage:chat_settings`, `user:read:follows` (optional: emote list, followed channels and mod tools).
+  `moderator:manage:chat_settings`, `user:read:follows`, `clips:edit` (optional: emote list, followed channels, mod tools and creating clips).
 - Chat: channel tabs sharing one EventSub WebSocket, 7TV/BTTV/FFZ emotes, cheermotes, emote picker, autocomplete
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
   `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
 - Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
 - "Gigantify an Emote" (Bits Power-up) messages show the emote enlarged.
+- Clips & VODs: browse a channel's clips (most viewed by period), past broadcasts, highlights and uploads,
+  play them in Twitch's own embeds, and create a clip of the live stream (15 / 30 / 60 s, optional title).
+  New clips can be posted to the channel's chat automatically (on by default; Settings → Clips).
 - GIFs sent by Tier 2+ subscribers are shown inline (Settings → Show GIFs turns them into links).
 - Channel points redemptions that show up in chat (highlighted messages, sub-only-mode messages and
   reward messages) are marked; Twitch only exposes the full redemption feed to the broadcaster.

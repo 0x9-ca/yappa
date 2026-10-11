@@ -13,6 +13,7 @@ export const OPTIONAL_SCOPES = [
   "moderator:manage:automod",
   "moderator:manage:chat_settings",
   "user:read:follows",
+  "clips:edit",
 ];
 
 export class TwitchError extends Error {
@@ -455,6 +456,83 @@ export interface Clip {
   thumbnail_url: string;
   duration: number;
   game_id: string;
+}
+
+/** One page of a channel's clips, most viewed first. Any token works (the app's too). */
+export async function getClipsPage(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  opts: { startedAt?: string; endedAt?: string; after?: string; first: number },
+): Promise<{ clips: Clip[]; cursor: string | null }> {
+  const url = new URL(`${API_BASE}/clips`);
+  url.searchParams.set("broadcaster_id", broadcasterId);
+  url.searchParams.set("first", String(opts.first));
+  if (opts.startedAt) url.searchParams.set("started_at", opts.startedAt);
+  if (opts.endedAt) url.searchParams.set("ended_at", opts.endedAt);
+  if (opts.after) url.searchParams.set("after", opts.after);
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Clips");
+  const body = (await res.json()) as { data: Clip[]; pagination?: { cursor?: string } };
+  return { clips: body.data, cursor: body.pagination?.cursor ?? null };
+}
+
+export interface Video {
+  id: string;
+  url: string;
+  title: string;
+  type: string;
+  view_count: number;
+  created_at: string;
+  thumbnail_url: string;
+  duration: string;
+}
+
+/** One page of a channel's videos (past broadcasts, highlights or uploads). Any token works. */
+export async function getVideosPage(
+  env: Env,
+  accessToken: string,
+  userId: string,
+  opts: { type: string; sort: string; after?: string; first: number },
+): Promise<{ videos: Video[]; cursor: string | null }> {
+  const url = new URL(`${API_BASE}/videos`);
+  url.searchParams.set("user_id", userId);
+  url.searchParams.set("type", opts.type);
+  url.searchParams.set("sort", opts.sort);
+  url.searchParams.set("first", String(opts.first));
+  if (opts.after) url.searchParams.set("after", opts.after);
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Videos");
+  const body = (await res.json()) as { data: Video[]; pagination?: { cursor?: string } };
+  return { videos: body.data, cursor: body.pagination?.cursor ?? null };
+}
+
+/** Category names for up to 100 game ids. */
+export async function getGameNames(env: Env, accessToken: string, ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  const url = new URL(`${API_BASE}/games`);
+  for (const id of ids.slice(0, 100)) url.searchParams.append("id", id);
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Games");
+  for (const g of ((await res.json()) as { data: { id: string; name: string }[] }).data) out.set(g.id, g.name);
+  return out;
+}
+
+/**
+ * Create Clip: captures the live stream (up to the last ~90s), then publishes `duration` seconds
+ * of it. Needs a user token with clips:edit. Asynchronous: the clip appears in Get Clips a few
+ * seconds later. The channel must be live.
+ */
+export async function createClip(
+  env: Env,
+  accessToken: string,
+  broadcasterId: string,
+  opts: { title?: string; duration?: number },
+): Promise<{ id: string; edit_url: string }> {
+  const url = new URL(`${API_BASE}/clips`);
+  url.searchParams.set("broadcaster_id", broadcasterId);
+  if (opts.title) url.searchParams.set("title", opts.title);
+  if (opts.duration) url.searchParams.set("duration", String(opts.duration));
+  const res = await check(await fetch(url, { method: "POST", headers: helixHeaders(env, accessToken) }), "Create Clip");
+  return ((await res.json()) as { data: { id: string; edit_url: string }[] }).data[0];
 }
 
 export async function getClip(env: Env, accessToken: string, id: string): Promise<Clip | null> {

@@ -4,6 +4,7 @@ import { renderMoved } from "./moved";
 import { PAGE_HEADERS, renderPage } from "./page";
 import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
+import { parseClipsQuery, parseCreateClip, parseVideosQuery } from "./browse";
 import { authorizeUrl } from "./twitch";
 
 export { ColorLoop } from "./color-loop";
@@ -79,6 +80,17 @@ async function handle(request: Request, env: Env): Promise<Response> {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(id)) return json({ ok: false, error: "Bad clip id." }, 400);
       const result = await publicApi.clip(env, url.origin, id);
       return json(result, result.ok ? 200 : 502);
+    }
+    // Browsing a channel's clips and VODs: public data, answered with the app token.
+    case "GET /api/channel/clips": {
+      const q = parseClipsQuery(url.searchParams);
+      if (typeof q === "string") return json({ ok: false, error: q }, 400);
+      return orFail(await publicApi.clipsPage(env, url.origin, q));
+    }
+    case "GET /api/channel/videos": {
+      const q = parseVideosQuery(url.searchParams);
+      if (typeof q === "string") return json({ ok: false, error: q }, 400);
+      return orFail(await publicApi.videosPage(env, url.origin, q));
     }
     // The native player's quality list (see src/usher.ts). No Durable Object needed.
     case "POST /api/hls/master": {
@@ -224,6 +236,15 @@ async function handle(request: Request, env: Env): Promise<Response> {
       }
       const result = await stub.updateSettings(body.broadcaster_id, patch);
       return json(result, result.ok ? 200 : 502);
+    }
+
+    // Creating a clip needs the user's own token, so it goes through their Durable Object.
+    case "POST /api/clips/create": {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const req = parseCreateClip(body);
+      if (typeof req === "string") return json({ ok: false, error: req }, 400);
+      const result = await stub.createClip(req.broadcasterId, { title: req.title, duration: req.duration });
+      return json(result, result.ok ? 200 : result.needsScope ? 403 : 502);
     }
 
     case "POST /api/cycle/bump": {

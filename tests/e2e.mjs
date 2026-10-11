@@ -10,11 +10,11 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = fileURLToPath(new URL("./output", import.meta.url)); // screenshots + bundle (git-ignored)
 mkdirSync(dir, { recursive: true });
 await build({
-  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { renderMoved } from "./src/moved.ts"; export { relayMaster } from "./src/usher.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
+  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { renderMoved } from "./src/moved.ts"; export { relayMaster } from "./src/usher.ts"; export { parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure } from "./src/browse.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
   bundle: true, format: "esm", outfile: dir + "/page.bundle.mjs", logLevel: "warning",
   loader: { ".css": "text", ".js": "text", ".png": "base64" },
 });
-const { renderPage, PAGE_HEADERS, renderMoved, relayMaster, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
+const { renderPage, PAGE_HEADERS, renderMoved, relayMaster, parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
 const html = renderPage("testuser@example.com");
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
@@ -48,6 +48,9 @@ let followingMode = "ok";
 let embedScriptFails = false;
 let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
 let masterFails = false;
+let browseFails = false, noClipsScope = false, clipCreateError = null, newClipPolls = 0, sendFailure = null;
+const mkClip = (id, title, views, extra = {}) => ({ id, url: "https://clips.twitch.tv/" + id, title, creator: "Clipper" + id.slice(-1), broadcaster: "UwoSlab", views, createdAt: new Date(Date.now() - 2 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting", ...extra });
+const mkVideo = (id, title, views, seconds, type = "archive") => ({ id, url: "https://www.twitch.tv/videos/" + id, title, type, views, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/vod-" + id + ".jpg", seconds });
 // A master playlist shaped like Twitch's: best first (the source last in the file, as seen live), audio-only at the end.
 const rendition = (group, name, w, h, fps, bw) => `#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="${group}",NAME="${name}",AUTOSELECT=YES,DEFAULT=YES\n#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${w}x${h},CODECS="avc1.4D401F,mp4a.40.2",VIDEO="${group}",FRAME-RATE=${fps}.000\nhttps://use23.playlist.ttvnw.net/v1/playlist/${group}.m3u8`;
 const MASTER = ["#EXTM3U", '#EXT-X-TWITCH-INFO:NODE="x",USER-IP="1.2.3.4"',
@@ -78,6 +81,27 @@ await ctx.route("**/*", async (route) => {
     if (f) return route.fulfill({ body: f.type === "image/png" ? Buffer.from(f.body, "base64") : f.body, contentType: f.type });
     if (u.pathname === "/api/cycle") { cycle.enabled = body().enabled; if (cycle.enabled) { cycle.lastColor = "#11AA22"; cycle.changes++; } log.cycle.push(cycle.enabled); return j({ ok: true, cycle }); }
     if (u.pathname === "/api/netfail") return route.abort();
+    if (u.pathname === "/api/channel/clips" || u.pathname === "/api/channel/videos") {
+      log.browse = [...(log.browse || []), u.pathname + u.search];
+      if (browseFails) return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
+      const p = u.searchParams;
+      if (u.pathname === "/api/channel/clips") {
+        if (p.get("period") === "week") return j({ ok: true, clips: [mkClip("WeekOne", "This week's best", 900)], cursor: null });
+        if (p.get("after") === "c1") return j({ ok: true, clips: [mkClip("PageTwoA", "Second page A", 40), mkClip("PageTwoB", "Second page B", 30)], cursor: null });
+        return j({ ok: true, clips: [mkClip("TopClip1", "An incredible play nobody saw coming and a very long title that wraps", 12345), mkClip("TopClip2", "Second best", 5000), mkClip("TopClip3", "Third", 4000)], cursor: "c1" });
+      }
+      const type = p.get("type");
+      if (type === "archive") return j({ ok: true, videos: p.get("sort") === "views" ? [mkVideo("2002", "Most viewed stream", 99000, 20000)] : [mkVideo("1001", "Friday night stream", 4200, 12310), mkVideo("1002", "Short one", 120, 95)], cursor: null });
+      if (type === "highlight") return j({ ok: true, videos: [mkVideo("3003", "Best moments", 800, 600, "highlight")], cursor: null });
+      return j({ ok: true, videos: [], cursor: null });
+    }
+    if (u.pathname === "/api/clips/create") {
+      const b = body(); log.clipCreates = [...(log.clipCreates || []), b];
+      if (noClipsScope) return route.fulfill({ status: 403, json: { ok: false, error: "Missing clips:edit", needsScope: true } });
+      if (clipCreateError) return route.fulfill({ status: 502, json: { ok: false, error: clipCreateError } });
+      newClipPolls = 0;
+      return j({ ok: true, id: "NewClip1", editUrl: "https://clips.twitch.tv/NewClip1/edit" });
+    }
     if (u.pathname === "/api/hls/master") {
       log.master = [...(log.master || []), body()];
       if (masterFails) return route.fulfill({ status: 502, json: { ok: false, error: "Twitch's playlist server answered 403." } });
@@ -95,7 +119,7 @@ await ctx.route("**/*", async (route) => {
         channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "uwoslab", name: "UwoSlab" }] });
     }
     if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
-    if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", missingScopes: [], missingOptionalScopes: [] }, cycle }); }
+    if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
     if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan", alphachan: "AlphaChan" }[b.channel] || b.channel }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
     if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: new Date(Date.now() - 3 * 3600e3).toISOString() }]);
     if (u.pathname === "/api/chat/settings") { const b = body(); log.settings.push(b); Object.assign(chatSettings, b); delete chatSettings.broadcaster_id; return j({ ok: true, settings: chatSettings }); }
@@ -105,6 +129,7 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/api/chat/clip") {
       const id = u.searchParams.get("id"); log.clips.push(id);
       if (id === "MissingClip") return j({ ok: true, clip: null });
+      if (id === "NewClip1" && newClipPolls++ < 1) return j({ ok: true, clip: null }); // not published yet
       return j({ ok: true, clip: { id, url: "https://clips.twitch.tv/" + id, title: id === "SecondSlug" ? "Second clip" : "An incredible play nobody saw coming and a very long title that wraps", broadcaster: "UwoSlab", creator: "Clipper", views: 12345, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting" } });
     }
     if (u.pathname === "/api/cycle/bump") { log.bumps++; log.bumpIds = [...(log.bumpIds || []), body().message_id]; return j({ ok: true, cycle }); }
@@ -115,6 +140,7 @@ await ctx.route("**/*", async (route) => {
     }
     if (u.pathname === "/api/chat/pin") { log.pinGets.push(u.searchParams.get("broadcaster_id")); return j({ ok: false, error: "gone" }); }
     if (u.pathname === "/api/chat/send" && slowSend) await sleep(slowSend);
+    if (u.pathname === "/api/chat/send" && sendFailure) { log.sendTries = [...(log.sendTries || []), body().message]; return route.fulfill({ status: 502, json: { ok: false, error: sendFailure } }); }
     if (u.pathname === "/api/chat/send") { log.sent.push(body().message); sendCounter++; if (cycle.enabled) { cycle.lastColor = "#" + (0x100000 + log.sent.length * 77777).toString(16).slice(-6).toUpperCase(); cycle.changes++; } return j({ ok: true, messageId: "sent-" + sendCounter }); }
     if (u.pathname === "/api/chat/badges") return j({});
     if (u.pathname === "/api/chat/emotes") return j({ ok: true, emotes: [{ id: "25", name: "Kappa", group: "Twitch global", animated: false }, { id: "e1", name: "uwoHype", group: "This channel", animated: false }] });
@@ -181,6 +207,7 @@ await ctx.route("**/*", async (route) => {
       this.addEventListener = (ev, fn) => { __player.handlers[ev] = fn; (listeners[ev] = listeners[ev] || []).push(fn); };
     } };
     Object.assign(Twitch.Player, { PLAYBACK_BLOCKED: "playbackBlocked", PLAY: "play", PLAYING: "playing", PAUSE: "pause", ENDED: "ended", OFFLINE: "offline", ONLINE: "online" });` });
+  if (u.host === "clips.twitch.tv" && u.pathname === "/embed") { log.clipEmbeds = [...(log.clipEmbeds || []), u.search]; return route.fulfill({ body: "<body style='margin:0;background:#111;color:#bf94ff;display:grid;place-items:center;height:100vh;font:16px sans-serif'>clip embed (test)</body>", contentType: "text/html" }); }
   if (u.host === "player.twitch.tv") { log.player.push(u.search); return route.fulfill({ body: "<body style='margin:0;background:#111;color:#9147ff;display:grid;place-items:center;height:100vh;font:20px sans-serif'>▶ " + u.searchParams.get("channel") + "</body>", contentType: "text/html" }); }
   if (u.host === "www.twitch.tv" && u.pathname.startsWith("/embed/")) { log.chatEmbeds = [...(log.chatEmbeds || []), u.pathname + u.search]; return route.fulfill({ body: "<body style='margin:0;background:#18181b;color:#adadb8;display:grid;place-items:center;height:100vh;font:15px sans-serif'>Twitch chat embed (test)</body>", contentType: "text/html" }); }
   if (u.host === "api.betterttv.net") {
@@ -1490,6 +1517,170 @@ check("history marks messages deleted before they were loaded", await page.evalu
   });
   check("history: msg-id=gigantified-emote-message gives a giant emote too", hist.type === "power_ups_gigantified_emote" && hist.giant && hist.src.endsWith("/25/default/dark/4.0"), JSON.stringify(hist));
   check("history: other messages keep type 'text'", await page.evaluate(() => ircToEvent("@id=z;tmi-sent-ts=1;user-id=9;display-name=X :x!x@x PRIVMSG #c :hi").message_type === "text"));
+}
+
+// =============== clips and VODs: browsing and creating clips ===============
+{
+  // The Worker's request checking (pure functions).
+  const T = Date.UTC(2026, 9, 11, 12, 0, 0);
+  const sp = (o) => new URLSearchParams(o);
+  const cq = parseClipsQuery(sp({ broadcaster_id: "999", period: "week" }), T);
+  check("clips query: a week = the last 7 days up to now; all-time sends no dates",
+    cq.broadcasterId === "999" && cq.endedAt === new Date(T).toISOString() && cq.startedAt === new Date(T - 7 * 86400e3).toISOString() && parseClipsQuery(sp({ broadcaster_id: "999" }), T).startedAt === undefined, JSON.stringify(cq));
+  check("clips query rejects bad ids, periods and cursors",
+    ["../x", "", "12a"].every((id) => typeof parseClipsQuery(sp({ broadcaster_id: id })) === "string") && typeof parseClipsQuery(sp({ broadcaster_id: "1", period: "year" })) === "string" && typeof parseClipsQuery(sp({ broadcaster_id: "1", after: "a b;c" })) === "string" && typeof parseClipsQuery(sp({ broadcaster_id: "1", after: "eyJiIjp7fQ" })) === "object");
+  check("videos query: defaults to past broadcasts newest first; validates the rest",
+    JSON.stringify(parseVideosQuery(sp({ user_id: "5" }))) === '{"userId":"5","type":"archive","sort":"time"}' && typeof parseVideosQuery(sp({ user_id: "5", type: "clip" })) === "string" && typeof parseVideosQuery(sp({ user_id: "5", sort: "random" })) === "string" && typeof parseVideosQuery(sp({})) === "string");
+  const cc = (o) => parseCreateClip(o);
+  check("create-clip request: 5–60s to a tenth, title trimmed, everything else refused",
+    cc({ broadcaster_id: "9", duration: 30.04, title: "  nice \n play  " }).duration === 30 && cc({ broadcaster_id: "9", duration: 30, title: "  nice \n play  " }).title === "nice play" && cc({ broadcaster_id: "9" }).duration === undefined &&
+    [4.9, 61, NaN, "30", Infinity].every((d) => typeof cc({ broadcaster_id: "9", duration: d }) === "string") && typeof cc({ broadcaster_id: "9", title: "x".repeat(101) }) === "string" && typeof cc({ broadcaster_id: "x" }) === "string" && typeof cc({ broadcaster_id: "9", title: 5 }) === "string");
+  check("video helpers: duration text → seconds, thumbnail template filled, in-progress has none",
+    parseDuration("3h25m10s") === 12310 && parseDuration("45s") === 45 && parseDuration("2m") === 120 && parseDuration("") === 0 &&
+    videoThumb("https://x/thumb-%{width}x%{height}.jpg") === "https://x/thumb-320x180.jpg" && videoThumb("") === null &&
+    slimVideo({ id: "1", url: "u", title: "t", type: "archive", view_count: 3, created_at: "c", thumbnail_url: "https://x/%{width}x%{height}.jpg", duration: "1h1m1s" }).seconds === 3661);
+  check("clip failures are explained in plain words", /isn't live/.test(clipFailure(404, "")) && /followers or subscribers/.test(clipFailure(403, "")) && /AutoMod/.test(clipFailure(400, "title failed AutoMod")));
+
+  // The window.
+  await page.evaluate(() => { clipPollMs = 100; tabs.get("uwoslab").stream = null; });
+  await page.click(".tab:first-child .tab-name");
+  check("the Clips & VODs button is in the info bar", await page.$eval("#clips-btn", (b) => !b.hidden && b.getAttribute("aria-label") === "Clips and VODs"));
+  const before = (log.browse || []).length;
+  await page.click("#clips-btn");
+  await page.waitForSelector("#browse-modal:not([hidden]) .bcard");
+  check("opens on the channel's most-viewed clips (all time)", (await page.textContent("#browse-title")) === "Clips & VODs: UwoSlab" && log.browse[before] === "/api/channel/clips?broadcaster_id=999&period=all", log.browse[before]);
+  const cards = await page.$$eval("#browse-body .bcard", (cs) => cs.map((c) => ({ t: c.querySelector(".bt").textContent, s: c.querySelector(".bs").textContent, d: c.querySelector(".dur").textContent, img: c.querySelector("img").getAttribute("src") })));
+  check("cards show thumbnail, length, title, views, age, category and clipper", cards.length === 3 && cards[0].d === "0:27" && cards[0].s === "12.3k views · 2d ago · Just Chatting · by ClipperT1".replace("T1", "1") && cards[0].img === "https://img.test/clip-TopClip1.jpg", JSON.stringify(cards[0]));
+  await page.screenshot({ path: dir + "/t32-browse.png" });
+  await page.click('#browse-body .browse-more');
+  await page.waitForFunction(() => document.querySelectorAll("#browse-body .bcard").length === 5);
+  check("Load more fetches the next page by cursor, then the button goes away", log.browse.at(-1) === "/api/channel/clips?broadcaster_id=999&period=all&after=c1" && !(await page.$("#browse-body .browse-more")));
+  await page.selectOption("#browse-body .browse-filter select", "week");
+  await page.waitForFunction(() => document.querySelectorAll("#browse-body .bcard").length === 1);
+  check("changing the period reloads from the start", log.browse.at(-1) === "/api/channel/clips?broadcaster_id=999&period=week" && (await page.textContent("#browse-body .bt")) === "This week's best");
+
+  // VODs.
+  await page.click('#browse-body .browse-tabs button:has-text("Past broadcasts")');
+  await page.waitForFunction(() => document.querySelector("#browse-body .bt") && document.querySelector("#browse-body .bt").textContent === "Friday night stream");
+  const vod = await page.$$eval("#browse-body .bcard", (cs) => cs.map((c) => [c.querySelector(".dur").textContent, c.querySelector(".bs").textContent]));
+  check("past broadcasts: type=archive newest first, hour-long durations as h:mm:ss", log.browse.at(-1) === "/api/channel/videos?user_id=999&type=archive&sort=time" && JSON.stringify(vod) === '[["3:25:10","4.2k views · 3d ago"],["1:35","120 views · 3d ago"]]', JSON.stringify(vod));
+  await page.selectOption("#browse-body .browse-filter select", "views");
+  await page.waitForFunction(() => document.querySelector("#browse-body .bt") && document.querySelector("#browse-body .bt").textContent === "Most viewed stream");
+  check("sorting by views reloads", log.browse.at(-1) === "/api/channel/videos?user_id=999&type=archive&sort=views");
+  await page.click('#browse-body .browse-tabs button:has-text("Highlights")');
+  await page.waitForFunction(() => document.querySelector("#browse-body .bt") && document.querySelector("#browse-body .bt").textContent === "Best moments");
+  await page.click('#browse-body .browse-tabs button:has-text("Uploads")');
+  await page.waitForFunction(() => document.querySelector("#browse-body .browse-note") && document.querySelector("#browse-body .browse-note").textContent === "Nothing here yet.");
+  check("an empty tab says so", true);
+  // Playing.
+  await page.click('#browse-body .browse-tabs button:has-text("Past broadcasts")');
+  await page.waitForSelector("#browse-body .bcard");
+  await page.click("#browse-body .bcard");
+  await page.waitForSelector("#browse-body iframe.browse-player");
+  const vp = await page.evaluate(() => ({ src: document.querySelector(".browse-player").src, link: document.querySelector("#browse-body a.btn.small").href, title: document.querySelector("#browse-body .ptitle").textContent }));
+  check("a VOD plays in Twitch's own embed (with parent=), and can be opened on Twitch", vp.src === "https://player.twitch.tv/?video=v2002&parent=yappa.test&autoplay=true" && vp.link === "https://www.twitch.tv/videos/2002", JSON.stringify(vp));
+  await page.screenshot({ path: dir + "/t33-browse-player.png" });
+  await page.click('#browse-body button:has-text("Back")');
+  await page.waitForSelector("#browse-body .bcard");
+  check("Back returns to the list (same tab, no player)", !(await page.$("#browse-body iframe")) && (await page.$$("#browse-body .bcard")).length === 1);
+  await page.click('#browse-body .browse-tabs button:has-text("Clips")');
+  await page.waitForFunction(() => document.querySelector("#browse-body .bt") && document.querySelector("#browse-body .bt").textContent === "This week's best");
+  await page.click("#browse-body .bcard");
+  await page.waitForSelector("#browse-body iframe.browse-player");
+  check("a clip plays in the clip embed", (await page.getAttribute(".browse-player", "src")) === "https://clips.twitch.tv/embed?clip=WeekOne&parent=yappa.test&autoplay=true");
+  await page.evaluate(() => composer.setText(""));
+  await page.click('#browse-body button:has-text("Put link in chat box")');
+  check("'Put link in chat box' closes the window and drops the clip's link in the message box", await page.$eval("#browse-modal", (m) => m.hidden) && (await page.evaluate(() => composer.getText())).startsWith("https://clips.twitch.tv/WeekOne"));
+  await page.evaluate(() => composer.setText(""));
+  check("closing removed the embed", (await page.$$("#browse-body iframe")).length === 0);
+
+  // Failures can be retried.
+  browseFails = true;
+  await page.click("#clips-btn");
+  await page.waitForSelector("#browse-body .browse-note button");
+  check("a failed load says so, with Try again", (await page.textContent("#browse-body .browse-note")).includes("Couldn't reach Twitch."));
+  browseFails = false;
+  await page.click("#browse-body .browse-note button");
+  await page.waitForSelector("#browse-body .bcard");
+  check("Try again works", (await page.$$("#browse-body .bcard")).length === 3);
+  await page.keyboard.press("Escape");
+  check("Escape closes the window", await page.$eval("#browse-modal", (m) => m.hidden));
+
+  // Creating clips.
+  await page.click("#clips-btn");
+  await page.waitForSelector("#browse-body .clipper");
+  check("offline: clipping says it needs a live stream, no buttons", (await page.textContent("#browse-body .clipper")).includes("while #UwoSlab is live") && !(await page.$("#browse-body .clipper button")));
+  await page.keyboard.press("Escape");
+  noClipsScope = true;
+  await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "t", game_name: "g", viewer_count: 9, started_at: new Date().toISOString() }; return refreshStatus(); });
+  await page.click("#clips-btn");
+  await page.waitForSelector("#browse-body .clipper");
+  check("live but without the permission: a Reconnect link, no buttons", (await page.$eval("#browse-body .clipper a", (a) => a.getAttribute("href"))) === "/auth/login" && !(await page.$("#browse-body .clipper button")));
+  await page.keyboard.press("Escape");
+  noClipsScope = false;
+  await page.evaluate(() => refreshStatus());
+  await page.click("#clips-btn");
+  await page.waitForSelector("#browse-body .clipper button");
+  const lens = await page.$$eval("#browse-body .clipper button", (bs) => bs.map((b) => b.textContent));
+  check("live with the permission: a title box and 15 / 30 / 60 second buttons", JSON.stringify(lens) === '["Clip last 15s","Clip last 30s","Clip last 60s"]' && !!(await page.$("#clip-title")), JSON.stringify(lens));
+  await page.screenshot({ path: dir + "/t34-clipper.png" });
+  await page.fill("#clip-title", "great play");
+  await page.evaluate(() => composer.setText(""));
+  const sentBeforeClip = log.sent.length;
+  check("the 'post the link in chat' box is on by default", await page.$eval("#clip-post", (c) => c.checked));
+  await page.click('#browse-body .clipper button:has-text("30s")');
+  await page.waitForSelector('#browse-body .clipper .state:has-text("Creating")');
+  check("tapping a length creates the clip with that title (buttons disabled meanwhile)", JSON.stringify(log.clipCreates.at(-1)) === '{"broadcaster_id":"999","duration":30,"title":"great play"}' && await page.$eval('#browse-body .clipper button', (b) => b.disabled));
+  await page.waitForSelector("#browse-body .clipper .state.ok", { timeout: 10000 });
+  check("it waits for Twitch to publish it (first lookup came back empty), then posts the link in chat as you",
+    log.clips.filter((x) => x === "NewClip1").length >= 2 && (await page.textContent("#browse-body .clipper .state")) === "Clip created, and its link is posted in chat." &&
+    log.sent.length === sentBeforeClip + 1 && log.sent.at(-1) === "https://clips.twitch.tv/NewClip1", JSON.stringify(log.sent.slice(sentBeforeClip)));
+  check("the posted message is tracked as sent from here (so color cycling doesn't count it twice)", await page.evaluate(() => [...sentIds].some((id) => id.startsWith("sent-"))));
+  check("the new clip is first in the list, highlighted", await page.$eval("#browse-body .bcard", (c) => c.classList.contains("fresh") && c.querySelector(".bt").textContent.length > 0));
+  const note = await page.evaluate(() => { const li = [...active.list.querySelectorAll("li.clip-made")].at(-1); return li && { head: li.querySelector(".sysmsg").textContent, card: !!li.querySelector("a.clip-card"), edit: (li.querySelector("a.btn") || {}).href, buttons: [...li.querySelectorAll("button")].map((b) => b.textContent) }; });
+  check("chat also gets a 'Clip created and posted' notice with the Edit link and share buttons (the card is on the posted message)", note && !note.card && note.head === "Clip created and posted in chat" && note.edit === "https://clips.twitch.tv/NewClip1/edit" && note.buttons[0] === "Put link in chat box", JSON.stringify(note));
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { [...active.list.querySelectorAll("li.clip-made button")][0].click(); });
+  check("the notice's button puts the clip link in the message box", (await page.evaluate(() => composer.getText())).startsWith("https://clips.twitch.tv/NewClip1"));
+  await page.evaluate(() => composer.setText(""));
+  // Twitch refusing (not live / restricted): the reason shows, and it can be retried.
+  clipCreateError = "This channel isn't live, so there's nothing to clip.";
+  await page.click("#clips-btn");
+  await page.waitForSelector("#browse-body .clipper button");
+  await page.click('#browse-body .clipper button:has-text("15s")');
+  await page.waitForSelector("#browse-body .clipper .state.err");
+  check("a refused clip shows Twitch's reason, and the buttons work again", (await page.textContent("#browse-body .clipper .state")).includes("isn't live") && !(await page.$eval('#browse-body .clipper button', (b) => b.disabled)));
+  clipCreateError = null;
+  await page.keyboard.press("Escape");
+
+  // Not posting: switch the box off, and nothing is sent.
+  const makeClip = async () => {
+    await page.click("#clips-btn");
+    await page.waitForSelector("#browse-body .clipper button");
+    await page.click('#browse-body .clipper button:has-text("30s")');
+    await page.waitForSelector("#browse-body .clipper .state.ok, #browse-body .clipper .state.err", { timeout: 10000 });
+  };
+  await page.click("#clips-btn");
+  await page.waitForSelector("#clip-post");
+  await page.uncheck("#clip-post");
+  check("unchecking the box turns it off for good", (await page.evaluate(() => settings.postClips)) === false && JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).postClips === false);
+  await page.keyboard.press("Escape");
+  const sent2 = log.sent.length;
+  await makeClip();
+  check("with posting off: nothing is sent, the notice keeps the clip card", log.sent.length === sent2 && (await page.textContent("#browse-body .clipper .state")) === "Clip created!" && await page.evaluate(() => { const li = [...active.list.querySelectorAll("li.clip-made")].at(-1); return !!li.querySelector("a.clip-card") && li.querySelector(".sysmsg").textContent === "Clip created"; }));
+  await page.keyboard.press("Escape");
+  // Settings has the same switch.
+  const row = await page.evaluate(() => { openSettings(); const r = [...document.querySelectorAll("#sheet-body .row")].find((x) => x.textContent.includes("Post new clips in chat")); const on = r && r.querySelector("input").checked; if (r) r.querySelector("input").click(); const now = settings.postClips; closeSheet(); return { found: !!r, was: on, now }; });
+  check("Settings has 'Post new clips in chat' (reflecting the box), and toggling it works", row.found && row.was === false && row.now === true, JSON.stringify(row));
+  // Posting fails (slow mode, links blocked...): the clip still exists, and the reason is shown.
+  sendFailure = "Your message was not sent: slow mode is on.";
+  const tries0 = (log.sendTries || []).length;
+  await makeClip();
+  const failed = await page.evaluate(() => { const li = [...active.list.querySelectorAll("li.clip-made")].at(-1); return { state: document.querySelector("#browse-body .clipper .state").textContent, cls: document.querySelector("#browse-body .clipper .state").className, err: (li.querySelector(".sys.err") || {}).textContent, card: !!li.querySelector("a.clip-card") }; });
+  check("a failed post says why, still shows the clip card and its buttons", (log.sendTries || []).length === tries0 + 1 && failed.cls.includes("err") && failed.state === "Clip created, but its link wasn't posted: Your message was not sent: slow mode is on." && failed.err.includes("slow mode") && failed.card, JSON.stringify(failed));
+  sendFailure = null;
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { tabs.get("uwoslab").stream = null; });
 }
 
 // =============== moving to a new address ===============

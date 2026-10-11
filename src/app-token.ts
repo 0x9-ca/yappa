@@ -1,4 +1,6 @@
-import { TwitchError, getBadges, getCheermotes, getClip, getGameName, getStreamsByIds } from "./twitch";
+import { PAGE_SIZE, slimClip, slimVideo } from "./browse";
+import type { ClipsQuery, VideosQuery } from "./browse";
+import { TwitchError, getBadges, getCheermotes, getClip, getClipsPage, getGameName, getGameNames, getStreamsByIds, getVideosPage } from "./twitch";
 
 /**
  * Public Twitch lookups (live status, clips, badges, cheermotes) don't need the user's own
@@ -86,3 +88,22 @@ export async function clip(env: Env, origin: string, id: string): Promise<{ ok: 
     return { ok: false, error: (err as Error).message };
   }
 }
+
+const gameNames = new Map<string, string>(); // category names rarely change; remembered per isolate
+
+/** A page of a channel's clips with category names filled in, or null if Twitch can't be reached. */
+export const clipsPage = (env: Env, origin: string, q: ClipsQuery) =>
+  lookup(env, origin, async (t) => {
+    const page = await getClipsPage(env, t, q.broadcasterId, { startedAt: q.startedAt, endedAt: q.endedAt, after: q.after, first: PAGE_SIZE });
+    const missing = [...new Set(page.clips.map((c) => c.game_id).filter((id) => id && !gameNames.has(id)))];
+    for (const [id, name] of await getGameNames(env, t, missing).catch(() => new Map<string, string>())) gameNames.set(id, name);
+    if (gameNames.size > 2000) gameNames.clear();
+    return { ok: true as const, clips: page.clips.map((c) => slimClip(c, gameNames.get(c.game_id) ?? null)), cursor: page.cursor };
+  });
+
+/** A page of a channel's past broadcasts, highlights or uploads, or null if Twitch can't be reached. */
+export const videosPage = (env: Env, origin: string, q: VideosQuery) =>
+  lookup(env, origin, async (t) => {
+    const page = await getVideosPage(env, t, q.userId, { type: q.type, sort: q.sort, after: q.after, first: PAGE_SIZE });
+    return { ok: true as const, videos: page.videos.map(slimVideo), cursor: page.cursor };
+  });

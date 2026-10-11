@@ -55,7 +55,7 @@ export function renderPage(user: string): string {
       <div class="banner error" id="error" hidden></div>
       <div class="banner error" id="expired" hidden>Your sign-in has expired. <button class="link" id="expired-reload" type="button">Reload to sign in again</button></div>
       <div class="banner info" id="reauth" hidden>Twitch needs extra permissions to read and send chat. <a href="/auth/login">Reconnect Twitch</a></div>
-      <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels and mod tools.</div>
+      <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels, clipping and mod tools.</div>
       <div class="banner info" id="cycle-status" hidden></div>
     </div>
   </div>
@@ -70,6 +70,9 @@ export function renderPage(user: string): string {
       </button>
       <button class="icon-btn" id="pip-btn" type="button" title="Picture-in-picture" aria-label="Picture-in-picture" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor"/></svg>
+      </button>
+      <button class="icon-btn" id="clips-btn" type="button" title="Clips and VODs" aria-label="Clips and VODs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4l2 5M14 4l2 5"/></svg>
       </button>
       <button class="icon-btn" id="search-btn" type="button" title="Search chat" aria-label="Search chat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -120,6 +123,14 @@ export function renderPage(user: string): string {
   <div class="sheet" role="dialog" aria-modal="true">
     <button class="icon-btn sheet-close" id="sheet-close" type="button" aria-label="Close">×</button>
     <div id="sheet-body"></div>
+  </div>
+</div>
+<!-- A channel's clips and VODs, and creating clips. Built by app.js. -->
+<div class="sheet-backdrop" id="browse-modal" hidden>
+  <div class="sheet wide tall" role="dialog" aria-modal="true" aria-labelledby="browse-title">
+    <button class="icon-btn sheet-close" id="browse-close" type="button" aria-label="Close">×</button>
+    <h2 id="browse-title"></h2>
+    <div id="browse-body"></div>
   </div>
 </div>
 <!-- Twitch's chat embed (experimental). Closing only hides it: the iframes stay loaded so you

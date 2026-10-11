@@ -48,7 +48,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto" };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -1297,7 +1297,31 @@ function fetchClip(id) {
 
 function fmtDuration(secs) {
   const s = Math.round(secs);
-  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  const sec = String(s % 60).padStart(2, "0");
+  if (s >= 3600) return Math.floor(s / 3600) + ":" + String(Math.floor(s / 60) % 60).padStart(2, "0") + ":" + sec;
+  return Math.floor(s / 60) + ":" + sec;
+}
+
+/** A thumbnail + details card for a clip, linking to it on Twitch. */
+function clipCardEl(clip) {
+  const card = el("a", "clip-card");
+  card.href = clip.url;
+  card.target = "_blank";
+  card.rel = "noopener noreferrer";
+  const thumb = el("span", "thumb");
+  const img = document.createElement("img");
+  img.src = clip.thumbnail;
+  img.alt = "";
+  img.loading = "lazy";
+  thumb.append(img, el("span", "dur", fmtDuration(clip.duration)));
+  const meta = el("span", "clip-meta");
+  meta.append(
+    el("span", "clip-title", clip.title),
+    el("span", null, clip.broadcaster + (clip.game ? " · " + clip.game : "")),
+    el("span", null, "Clipped by " + clip.creator + " · " + compactCount(clip.views) + " views · " + since(clip.createdAt) + " ago"),
+  );
+  card.append(thumb, meta);
+  return card;
 }
 
 /** Adds a thumbnail + metadata card under a message for each Twitch clip it links (max 2). */
@@ -1307,23 +1331,7 @@ function attachClipCards(tab, li, body) {
     fetchClip(id).then((clip) => {
       if (!clip || !li.isConnected || !/^https:\/\//.test(clip.url)) return;
       const stick = tab === active && sticking(tab);
-      const card = el("a", "clip-card");
-      card.href = clip.url;
-      card.target = "_blank";
-      card.rel = "noopener noreferrer";
-      const thumb = el("span", "thumb");
-      const img = document.createElement("img");
-      img.src = clip.thumbnail;
-      img.alt = "";
-      img.loading = "lazy";
-      thumb.append(img, el("span", "dur", fmtDuration(clip.duration)));
-      const meta = el("span", "clip-meta");
-      meta.append(
-        el("span", "clip-title", clip.title),
-        el("span", null, clip.broadcaster + (clip.game ? " · " + clip.game : "")),
-        el("span", null, "Clipped by " + clip.creator + " · " + compactCount(clip.views) + " views · " + since(clip.createdAt) + " ago"),
-      );
-      card.append(thumb, meta);
+      const card = clipCardEl(clip);
       if (stick) {
         li.insertBefore(card, li.querySelector(".actions"));
         scrollToBottom(tab);
@@ -2283,6 +2291,27 @@ function setReply(r) {
 }
 $("reply-cancel").addEventListener("click", () => setReply(null));
 
+/**
+ * Sends a chat message as you, through the Worker. Remembers the message id (and that a send
+ * is in flight) so a message sent from here isn't mistaken for one sent from another app,
+ * which would advance the color cycle a second time.
+ */
+async function sendChat(tab, message, replyId) {
+  const pending = api("/api/chat/send", {
+    broadcaster_id: tab.broadcaster.id,
+    message,
+    reply_parent_message_id: replyId,
+  });
+  inflightSends.add(pending);
+  const r = await pending;
+  inflightSends.delete(pending);
+  if (r.ok && r.messageId) {
+    sentIds.add(r.messageId);
+    if (sentIds.size > 200) sentIds.delete(sentIds.values().next().value);
+  }
+  return r;
+}
+
 $("send-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = composer.getText().trim();
@@ -2298,19 +2327,8 @@ $("send-form").addEventListener("submit", async (e) => {
   $("send").disabled = true;
   sending = true;
   show("send-error", false);
-  const pending = api("/api/chat/send", {
-    broadcaster_id: tab.broadcaster.id,
-    message: text,
-    reply_parent_message_id: replyTo ? replyTo.id : undefined,
-  });
-  inflightSends.add(pending);
-  const r = await pending;
-  inflightSends.delete(pending);
+  const r = await sendChat(tab, text, replyTo ? replyTo.id : undefined);
   sending = false;
-  if (r.ok && r.messageId) {
-    sentIds.add(r.messageId);
-    if (sentIds.size > 200) sentIds.delete(sentIds.values().next().value);
-  }
   updateComposer();
   if (r.ok) {
     lastSent = text;
@@ -3097,6 +3115,294 @@ function resolveHeld(tab, ev) {
   li.querySelector(".am-actions").replaceChildren(el("span", null, label));
 }
 
+// ---------- clips and VODs ----------
+
+// A channel's clips and past broadcasts (public data, via the Worker), played in Twitch's own
+// embeds or opened on Twitch, plus creating a clip of the live stream (needs the clips:edit
+// permission). Clip creation is asynchronous on Twitch's side, so we poll for the new clip.
+
+const BROWSE_MODES = [["clips", "Clips"], ["archive", "Past broadcasts"], ["highlight", "Highlights"], ["upload", "Uploads"]];
+const CLIP_PERIODS = [["all", "All time"], ["month", "This month"], ["week", "This week"], ["day", "Today"]];
+const CLIP_SECONDS = [15, 30, 60];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let clipPollMs = 3000;
+let clipping = false;
+let browse = null; // the open window: { tab, mode, period, sort, items, cursor, done, loading, error, req, player, scroll, clip }
+
+const hasScope = (scope) => !!(status && status.twitch && !(status.twitch.missingOptionalScopes || []).includes(scope));
+
+function openBrowse() {
+  const tab = active;
+  if (!tab || !tab.broadcaster) return;
+  browse = { tab, mode: "clips", period: "all", sort: "time", items: [], cursor: null, done: false, loading: false, error: null, req: 0, player: null, scroll: 0, clip: null };
+  show("browse-modal", true);
+  renderBrowse();
+  loadBrowse(true);
+}
+
+function closeBrowse() {
+  show("browse-modal", false);
+  $("browse-body").replaceChildren(); // also stops a playing embed
+  browse = null;
+}
+
+/** Loads the first page (reset) or the next one for the current tab and filters. */
+async function loadBrowse(reset) {
+  const b = browse;
+  if (!b) return;
+  if (!reset && (b.loading || b.done)) return;
+  if (reset) { b.items = []; b.cursor = null; b.done = false; }
+  b.error = null;
+  b.loading = true;
+  const req = ++b.req;
+  renderBrowse();
+  const q = new URLSearchParams();
+  let path;
+  if (b.mode === "clips") {
+    path = "/api/channel/clips";
+    q.set("broadcaster_id", b.tab.broadcaster.id);
+    q.set("period", b.period);
+  } else {
+    path = "/api/channel/videos";
+    q.set("user_id", b.tab.broadcaster.id);
+    q.set("type", b.mode);
+    q.set("sort", b.sort);
+  }
+  if (b.cursor) q.set("after", b.cursor);
+  const kind = b.mode === "clips" ? "clip" : "video";
+  const r = await api(path + "?" + q);
+  if (browse !== b || b.req !== req) return; // closed, or a newer filter owns the list now
+  b.loading = false;
+  const list = kind === "clip" ? r.clips : r.videos;
+  if (!r.ok || !Array.isArray(list)) b.error = r.error || "Couldn't load them.";
+  else {
+    b.items.push(...list.map((x) => ({ ...x, kind })));
+    b.cursor = r.cursor || null;
+    b.done = !r.cursor;
+  }
+  renderBrowse();
+}
+
+const embedParams = (extra) => new URLSearchParams({ ...extra, parent: location.hostname, autoplay: "true" });
+const clipEmbedUrl = (id) => "https://clips.twitch.tv/embed?" + embedParams({ clip: id });
+const videoEmbedUrl = (id) => "https://player.twitch.tv/?" + embedParams({ video: "v" + id });
+
+function browseSubline(item) {
+  const bits = [compactCount(item.views) + " views", since(item.createdAt) + " ago"];
+  if (item.kind === "clip") {
+    if (item.game) bits.push(item.game);
+    bits.push("by " + item.creator);
+  }
+  return bits.join(" · ");
+}
+
+function browseCard(b, item) {
+  const card = el("button", "bcard" + (item.fresh ? " fresh" : ""));
+  card.type = "button";
+  const thumb = el("span", "bthumb");
+  if (item.thumbnail) {
+    const img = document.createElement("img");
+    img.src = item.thumbnail;
+    img.alt = "";
+    img.loading = "lazy";
+    thumb.appendChild(img);
+  }
+  const secs = item.kind === "clip" ? item.duration : item.seconds;
+  if (secs) thumb.appendChild(el("span", "dur", fmtDuration(secs)));
+  const meta = el("span", "bmeta");
+  meta.append(el("span", "bt", item.title || "(untitled)"), el("span", "bs", browseSubline(item)));
+  card.append(thumb, meta);
+  card.addEventListener("click", () => { b.scroll = $("browse-modal").querySelector(".sheet").scrollTop; b.player = item; renderBrowse(); });
+  return card;
+}
+
+function dropdown(options, value, onChange) {
+  const sel = document.createElement("select");
+  for (const [v, label] of options) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = label;
+    o.selected = v === value;
+    sel.appendChild(o);
+  }
+  sel.addEventListener("change", () => onChange(sel.value));
+  return sel;
+}
+
+function renderPlayer(b) {
+  const item = b.player;
+  const frame = document.createElement("iframe");
+  frame.className = "browse-player";
+  frame.title = item.title || "Twitch video";
+  frame.allow = "autoplay; fullscreen";
+  frame.allowFullscreen = true;
+  frame.src = item.kind === "clip" ? clipEmbedUrl(item.id) : videoEmbedUrl(item.id);
+  const open = el("a", "btn small", "Open on Twitch");
+  open.href = item.url;
+  open.target = "_blank";
+  open.rel = "noopener noreferrer";
+  const actions = el("div", "browse-actions");
+  actions.append(
+    btn("← Back", () => { b.player = null; renderBrowse(); $("browse-modal").querySelector(".sheet").scrollTop = b.scroll; }, "small"),
+    open,
+    btn("Put link in chat box", () => { closeBrowse(); insertEmote(item.url); }, "small"),
+  );
+  return [frame, el("div", "ptitle", item.title || "(untitled)"), el("div", "psub", browseSubline(item)), actions];
+}
+
+/** The "clip the live stream" controls: shown above the list when the channel is live. */
+function clipControls(b) {
+  const box = el("div", "clipper");
+  box.appendChild(el("div", "ch", "Create a clip"));
+  if (!b.tab.stream) {
+    box.appendChild(el("div", "state", "Clips come from the live stream, so this works while #" + b.tab.broadcaster.name + " is live."));
+    return box;
+  }
+  if (!hasScope("clips:edit")) {
+    const a = el("a", null, "Reconnect Twitch");
+    a.href = "/auth/login";
+    const note = el("div", "state");
+    note.append(a, " to let Yappa create clips for you (one-time permission).");
+    box.appendChild(note);
+    return box;
+  }
+  const title = document.createElement("input");
+  title.type = "text";
+  title.placeholder = "Title (optional)";
+  title.maxLength = 100;
+  title.id = "clip-title";
+  title.setAttribute("aria-label", "Clip title");
+  title.value = b.clipTitle || "";
+  title.addEventListener("input", () => { b.clipTitle = title.value; });
+  const lens = el("div", "lens");
+  const busy = b.clip && (b.clip.state === "creating" || b.clip.state === "waiting");
+  for (const s of CLIP_SECONDS) {
+    const bt = btn("Clip last " + s + "s", () => createClip(b.tab, s, title.value.trim()), "small");
+    bt.dataset.seconds = String(s);
+    bt.disabled = !!busy;
+    lens.appendChild(bt);
+  }
+  const post = document.createElement("input");
+  post.type = "checkbox";
+  post.checked = !!settings.postClips;
+  post.id = "clip-post";
+  post.addEventListener("change", () => { settings.postClips = post.checked; saveSettings(); });
+  const postLabel = el("label", "clip-post");
+  postLabel.append(post, " Post the link in chat when it's ready");
+  box.append(title, lens, postLabel);
+  if (b.clip) box.appendChild(el("div", "state " + (b.clip.state === "error" ? "err" : b.clip.state === "done" ? "ok" : ""), b.clip.text));
+  return box;
+}
+
+function renderBrowse() {
+  const b = browse;
+  if (!b) return;
+  const sheet = $("browse-modal").querySelector(".sheet");
+  const scroll = sheet.scrollTop;
+  $("browse-title").textContent = "Clips & VODs: " + b.tab.broadcaster.name;
+  const body = $("browse-body");
+  if (b.player) { body.replaceChildren(...renderPlayer(b)); sheet.scrollTop = 0; return; }
+
+  const tabs = el("div", "browse-tabs seg");
+  for (const [mode, label] of BROWSE_MODES) {
+    const t = btn(label, () => { if (b.mode !== mode) { b.mode = mode; loadBrowse(true); } }, "ghost small");
+    if (b.mode === mode) t.classList.add("on");
+    tabs.appendChild(t);
+  }
+  const filter = el("div", "browse-filter");
+  if (b.mode === "clips") {
+    filter.append("Most viewed from", dropdown(CLIP_PERIODS, b.period, (v) => { b.period = v; loadBrowse(true); }));
+  } else {
+    filter.append("Sort", dropdown([["time", "Newest"], ["views", "Most viewed"]], b.sort, (v) => { b.sort = v; loadBrowse(true); }));
+  }
+  const parts = [clipControls(b), tabs, filter];
+  for (const item of b.items) parts.push(browseCard(b, item));
+  if (b.loading) parts.push(el("div", "browse-note", "Loading…"));
+  else if (b.error) {
+    const note = el("div", "browse-note", b.error + " ");
+    note.appendChild(btn("Try again", () => loadBrowse(!b.items.length), "small"));
+    parts.push(note);
+  } else if (!b.items.length) parts.push(el("div", "browse-note", "Nothing here yet."));
+  else if (!b.done) {
+    const more = btn("Load more", () => loadBrowse(false), "ghost small");
+    more.classList.add("browse-more");
+    parts.push(more);
+  }
+  body.replaceChildren(...parts);
+  sheet.scrollTop = scroll;
+}
+
+/** Asks Twitch for a clip of the last stretch of the live stream, then waits for it to appear. */
+async function createClip(tab, seconds, title) {
+  if (clipping) return;
+  clipping = true;
+  const state = (s, text) => { if (browse && browse.tab === tab) { browse.clip = { state: s, text }; renderBrowse(); } };
+  state("creating", "Creating a " + seconds + "-second clip…");
+  const r = await api("/api/clips/create", { broadcaster_id: tab.broadcaster.id, duration: seconds, title: title || undefined });
+  if (!r.ok) {
+    clipping = false;
+    const why = r.needsScope ? "Reconnect Twitch to allow clipping." : r.error;
+    state("error", why);
+    if (!browse) sysLine(tab, "Couldn't create the clip: " + why, "err");
+    return;
+  }
+  state("waiting", "Twitch is publishing your clip…");
+  // Twitch says to treat a clip that hasn't shown up after about a minute as failed.
+  let clip = null;
+  for (let i = 0; i < 20 && !clip; i++) {
+    await sleep(i === 0 ? Math.min(2000, clipPollMs) : clipPollMs);
+    const g = await api("/api/chat/clip?id=" + encodeURIComponent(r.id));
+    if (g.ok && g.clip) clip = g.clip;
+  }
+  clipping = false;
+  if (!clip) {
+    state("error", "Your clip didn't show up. Twitch may still be processing it, or it failed.");
+    sysLine(tab, "The clip didn't show up on Twitch. It may still be processing, or it failed.", "err");
+    return;
+  }
+  clipCache.set(clip.id, Promise.resolve(clip));
+  // Post the link to the channel's chat, if that's switched on. Only now, so the link works when it appears.
+  let posted = null; // null = not asked to, true = sent, string = why it wasn't
+  if (settings.postClips) {
+    const sent = await sendChat(tab, clip.url);
+    posted = sent.ok ? true : sent.error || "unknown error";
+    if (sent.ok && status && status.cycle && status.cycle.enabled) refreshStatus();
+  }
+  state(posted === null || posted === true ? "done" : "error",
+    posted === true ? "Clip created, and its link is posted in chat." : posted === null ? "Clip created!" : "Clip created, but its link wasn't posted: " + posted);
+  announceClip(tab, clip, r.editUrl, posted);
+  if (browse && browse.tab === tab) {
+    if (browse.mode === "clips") browse.items.unshift({ ...clip, kind: "clip", fresh: true });
+    renderBrowse();
+  }
+}
+
+/** Puts the new clip in the chat (so it isn't lost if the window was closed), with what you'd do next. */
+function announceClip(tab, clip, editUrl, posted) {
+  const li = el("li", "notice clip-made");
+  li.appendChild(el("div", "sysmsg", "Clip created" + (posted === true ? " and posted in chat" : "")));
+  // The posted message gets its own clip card in chat, so skip a second copy of it here.
+  if (posted !== true) li.appendChild(clipCardEl(clip));
+  if (typeof posted === "string") li.appendChild(el("div", "sys err", "Couldn't post the link in chat: " + posted));
+  const row = el("div", "raid-actions");
+  if (editUrl) {
+    const edit = el("a", "btn small", "Edit on Twitch");
+    edit.href = editUrl;
+    edit.target = "_blank";
+    edit.rel = "noopener noreferrer";
+    row.appendChild(edit);
+  }
+  row.appendChild(btn("Put link in chat box", () => insertEmote(clip.url), "small"));
+  if (navigator.clipboard) row.appendChild(btn("Copy link", () => navigator.clipboard.writeText(clip.url).catch(() => {}), "small ghost"));
+  li.appendChild(row);
+  append(tab, li, false);
+}
+
+$("clips-btn").addEventListener("click", openBrowse);
+$("browse-close").addEventListener("click", closeBrowse);
+$("browse-modal").addEventListener("click", (e) => { if (e.target === $("browse-modal")) closeBrowse(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("browse-modal").hidden) closeBrowse(); });
+
 // ---------- search / filter ----------
 
 let filterText = "";
@@ -3483,6 +3789,9 @@ function openSettings() {
     themeSeg,
     el("h3", null, "Chat text size"),
     seg,
+    el("h3", null, "Clips"),
+    row("Post new clips in chat", checkbox(settings.postClips !== false, (c) => { settings.postClips = c.checked; saveSettings(); }),
+      "When you create a clip with Yappa (the clapper button in the info bar), send its link to the channel's chat as you."),
     el("h3", null, "GIFs"),
     row("Show GIFs", checkbox(settings.gifs !== false, (c) => { settings.gifs = c.checked; saveSettings(); }),
       "Tier 2 and 3 subscribers can send GIFs. They're big and animated, so turn this off to get a link instead (applies to new messages)."),

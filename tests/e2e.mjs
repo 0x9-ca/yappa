@@ -1741,6 +1741,18 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("the new clip is first in the list, highlighted", await page.$eval("#browse-body .brow", (r) => r.classList.contains("fresh") && r.querySelector(".bt").textContent.length > 0));
   const note = await page.evaluate(() => { const li = [...active.list.querySelectorAll("li.clip-made")].at(-1); return li && { head: li.querySelector(".sysmsg").textContent, card: !!li.querySelector("a.clip-card"), edit: (li.querySelector("a.btn") || {}).href, buttons: [...li.querySelectorAll("button")].map((b) => b.textContent) }; });
   check("chat also gets a 'Clip created and posted' notice with the Edit link and share buttons (the card is on the posted message)", note && !note.card && note.head === "Clip created and posted in chat" && note.edit === "https://clips.twitch.tv/NewClip1/edit" && note.buttons[0] === "Put link in chat box", JSON.stringify(note));
+  // No title: the clip is named after the stream.
+  await page.keyboard.press("Escape");
+  await page.click("#clips-btn");
+  await page.waitForSelector("#browse-body .clipper button");
+  check("the title box says a blank title uses the stream's", (await page.getAttribute("#clip-title", "placeholder")).includes("stream's title"));
+  await page.evaluate(() => { settings.postClips = false; saveSettings(); });
+  const streamTitle = await page.evaluate(() => active.stream.title);
+  await page.click('#browse-body .clipper button:has-text("15s")');
+  await page.waitForSelector("#browse-body .clipper .state.ok", { timeout: 10000 });
+  check("a blank title becomes the stream's title", !!streamTitle && JSON.stringify(log.clipCreates.at(-1)) === JSON.stringify({ broadcaster_id: "999", duration: 15, title: streamTitle }), JSON.stringify(log.clipCreates.at(-1)));
+  check("a long stream title is cut to 100 characters", await page.evaluate(() => defaultClipTitle({ stream: { title: "é".repeat(140) } }).length === 100));
+  await page.evaluate(() => { settings.postClips = true; saveSettings(); });
   await page.keyboard.press("Escape");
   await page.evaluate(() => { [...active.list.querySelectorAll("li.clip-made button")][0].click(); });
   check("the notice's button puts the clip link in the message box", (await page.evaluate(() => composer.getText())).startsWith("https://clips.twitch.tv/NewClip1"));

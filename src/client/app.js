@@ -3360,7 +3360,7 @@ function clipControls(b) {
   }
   const title = document.createElement("input");
   title.type = "text";
-  title.placeholder = "Title (optional)";
+  title.placeholder = defaultClipTitle(b.tab) ? "Title (blank: the stream's title)" : "Title (optional)";
   title.maxLength = 100;
   title.id = "clip-title";
   title.setAttribute("aria-label", "Clip title");
@@ -3427,8 +3427,15 @@ function renderBrowse() {
 }
 
 /** Asks Twitch for a clip of the last stretch of the live stream, then waits for it to appear. */
+/** What a clip gets named when you give no title: the stream's current title (Twitch allows 100 characters). */
+function defaultClipTitle(tab) {
+  const t = tab && tab.stream && tab.stream.title;
+  return t ? Array.from(t.replace(/\s+/g, " ").trim()).slice(0, 100).join("") : "";
+}
+
 async function createClip(tab, seconds, title) {
   if (clipping) return;
+  title = title || defaultClipTitle(tab);
   clipping = true;
   const state = (s, text) => { if (browse && browse.tab === tab) { browse.clip = { state: s, text }; renderBrowse(); } };
   state("creating", "Creating a " + seconds + "-second clip…");

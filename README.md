@@ -60,7 +60,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Account menu: your Twitch picture in the corner opens a menu with your name, Settings, "Your clips" (the
   clips you made through Yappa) and Log out.
 - Clips & VODs: browse a channel's clips (most viewed by period), past broadcasts, highlights and uploads,
-  play them in Twitch's own embeds, share them (the phone's share sheet, or copy the link), and create a clip of the live stream (15 / 30 / 60 s, optional title).
+  play them in Twitch's own embeds, share them (the phone's share sheet, or copy the link), and create a clip of the live stream (15 / 30 / 60 s; a blank title uses the stream's title).
   New clips can be posted to the channel's chat automatically (on by default; Settings → Clips).
 - GIFs sent by Tier 2+ subscribers are shown inline (Settings → Show GIFs turns them into links).
 - Channel points redemptions that show up in chat (highlighted messages, sub-only-mode messages and

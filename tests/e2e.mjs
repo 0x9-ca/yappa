@@ -14,8 +14,19 @@ await build({
   bundle: true, format: "esm", outfile: dir + "/page.bundle.mjs", logLevel: "warning",
   loader: { ".css": "text", ".js": "text", ".png": "base64" },
 });
+// The Worker itself (sign-in, sessions, allowlist), with the Durable Object runtime faked so it runs in Node.
+await build({
+  stdin: { contents: 'export { default } from "./src/index.ts"; export { signSession, isAllowed } from "./src/session.ts";', resolveDir: root, loader: "ts" },
+  bundle: true, format: "esm", outfile: dir + "/worker.bundle.mjs", logLevel: "warning",
+  loader: { ".css": "text", ".js": "text", ".png": "base64" },
+  plugins: [{ name: "fake-cloudflare-workers", setup(b) {
+    b.onResolve({ filter: /^cloudflare:workers$/ }, () => ({ path: "cf-workers", namespace: "fake" }));
+    b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ contents: "export class DurableObject {}", loader: "js" }));
+  } }],
+});
+const worker = await import(dir + "/worker.bundle.mjs?" + Date.now());
 const { renderPage, PAGE_HEADERS, renderMoved, relayMaster, parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
-const html = renderPage("testuser@example.com");
+const html = renderPage();
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
 });
@@ -62,7 +73,7 @@ await page.addInitScript(() => {
 });
 // Console errors the checks provoke on purpose: the CSP check, the 503 status, the aborted request.
 // The CSP one is allowed once, so a real violation by the app still fails the run.
-const expectedErrors = [/status of 503/, /status of 502/, /net::ERR_FAILED/];
+const expectedErrors = [/status of 401/, /status of 503/, /status of 502/, /net::ERR_FAILED/];
 let allowedCspErrors = 1;
 const expected = (t) => expectedErrors.some((re) => re.test(t)) || (/Content Security Policy/.test(t) && allowedCspErrors-- > 0);
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && !expected(m.text()) && errors.push(m.text()));
@@ -109,12 +120,10 @@ await ctx.route("**/*", async (route) => {
         attachMedia(v) { this.calls.push(["attachMedia", v.tagName]); } destroy() { this.calls.push(["destroy"]); this.destroyed = true; }
         fire(ev, data) { this.handlers[ev] && this.handlers[ev](ev, data); } };
       Hls.Events = { ERROR: "hlsError", MANIFEST_PARSED: "hlsManifestParsed" };` });
-    // An expired Cloudflare Access session: every request is redirected to Access's login page.
-    if (u.pathname === "/manifest.webmanifest" && sessionExpiredMock) return route.fulfill({ status: 302, headers: { location: "https://access.example.com/login" } });
     const f = staticFiles[u.pathname];
     if (f) return route.fulfill({ body: f.type === "image/png" ? Buffer.from(f.body, "base64") : f.body, contentType: f.type });
     if (u.pathname === "/api/cycle") { cycle.enabled = body().enabled; if (cycle.enabled) { cycle.lastColor = "#11AA22"; cycle.changes++; } log.cycle.push(cycle.enabled); return j({ ok: true, cycle }); }
-    if (u.pathname === "/api/netfail") return route.abort();
+    if (u.pathname === "/api/netfail") return sessionExpiredMock ? route.fulfill({ status: 401, json: { ok: false, error: "Sign in again.", signedOut: true } }) : route.abort();
     if (u.pathname === "/api/channel/clips" || u.pathname === "/api/channel/videos") {
       log.browse = [...(log.browse || []), u.pathname + u.search];
       if (browseFails) return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
@@ -1448,13 +1457,11 @@ check("history marks messages deleted before they were loaded", await page.evalu
 // =============== review fixes (second pass) ===============
 {
   await page.click(".tab:first-child .tab-name");
-  // Expired Access session: say so, instead of "network error" forever.
+  // Signed out (cookie expired, or taken off the allowlist): say so, with a way back in.
   sessionExpiredMock = true;
-  await page.evaluate(() => { sessionProbe = null; });
   const exp = await page.evaluate(() => api("/api/netfail"));
-  check("expired sign-in is detected and explained (with a reload button)", exp.ok === false && /sign-in expired/.test(exp.error) && !(await page.$eval("#expired", (b) => b.hidden)) && !!(await page.$("#expired-reload")), JSON.stringify(exp));
+  check("a signed-out answer is explained, with a link to sign in again", exp.ok === false && /sign-in ended/.test(exp.error) && !(await page.$eval("#expired", (b) => b.hidden)) && (await page.getAttribute("#expired a", "href")) === "/auth/login", JSON.stringify(exp));
   sessionExpiredMock = false;
-  await page.evaluate(() => { sessionProbe = null; });
   const offline = await page.evaluate(() => api("/api/netfail"));
   check("a plain network error is still just a network error", offline.retry === true && /Network error/.test(offline.error));
   await page.evaluate(() => api("/api/status"));
@@ -1928,10 +1935,10 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const moved = await p2.evaluate(() => ({ hash: location.hash, rules: settings.rules, tabs: localStorage.getItem("tabs"), active: active && active.login }));
   check("old address carries tabs and settings to the new one", moved.hash === "#otherchan" && moved.rules[0].phrase === "moved" && moved.tabs === '["otherchan","uwoslab"]' && moved.active === "otherchan", JSON.stringify(moved));
   // A sign-in error that lands on the old address survives the hop to the new one.
-  await p2.goto("https://old.test/?error=" + encodeURIComponent("The provided redirect_uri does not match"));
+  await p2.goto("https://old.test/?error=state");
   await p2.waitForURL("https://yappa.test/**");
   await p2.waitForSelector("#error:not([hidden])");
-  check("sign-in error on the old address is shown at the new one", (await p2.textContent("#error")) === "The provided redirect_uri does not match");
+  check("sign-in error on the old address is shown at the new one", /didn't complete/.test(await p2.textContent("#error")));
   // An import link never overwrites a browser that already has data.
   await p2.goto("https://yappa.test/?reload#import=" + encodeURIComponent(JSON.stringify({ settings: JSON.stringify({ rules: [{ phrase: "evil", user: "" }] }) })));
   await p2.waitForFunction(() => typeof settings !== "undefined");
@@ -1939,7 +1946,131 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await p2.close();
 }
 
+// =============== log out (last: it closes every tab) ===============
+{
+  await page.evaluate(() => { window.__homed = 0; nav.home = () => { window.__homed++; }; });
+  const before = log.logouts || 0;
+  await page.evaluate(() => logout());
+  check("logging out signs out on the server, then returns to the front page", (log.logouts || 0) === before + 1 && (await page.evaluate(() => window.__homed)) === 1);
+}
+
+// =============== sign-in and the allowlist (the Worker, run directly) ===============
+{
+  const calls = { stored: [], disconnected: [], revoked: 0, names: [] };
+  let twitchLogin = { user_id: "4242", login: "AllowedUser" };
+  const env = {
+    SESSION_SECRET: "s".repeat(48), ALLOWED_LOGINS: "alloweduser, 777", APP_HOST: "app.test", TWITCH_CLIENT_ID: "cid", TWITCH_CLIENT_SECRET: "sec",
+    CF_VERSION_METADATA: { timestamp: "t" },
+    COLOR_LOOP: { getByName: (name) => { calls.names.push(name); return {
+      syncVersion: async () => {}, storeTokens: async (tok, info) => { calls.stored.push([name, info.login, tok.access_token]); }, disconnectTwitch: async () => { calls.disconnected.push(name); },
+      status: async () => ({ ok: true, twitch: null }),
+    }; } },
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.endsWith("/oauth2/token")) return Response.json({ access_token: "at", refresh_token: "rt", expires_in: 3600, scope: [], token_type: "bearer" });
+    if (url.endsWith("/oauth2/validate")) return Response.json({ client_id: "cid", login: twitchLogin.login, user_id: twitchLogin.user_id, scopes: ["user:read:chat"], expires_in: 3600 });
+    if (url.endsWith("/oauth2/revoke")) { calls.revoked++; return new Response(null, { status: 200 }); }
+    return realFetch(u, init);
+  };
+  const req = (path, init = {}) => new Request("https://app.test" + path, init);
+  const get = (path, cookie) => worker.default.fetch(req(path, { headers: cookie ? { Cookie: cookie } : {} }), env);
+  const post = (path, cookie, origin = "https://app.test") => worker.default.fetch(req(path, { method: "POST", headers: { ...(origin ? { Origin: origin } : {}), ...(cookie ? { Cookie: cookie } : {}), "Content-Type": "application/json" }, body: "{}" }), env);
+  const cookieOf = (res) => (res.headers.getSetCookie().find((c) => c.startsWith("__Host-yappa_session=")) || "").split(";")[0];
+  const cb = (query, state = "st8") => get("/auth/callback?" + query, "twitch_oauth_state=" + state);
+
+  // Signed out: only the sign-in page; no app, no data.
+  let r = await get("/");
+  let body = await r.text();
+  check("signed out: the front page is just a sign-in page", r.status === 200 && body.includes("Sign in with Twitch") && !body.includes("/app.js") && !body.includes('id="chat"'));
+  r = await get("/api/status");
+  check("signed out: the API answers 401 signedOut", r.status === 401 && (await r.json()).signedOut === true);
+  r = await get("/api/streams?ids=1");
+  check("signed out: even the public Twitch lookups need a sign-in", r.status === 401);
+  r = await post("/api/chat/send");
+  check("signed out: POSTs are refused too", r.status === 401);
+  r = await post("/api/chat/send", "", null);
+  check("a POST from another origin is refused outright", r.status === 403);
+  r = await get("/app.js");
+  check("the app's own files stay public (no secrets in them)", r.status === 200 && (await r.text()).length > 10000);
+  r = await worker.default.fetch(new Request("https://old.test/"), env);
+  check("the old address still forwards to the new one without a sign-in", r.status === 200 && (await r.text()).includes("app.test"));
+  r = await get("/?error=" + encodeURIComponent("<script>alert(1)</script>"));
+  body = await r.text();
+  check("the front page never reflects free text from the URL", !body.includes("alert(1)") && !body.includes("&#60;script"));
+  r = await get("/?error=denied");
+  check("known error codes show a fixed message", (await r.text()).includes("isn&#39;t allowed"));
+
+  r = await get("/auth/login");
+  const loc = new URL(r.headers.get("Location"));
+  check("sign-in sends you to Twitch with a state that is also in a cookie",
+    r.status === 302 && loc.host === "id.twitch.tv" && loc.searchParams.get("redirect_uri") === "https://app.test/auth/callback" && (r.headers.get("Set-Cookie") || "").includes("twitch_oauth_state=" + loc.searchParams.get("state")));
+
+  // An allowed account (login matching ignores case).
+  r = await cb("code=abc&state=st8");
+  const sess = cookieOf(r);
+  check("allowed account: signed in, Twitch tokens kept in that account's Durable Object (named by Twitch id)",
+    r.status === 302 && r.headers.get("Location") === "/" && !!sess && JSON.stringify(calls.stored) === '[["4242","AllowedUser","at"]]', JSON.stringify(calls.stored));
+  check("the session cookie is host-locked, HttpOnly, Secure and SameSite", /^__Host-yappa_session=[^;]+; Path=\/; HttpOnly; Secure; SameSite=Lax/.test(r.headers.getSetCookie().find((c) => c.startsWith("__Host-")) || ""));
+  r = await get("/api/status", sess);
+  check("with the session the API answers, from the Durable Object of that Twitch id", r.status === 200 && calls.names.at(-1) === "4242");
+  r = await get("/", sess);
+  body = await r.text();
+  check("with the session the front page is the app (and the cookie is renewed)", body.includes("/app.js") && !!cookieOf(r));
+
+  // The cookie can't be forged, edited or reused after it expires.
+  const [payload, sig] = sess.split("=")[1].split(".");
+  const evil = btoa(JSON.stringify({ u: "999", l: "alloweduser", e: Date.now() + 1e9 })).replace(/=+$/, "");
+  r = await get("/api/status", "__Host-yappa_session=" + evil + "." + sig);
+  check("an edited cookie is refused", r.status === 401);
+  r = await get("/api/status", "__Host-yappa_session=" + payload + ".AAAA");
+  check("a cookie with a bad signature is refused", r.status === 401);
+  r = await get("/api/status", "__Host-yappa_session=garbage");
+  check("a malformed cookie is refused", r.status === 401);
+  const old = "__Host-yappa_session=" + (await worker.signSession(env, "4242", "alloweduser", Date.now() - 31 * 86400e3));
+  r = await get("/api/status", old);
+  check("an expired cookie is refused", r.status === 401);
+  const other = { ...env, SESSION_SECRET: "t".repeat(48) };
+  r = await worker.default.fetch(req("/api/status", { headers: { Cookie: sess } }), other);
+  check("a cookie signed with a different secret is refused", r.status === 401);
+  const weak = await worker.signSession({ ...env, SESSION_SECRET: "short" }, "1", "a").then(() => "signed", () => "refused");
+  check("a weak SESSION_SECRET is refused rather than used", weak === "refused");
+
+  // Allowlist rules.
+  check("allowlist: logins match any case, numeric ids match, others and an empty list don't",
+    worker.isAllowed(env, "1", "ALLOWEDUSER") && worker.isAllowed(env, "777", "renamed") && !worker.isAllowed(env, "5", "stranger") && !worker.isAllowed({ ...env, ALLOWED_LOGINS: "" }, "4242", "alloweduser") && !worker.isAllowed({ ...env, ALLOWED_LOGINS: undefined }, "4242", "alloweduser"));
+  r = await worker.default.fetch(req("/api/status", { headers: { Cookie: sess } }), { ...env, ALLOWED_LOGINS: "somebodyelse" });
+  check("taking a login off the list ends its existing sessions at once", r.status === 401);
+
+  // Someone not on the list.
+  const storedBefore = calls.stored.length, revokedBefore = calls.revoked;
+  twitchLogin = { user_id: "5", login: "stranger" };
+  r = await cb("code=abc&state=st8");
+  check("a stranger is refused: no session, no tokens kept, the Twitch grant revoked",
+    r.status === 302 && r.headers.get("Location") === "/?error=denied" && !cookieOf(r) && calls.stored.length === storedBefore && calls.revoked === revokedBefore + 1);
+  twitchLogin = { user_id: "777", login: "renamed_later" };
+  r = await cb("code=abc&state=st8");
+  check("an account on the list by numeric id signs in whatever its login is", r.status === 302 && r.headers.get("Location") === "/" && !!cookieOf(r));
+
+  // Broken callbacks.
+  r = await cb("code=abc&state=other");
+  check("a callback whose state doesn't match the cookie is refused", r.headers.get("Location") === "/?error=state" && !cookieOf(r));
+  r = await get("/auth/callback?code=abc&state=st8");
+  check("a callback without the state cookie is refused", r.headers.get("Location") === "/?error=state");
+  r = await cb("error=access_denied&error_description=" + encodeURIComponent("<b>hi</b>"));
+  check("cancelling at Twitch comes back with a fixed code, not Twitch's text", r.headers.get("Location") === "/?error=cancelled");
+
+  // Logging out.
+  r = await post("/auth/logout", sess);
+  check("logging out disconnects Twitch for that account and clears the cookie", calls.disconnected.at(-1) === "4242" && /__Host-yappa_session=;[^]*Max-Age=0/.test(r.headers.get("Set-Cookie") || ""));
+  r = await post("/auth/logout", sess, "https://evil.test");
+  check("logging out from another origin is refused", r.status === 403);
+  globalThis.fetch = realFetch;
+}
+
 await browser.close();
+
 if (errors.length) console.log("Browser errors:", errors);
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed || errors.length ? 1 : 0);

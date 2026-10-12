@@ -1,11 +1,11 @@
-import { verifyAccess } from "./access";
 import * as publicApi from "./app-token";
 import { renderMoved } from "./moved";
-import { PAGE_HEADERS, renderPage } from "./page";
+import { PAGE_HEADERS, renderLogin, renderPage } from "./page";
+import { clearSessionCookie, isAllowed, readSession, sessionCookie, signSession } from "./session";
 import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
 import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
-import { authorizeUrl } from "./twitch";
+import { authorizeUrl, exchangeCode, revokeToken, validateToken } from "./twitch";
 
 export { ColorLoop } from "./color-loop";
 
@@ -36,10 +36,9 @@ function parseChannel(input: unknown): string | null {
   return /^[a-z0-9_]{1,25}$/.test(s) ? s : null;
 }
 
-async function handle(request: Request, env: Env): Promise<Response> {
-  const user = await verifyAccess(request, env);
-  if (!user) return new Response("Forbidden", { status: 403 });
+const HTML_HEADERS = { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
 
+async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   // The old address: send the page (only) to the new one. API calls keep working so
   // already-open copies of the app don't break mid-session.
@@ -49,6 +48,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
       headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY" },
     });
   }
+  // The app's own files hold no secrets and no data, so they're public (the manifest and
+  // service worker are fetched without the page's cookies in some browsers).
   const file = request.method === "GET" ? staticFiles[url.pathname] : undefined;
   if (file) {
     return new Response(file.body, { headers: { "Content-Type": file.type, "Cache-Control": file.cache } });
@@ -57,6 +58,38 @@ async function handle(request: Request, env: Env): Promise<Response> {
   // Cross-site form/fetch protection for state-changing requests.
   if (request.method === "POST" && request.headers.get("Origin") !== url.origin) {
     return new Response("Bad origin", { status: 403 });
+  }
+
+  const redirectUri = `${url.origin}/auth/callback`;
+
+  // Signing in doesn't need a session (it creates one).
+  if (request.method === "GET" && url.pathname === "/auth/login") {
+    const state = crypto.randomUUID();
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: authorizeUrl(env.TWITCH_CLIENT_ID, redirectUri, state),
+        "Set-Cookie": `${STATE_COOKIE}=${state}; Path=/auth; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
+      },
+    });
+  }
+  if (request.method === "GET" && url.pathname === "/auth/callback") return handleCallback(request, env, url, redirectUri);
+  if (request.method === "POST" && url.pathname === "/auth/logout") {
+    const session = await readSession(request, env);
+    if (session) await (await currentStub(env, session.uid, false)).disconnectTwitch();
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "Set-Cookie": clearSessionCookie },
+    });
+  }
+
+  // Everything else is for allowed, signed-in users only. The allowlist is checked on every
+  // request, so removing a login from it ends that person's access immediately.
+  const session = await readSession(request, env);
+  if (!session || !isAllowed(env, session.uid, session.login)) {
+    if (request.method === "GET" && url.pathname === "/") {
+      return new Response(renderLogin(url.searchParams.get("error")), { headers: HTML_HEADERS });
+    }
+    return json({ ok: false, error: "Sign in again.", signedOut: true }, 401);
   }
 
   // Public Twitch data: answered with the app token, without waking the user's Durable Object.
@@ -100,47 +133,14 @@ async function handle(request: Request, env: Env): Promise<Response> {
     }
   }
 
-  const redirectUri = `${url.origin}/auth/callback`;
-  const stub = await currentStub(env, user, url.pathname === "/");
+  const stub = await currentStub(env, session.uid, url.pathname === "/");
 
   switch (`${request.method} ${url.pathname}`) {
     case "GET /":
-      return new Response(renderPage(user), {
-        headers: { ...PAGE_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      // Renewing the cookie on every page load keeps a regularly used sign-in from ever expiring.
+      return new Response(renderPage(), {
+        headers: { ...HTML_HEADERS, "Set-Cookie": sessionCookie(await signSession(env, session.uid, session.login)) },
       });
-
-    case "GET /auth/login": {
-      const state = crypto.randomUUID();
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: authorizeUrl(env.TWITCH_CLIENT_ID, redirectUri, state),
-          "Set-Cookie": `${STATE_COOKIE}=${state}; Path=/auth; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
-        },
-      });
-    }
-
-    case "GET /auth/callback": {
-      const clear = `${STATE_COOKIE}=; Path=/auth; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
-      const state = url.searchParams.get("state");
-      const code = url.searchParams.get("code");
-      if (url.searchParams.get("error")) {
-        return redirectHome(clear, url.searchParams.get("error_description") ?? "Authorization denied");
-      }
-      if (!state || !code || state !== getCookie(request, STATE_COOKIE)) {
-        return redirectHome(clear, "OAuth state mismatch; try again.");
-      }
-      try {
-        await stub.connectTwitch(code, redirectUri);
-      } catch (err) {
-        return redirectHome(clear, (err as Error).message);
-      }
-      return redirectHome(clear);
-    }
-
-    case "POST /auth/logout":
-      await stub.disconnectTwitch();
-      return json({ ok: true });
 
     case "GET /api/following":
       return json(await stub.followed(url.searchParams.has("fresh")));
@@ -309,9 +309,36 @@ async function currentStub(env: Env, user: string, pageLoad: boolean) {
   return env.COLOR_LOOP.getByName(user);
 }
 
-function redirectHome(setCookie: string, error?: string): Response {
-  return new Response(null, {
-    status: 302,
-    headers: { Location: error ? `/?error=${encodeURIComponent(error)}` : "/", "Set-Cookie": setCookie },
-  });
+/** Back to the front page with a short error code (never free text: it's shown on the page). */
+function redirectHome(setCookie: string, error: string): Response {
+  return new Response(null, { status: 302, headers: { Location: `/?error=${error}`, "Set-Cookie": setCookie } });
+}
+
+/** Twitch sends the browser back here after sign-in. Only the Worker ever sees the code and tokens. */
+async function handleCallback(request: Request, env: Env, url: URL, redirectUri: string): Promise<Response> {
+  const clearState = `${STATE_COOKIE}=; Path=/auth; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+  const fail = (code: string) => redirectHome(clearState, code);
+  const state = url.searchParams.get("state");
+  const code = url.searchParams.get("code");
+  if (url.searchParams.get("error")) return fail("cancelled");
+  if (!state || !code || state !== getCookie(request, STATE_COOKIE)) return fail("state");
+  let tok;
+  let info;
+  try {
+    tok = await exchangeCode(env, code, redirectUri);
+    info = await validateToken(tok.access_token);
+  } catch (err) {
+    console.error("sign-in failed", (err as Error).message);
+    return fail("failed");
+  }
+  if (!isAllowed(env, info.user_id, info.login)) {
+    await revokeToken(env, tok.access_token).catch(() => {}); // nothing is kept for anyone not on the list
+    console.log(JSON.stringify({ event: "sign-in refused" }));
+    return fail("denied");
+  }
+  await (await currentStub(env, info.user_id, true)).storeTokens(tok, info);
+  const headers = new Headers({ Location: "/" });
+  headers.append("Set-Cookie", clearState);
+  headers.append("Set-Cookie", sessionCookie(await signSession(env, info.user_id, info.login)));
+  return new Response(null, { status: 302, headers });
 }

@@ -1,5 +1,5 @@
 // Minimal service worker: makes the app installable and shows a friendly page when
-// offline. It deliberately caches nothing, so chat and Cloudflare Access sign-in always
+// offline. It deliberately caches nothing, so chat and sign-in always
 // go straight to the network.
 "use strict";
 

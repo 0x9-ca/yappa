@@ -101,32 +101,30 @@ async function api(path, body) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
   } catch {
-    if (await sessionExpired()) return { ok: false, error: "Your sign-in expired. Reload to sign in again." };
     // Offline, or the phone just woke up: callers treat this like any failed request.
     return { ok: false, error: "Network error; check your connection.", retry: true };
   }
+  let data;
+  try { data = await res.json(); } catch { data = { ok: false, error: "Request failed (" + res.status + ")", retry: res.status >= 500 }; }
+  // 401 + signedOut: the sign-in cookie expired, or this account was taken off the allowlist.
+  if (res.status === 401 && data && data.signedOut) {
+    show("expired", true);
+    return { ok: false, error: "Your sign-in ended. Sign in again." };
+  }
   if (!$("expired").hidden) show("expired", false); // signed in again (e.g. in another tab)
-  try { return await res.json(); } catch { return { ok: false, error: "Request failed (" + res.status + ")", retry: res.status >= 500 }; }
+  return data;
 }
-
-// When the Cloudflare Access session ends, Access answers every request with a redirect to
-// its login page. A page can't follow that cross-origin, so each call just looks like a
-// network error, forever. Ask for a file with the redirect left unfollowed to tell the two apart.
-let sessionProbe = null;
-function sessionExpired() {
-  if (navigator.onLine === false) return Promise.resolve(false);
-  sessionProbe = sessionProbe || fetch("/manifest.webmanifest", { redirect: "manual", cache: "no-store" })
-    .then((r) => r.type === "opaqueredirect")
-    .catch(() => false)
-    .then((expired) => { show("expired", expired); return expired; })
-    .finally(() => { setTimeout(() => { sessionProbe = null; }, 5000); });
-  return sessionProbe;
-}
-$("expired-reload").addEventListener("click", () => location.reload());
 
 function setError(msg) { $("error").textContent = msg || ""; show("error", !!msg); }
+// Sign-in failures come back as a short code (never free text from the URL).
+const SIGN_IN_ERRORS = {
+  denied: "That Twitch account isn't allowed to use this app.",
+  state: "The sign-in didn't complete (it may have taken too long). Try again.",
+  failed: "Twitch sign-in failed. Try again.",
+  cancelled: "Sign-in was cancelled.",
+};
 const qsError = new URLSearchParams(location.search).get("error");
-if (qsError) { setError(qsError); history.replaceState(null, "", "/" + location.hash); }
+if (qsError) { setError(SIGN_IN_ERRORS[qsError] || ""); history.replaceState(null, "", "/" + location.hash); }
 
 function normalizeChannel(v) {
   return String(v || "").trim().replace(/^https?:\/\/(www\.)?twitch\.tv\//i, "").replace(/^[#@]/, "").split(/[/?#]/)[0].toLowerCase();
@@ -183,13 +181,16 @@ cycleBtn.addEventListener("click", async () => {
   refreshStatus();
 });
 
+/** Navigation seam (the tests replace it). */
+const nav = { home: () => location.replace("/") };
+
 async function logout() {
   for (const t of [...tabs.values()]) closeTab(t, { keepSaved: true });
   hideChatEmbed(); // (closing each tab already dropped its loaded chat)
   dropSocket();
   await api("/auth/logout", {});
-  status = null;
-  refreshStatus();
+  nav.home(); // the sign-in cookie is gone: the front page now offers to sign in
+
 }
 
 // ---------- tabs ----------

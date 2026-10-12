@@ -8,7 +8,6 @@ import {
   createWebSocketSubscription,
   deleteChatMessages,
   deleteSubscription,
-  exchangeCode,
   getChatSettings,
   getFollowedAt,
   getUserById,
@@ -153,10 +152,9 @@ export class ColorLoop extends DurableObject<Env> {
     }
   }
 
-  async connectTwitch(code: string, redirectUri: string): Promise<void> {
-    const tok = await exchangeCode(this.env, code, redirectUri);
-    const info = await validateToken(tok.access_token);
-    this.moderated = undefined; // it may be a different Twitch account
+  /** Keeps the tokens from a completed sign-in (the Worker already exchanged the code and validated them). */
+  async storeTokens(tok: { access_token: string; refresh_token: string; expires_in: number }, info: { user_id: string; login: string; scopes: string[] }): Promise<void> {
+    this.moderated = undefined;
     this.following = undefined;
     await this.ctx.storage.put<Tokens>("tokens", {
       accessToken: tok.access_token,

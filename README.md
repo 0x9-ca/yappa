@@ -3,7 +3,7 @@
 A Twitch chat client that runs as a Cloudflare Worker (deployed as the `yappa` Worker).
 
 Built on EventSub WebSocket + Helix. It can also change your chat color to a random hex color
-every time you send a message. Gated by Cloudflare Access.
+every time you send a message. Private: only the Twitch accounts on an allowlist can sign in.
 
 ## Setup
 
@@ -14,21 +14,27 @@ every time you send a message. Gated by Cloudflare Access.
    ```sh
    cp wrangler.sample.jsonc wrangler.jsonc
    ```
-   Set the hostname in `routes` and `APP_HOST`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` (the AUD tag
-   of your existing Access application) and `TWITCH_CLIENT_ID`. Then:
+   Set the hostname in `routes` and `APP_HOST`, `ALLOWED_LOGINS` (who may sign in, see below) and
+   `TWITCH_CLIENT_ID`. Then:
    ```sh
    npm install
    npm run types        # generates worker-configuration.d.ts (also not in git)
    npx wrangler secret put TWITCH_CLIENT_SECRET
+   openssl rand -base64 48 | npx wrangler secret put SESSION_SECRET   # signs sign-in cookies
    npm run deploy
    ```
-3. **Access** – make sure the Worker's hostname (custom domain or workers.dev) is covered
-   by the existing Access application. The Worker also verifies the `Cf-Access-Jwt-Assertion`
-   JWT itself and returns 403 without a valid one.
+3. **Who can sign in** – there's no other gate (no Cloudflare Access): visitors see only a
+   "Sign in with Twitch" page, and Twitch proves who they are. `ALLOWED_LOGINS` is a comma- or
+   space-separated list of Twitch logins and/or numeric Twitch user ids; an empty list allows
+   nobody. Prefer ids for strictness: a login can be renamed, and someone else could then claim
+   the old name (an id can't be). The list is checked on every request, so removing someone
+   ends their access immediately. After changing it, `npm run deploy`. Sign-in is a signed,
+   30-day, HttpOnly cookie (`SESSION_SECRET` signs it; changing the secret signs everyone out);
+   each account's Twitch tokens live in its own Durable Object, named by the Twitch user id.
 
 ## Configuration files
 
-These hold your own hostnames, Access tag and IDs, so they are in `.gitignore` and never
+These hold your own hostnames, allowlist and IDs, so they are in `.gitignore` and never
 committed:
 
 | File | What it is |

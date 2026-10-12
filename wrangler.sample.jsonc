@@ -14,19 +14,19 @@
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
-    // Your Zero Trust team domain
-    "ACCESS_TEAM_DOMAIN": "https://YOUR-TEAM.cloudflareaccess.com",
-    // Application Audience (AUD) tag of the existing Access application
-    "ACCESS_AUD": "YOUR-ACCESS-APPLICATION-AUD-TAG",
+    // Who may sign in: Twitch logins and/or numeric Twitch user ids, separated by commas or spaces.
+    // An id can't be claimed by someone who later takes over a renamed login. Empty = nobody.
+    "ALLOWED_LOGINS": "your_twitch_login",
     // Client ID of your Twitch app (the client secret is a Worker secret, below)
     "TWITCH_CLIENT_ID": "YOUR-TWITCH-CLIENT-ID",
     // The app's address. Opening the app on any other hostname moves you here, bringing
     // along this browser's tabs and settings. Empty = no redirect.
     "APP_HOST": "yappa.example.com"
   },
-  // The Twitch app's client secret is a Worker secret: `npx wrangler secret put TWITCH_CLIENT_SECRET`.
-  // Declaring it here types it and makes `wrangler deploy` fail if it's missing.
-  "secrets": { "required": ["TWITCH_CLIENT_SECRET"] },
+  // Worker secrets: the Twitch app's client secret (`npx wrangler secret put TWITCH_CLIENT_SECRET`) and a
+  // random string of 32+ characters that signs sign-in cookies (`openssl rand -base64 48 | npx wrangler secret put SESSION_SECRET`).
+  // Declaring them here types them and makes `wrangler deploy` fail if one is missing.
+  "secrets": { "required": ["TWITCH_CLIENT_SECRET", "SESSION_SECRET"] },
   // Client assets are bundled as strings and served by the Worker.
   "rules": [
     { "type": "Text", "globs": ["**/client/*.js", "**/client/*.css", "**/hls.js/dist/hls.light.min.js"], "fallthrough": true },

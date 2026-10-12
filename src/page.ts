@@ -15,7 +15,41 @@ export const PAGE_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
 };
 
-export function renderPage(user: string): string {
+const LOGIN_MESSAGES: Record<string, string> = {
+  denied: "That Twitch account isn't allowed to use this app.",
+  state: "The sign-in didn't complete (it may have taken too long). Try again.",
+  failed: "Twitch sign-in failed. Try again.",
+  cancelled: "Sign-in was cancelled.",
+};
+
+/** What signed-out visitors see: no app, no data, just the way in. `error` is one of LOGIN_MESSAGES' keys. */
+export function renderLogin(error?: string | null): string {
+  const message = error ? LOGIN_MESSAGES[error] : undefined;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${APP_NAME}</title>
+<meta name="theme-color" content="${THEME_COLOR}">
+<link rel="icon" type="image/png" sizes="32x32" href="${versioned("/icons/favicon-32.png")}">
+<script src="${versioned("/theme.js")}"></script>
+<link rel="stylesheet" href="${versioned("/app.css")}">
+</head>
+<body>
+<div class="connect" style="min-height:100vh">
+  <div>
+    <h1 style="margin:0 0 12px;font-size:20px">${APP_NAME}</h1>
+    ${message ? `<p class="banner error" role="alert">${escapeHtml(message)}</p>` : ""}
+    <p>A private Twitch chat client. Sign in with Twitch to continue.</p>
+    <a class="btn" href="/auth/login">Sign in with Twitch</a>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+export function renderPage(): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -55,7 +89,7 @@ export function renderPage(user: string): string {
     <nav class="tabs" id="tabs" aria-label="Open channels" hidden></nav>
     <div id="banners">
       <div class="banner error" id="error" hidden></div>
-      <div class="banner error" id="expired" hidden>Your sign-in has expired. <button class="link" id="expired-reload" type="button">Reload to sign in again</button></div>
+      <div class="banner error" id="expired" hidden>Your sign-in has ended. <a href="/auth/login">Sign in again</a></div>
       <div class="banner info" id="reauth" hidden>Twitch needs extra permissions to read and send chat. <a href="/auth/login">Reconnect Twitch</a></div>
       <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels, clipping and mod tools.</div>
       <div class="banner info" id="cycle-status" hidden></div>
@@ -156,7 +190,6 @@ export function renderPage(user: string): string {
     <button class="ghost" id="cycle" type="button">Cycle color</button>
   </div>
 </div>
-<div hidden id="access-user">${escapeHtml(user)}</div>
 <script src="${versioned("/app.js")}"></script>
 </body>
 </html>`;

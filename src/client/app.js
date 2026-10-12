@@ -1520,7 +1520,7 @@ function renderMessage(tab, ev, opts = {}) {
   const nm = nameNode(ev);
   nm.addEventListener("click", (e) => {
     e.stopPropagation();
-    openUserCard(tab, { id: ev.chatter_user_id, login: ev.chatter_user_login, name: ev.chatter_user_name, color: nm.style.color });
+    openUserCard(tab, { id: ev.chatter_user_id, login: ev.chatter_user_login, name: ev.chatter_user_name, color: nm.style.color, badges: ev.badges || [] });
   });
   li.appendChild(nm);
   const mine = me && ev.chatter_user_id === me.userId;
@@ -3652,6 +3652,61 @@ function btn(label, onClick, cls) {
 
 const TIMEOUTS = [["1m", 60], ["10m", 600], ["1h", 3600], ["1d", 86400]];
 
+/** What a badge means, in words. Twitch's own description is usually just its title, so the common ones are spelled out. */
+function badgeMeaning(tab, setId, id, info) {
+  const chan = tab.broadcaster ? tab.broadcaster.name : tab.login;
+  const n = Number(id);
+  const count = (x) => Number.isFinite(x) ? x.toLocaleString() : id;
+  switch (setId) {
+    case "broadcaster": return "The owner of this channel.";
+    case "moderator": return "Moderates this chat: can delete messages and time out or ban people.";
+    case "lead_moderator": return "A lead moderator: moderates this chat and can manage its other moderators.";
+    case "vip": return "A VIP: someone the streamer picked to recognise.";
+    case "staff": return "Works at Twitch.";
+    case "admin": return "A Twitch administrator.";
+    case "global_mod": return "A Twitch global moderator: moderates across Twitch.";
+    case "partner": return "A verified Twitch Partner.";
+    case "turbo": return "Has Twitch Turbo (an ad-free subscription).";
+    case "premium": return "Has Prime Gaming, Twitch's perk with Amazon Prime.";
+    case "founder": return "One of the first people to subscribe to " + chan + " (a Founder).";
+    case "subscriber": {
+      const tier = n >= 1000 ? Math.floor(n / 1000) : 1, months = n >= 1000 ? n % 1000 : n;
+      return "Subscribed to " + chan + " (Tier " + tier + "). The badge shows " + (months ? months + " month" + (months === 1 ? "" : "s") : "a new subscriber") + " of subscription.";
+    }
+    case "bits": return "Has cheered " + count(n) + " Bits in " + chan + "'s chat in total.";
+    case "bits-leader": return "On the Bits leaderboard for " + chan + ": rank " + id + ".";
+    case "sub-gifter": return "Has gifted " + count(n) + " subscription" + (n === 1 ? "" : "s") + " in " + chan + "'s channel.";
+    case "sub-gift-leader": return "On the gifted-subs leaderboard for " + chan + ": rank " + id + ".";
+    case "hype-train": return "Took part in a Hype Train in this channel.";
+    case "predictions": return "Took part in a Channel Points Prediction in this channel.";
+    default: {
+      const d = info && info.description && info.description !== info.title ? info.description : "";
+      return d || "";
+    }
+  }
+}
+
+function badgeRows(tab, badges) {
+  const rows = [];
+  for (const b of badges) {
+    const info = tab.badges[b.set_id + "/" + b.id];
+    const row = el("div", "card-badge");
+    if (info) {
+      const img = el("img", "badge");
+      img.src = info.url;
+      img.alt = "";
+      row.appendChild(img);
+    }
+    const text = el("div");
+    text.appendChild(el("div", "cb-title", info ? info.title : b.set_id.replace(/[-_]+/g, " ")));
+    const meaning = badgeMeaning(tab, b.set_id, b.id, info);
+    if (meaning) text.appendChild(el("div", "hint", meaning));
+    row.appendChild(text);
+    rows.push(row);
+  }
+  return rows;
+}
+
 async function openUserCard(tab, u) {
   const head = el("div", "card-head");
   const avatar = document.createElement("img");
@@ -3702,7 +3757,9 @@ async function openUserCard(tab, u) {
     if (li.classList.contains("deleted")) row.appendChild(el("span", "hint", " (deleted)"));
     msgs.appendChild(row);
   }
-  openSheet(head, meta, desc, actions, el("h3", null, "Recent messages here (" + theirs.length + ")"), theirs.length ? msgs : el("div", "hint", "None in this session."));
+  const badgeBox = (u.badges || []).length ? el("div", "card-badges") : null;
+  if (badgeBox) badgeBox.append(el("h3", null, "Badges"), ...badgeRows(tab, u.badges));
+  openSheet(head, meta, ...(badgeBox ? [badgeBox] : []), desc, actions, el("h3", null, "Recent messages here (" + theirs.length + ")"), theirs.length ? msgs : el("div", "hint", "None in this session."));
 
   const r = await api("/api/chat/user?broadcaster_id=" + encodeURIComponent(tab.broadcaster.id) + "&user_id=" + encodeURIComponent(u.id));
   if (!r.ok) { meta.textContent = r.error; return; }

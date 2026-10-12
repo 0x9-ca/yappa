@@ -206,24 +206,24 @@ export async function sendChatMessage(
 
 interface BadgeSet {
   set_id: string;
-  versions: { id: string; image_url_1x: string; image_url_2x: string; title: string }[];
+  versions: { id: string; image_url_1x: string; image_url_2x: string; title: string; description?: string }[];
 }
 
-/** Returns "set_id/version" -> {url, title}, channel badges overriding global ones. */
+/** Returns "set_id/version" -> {url, title, description}, channel badges overriding global ones. */
 export async function getBadges(
   env: Env,
   accessToken: string,
   broadcasterId: string,
-): Promise<Record<string, { url: string; title: string }>> {
+): Promise<Record<string, { url: string; title: string; description?: string }>> {
   const headers = helixHeaders(env, accessToken);
   const [global, channel] = await Promise.all(
     [`${API_BASE}/chat/badges/global`, `${API_BASE}/chat/badges?broadcaster_id=${encodeURIComponent(broadcasterId)}`].map(
       async (url) => ((await (await check(await fetch(url, { headers }), "Get Chat Badges")).json()) as { data: BadgeSet[] }).data,
     ),
   );
-  const out: Record<string, { url: string; title: string }> = {};
+  const out: Record<string, { url: string; title: string; description?: string }> = {};
   for (const set of [...global, ...channel]) {
-    for (const v of set.versions) out[`${set.set_id}/${v.id}`] = { url: v.image_url_2x, title: v.title };
+    for (const v of set.versions) out[`${set.set_id}/${v.id}`] = { url: v.image_url_2x, title: v.title, description: v.description };
   }
   return out;
 }

@@ -194,7 +194,12 @@ await ctx.route("**/*", async (route) => {
     if (u.pathname === "/api/chat/send" && slowSend) await sleep(slowSend);
     if (u.pathname === "/api/chat/send" && sendFailure) { log.sendTries = [...(log.sendTries || []), body().message]; return route.fulfill({ status: 502, json: { ok: false, error: sendFailure } }); }
     if (u.pathname === "/api/chat/send") { log.sent.push(body().message); sendCounter++; if (cycle.enabled) { cycle.lastColor = "#" + (0x100000 + log.sent.length * 77777).toString(16).slice(-6).toUpperCase(); cycle.changes++; } return j({ ok: true, messageId: "sent-" + sendCounter }); }
-    if (u.pathname === "/api/chat/badges") return j({});
+    if (u.pathname === "/api/chat/badges") return j({
+      "moderator/1": { url: "https://img.test/badge-mod.png", title: "Moderator", description: "Moderator" },
+      "subscriber/2003": { url: "https://img.test/badge-sub.png", title: "3-Month Subscriber", description: "Subscriber" },
+      "bits/1000": { url: "https://img.test/badge-bits.png", title: "cheer 1000", description: "cheer 1000" },
+      "weird-badge/1": { url: "https://img.test/badge-weird.png", title: "Weird Badge", description: "Awarded for doing something unusual" },
+    });
     if (u.pathname === "/api/chat/emotes") return j({ ok: true, emotes: [{ id: "25", name: "Kappa", group: "Twitch global", animated: false }, { id: "e1", name: "uwoHype", group: "This channel", animated: false }] });
   }
   // The app's old address (src/moved.ts).
@@ -434,6 +439,29 @@ await page.evaluate(() => composer.setText(""));
   await page.evaluate(([a]) => activate(tabs.get(a)), [a]);
   check("and back again it's an emote again", (await page.$$eval("#message .ce-emote", (e) => e.map((x) => x.dataset.name))).includes("OnlyHere"));
   await page.evaluate(([a]) => { tabs.get(a).ext.delete("OnlyHere"); composer.setText(""); }, [a]);
+}
+
+// Clicking a name shows the badges on that message, and what they mean.
+{
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  sockets[0].send(chat("999", "badged1", "Badgey", "6001", "look at my badges", { badges: [{ set_id: "moderator", id: "1", info: "" }, { set_id: "subscriber", id: "2003", info: "" }, { set_id: "bits", id: "1000", info: "" }, { set_id: "weird-badge", id: "1", info: "" }, { set_id: "mystery", id: "9", info: "" }] }));
+  await page.waitForSelector('li[data-id="badged1"]');
+  await page.evaluate(() => document.querySelector('li[data-id="badged1"] .name').click());
+  await page.waitForSelector("#sheet .card-badges");
+  const rows = await page.$$eval("#sheet .card-badge", (rs) => rs.map((r) => ({ title: r.querySelector(".cb-title").textContent, text: (r.querySelector(".hint") || {}).textContent || "", img: !!r.querySelector("img") })));
+  check("the user card lists each badge on the clicked message with its icon", rows.length === 5 && rows.slice(0, 4).every((r) => r.img) && rows[0].title === "Moderator" && rows[1].title === "3-Month Subscriber", JSON.stringify(rows));
+  check("known badges are explained in words (mod, tier 2 sub with months, bits total)", /Moderates this chat/.test(rows[0].text) && /Tier 2/.test(rows[1].text) && /3 months/.test(rows[1].text) && /1,000 Bits/.test(rows[2].text), JSON.stringify(rows.slice(0, 3)));
+  check("an unfamiliar badge falls back to Twitch's description; an unknown one still shows by name", rows[3].text === "Awarded for doing something unusual" && rows[4].title === "mystery" && !rows[4].img, JSON.stringify(rows.slice(3)));
+  await page.screenshot({ path: dir + "/t63-badges.png" });
+  await shot("user-badges");
+  await page.keyboard.press("Escape");
+  // No badges: no section.
+  sockets[0].send(chat("999", "badged2", "Plainy", "6002", "no badges here"));
+  await page.waitForSelector('li[data-id="badged2"]');
+  await page.evaluate(() => document.querySelector('li[data-id="badged2"] .name').click());
+  await page.waitForSelector("#sheet .card-head");
+  check("no badges, no Badges section", !(await page.$("#sheet .card-badges")));
+  await page.keyboard.press("Escape");
 }
 
 // close tab

@@ -62,6 +62,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
   `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
+- Tap a name for their user card, which lists the badges on that message with a plain-language explanation of each.
 - Pin a stream (the pin button in the info bar) to keep it playing while you switch to other chat tabs; unpin to make the video follow the open tab again.
 - On a phone turned sideways, the video moves to the left and the chat to the right.
 - Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
@@ -246,6 +247,12 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | Phone | Desktop |
 |---|---|
 | <img src="docs/screenshots/automod-mobile.png" width="240" alt="AutoMod queue (phone)"> | <img src="docs/screenshots/automod-desktop.png" width="520" alt="AutoMod queue (desktop)"> |
+
+**User card: the badges on their message, and what each means**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/user-badges-mobile.png" width="240" alt="User card badges (phone)"> | <img src="docs/screenshots/user-badges-desktop.png" width="520" alt="User card badges (desktop)"> |
 
 **User card with follow age and quick timeouts**
 

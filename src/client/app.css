@@ -382,3 +382,10 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .bshare { flex: none; margin-top: 6px; }
 #follow-btn.on { color: var(--accent); }
 #follow-btn.on svg { fill: currentColor; }
+
+/* User card: what each badge is */
+.card-badges { margin: 8px 0; }
+.card-badges h3 { margin: 0 0 4px; }
+.card-badge { display: flex; gap: 10px; align-items: flex-start; padding: 5px 0; }
+.card-badge .badge { width: 24px; height: 24px; flex: none; margin: 0; }
+.card-badge .cb-title { font-weight: 700; }

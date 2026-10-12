@@ -2101,7 +2101,41 @@ function acceptSuggestion(i) {
   composer.focus();
 }
 
-$("message").addEventListener("input", updateSuggest);
+/**
+ * Typing a whole emote name finishes it: add the space that turns the text into the emote.
+ * Not when a longer emote starts with the same letters (you may be typing KappaPride), not for
+ * all-lowercase names (they're ordinary words: "pog" would split "poggers"), and only when
+ * typing: deleting back to a name, or pasting one, leaves the text alone.
+ */
+function autoFinishEmote(e) {
+  if (e.inputType !== "insertText" && e.inputType !== "insertCompositionText") return;
+  const w = currentWord();
+  if (!w || w.text.length < 3 || /^[:@]/.test(w.text) || /^[a-z]+$/.test(w.text)) return;
+  const all = allEmotes(active);
+  const match = all.find((x) => x.name === w.text);
+  if (!match) return;
+  const lower = w.text.toLowerCase();
+  if (all.some((x) => x.name.length > w.text.length && x.name.toLowerCase().startsWith(lower))) return;
+  const v = composer.getText();
+  composer.setText(v.slice(0, w.end) + " " + v.slice(w.end), w.end + 1);
+  autoSpaceAt = w.end + 1;
+  rememberEmote(match.name, match.url);
+  closeSuggest();
+}
+
+// Someone who types a space after the name anyway (out of habit) must not end up with two.
+let autoSpaceAt = -1; // caret position right after the space we added, while nothing else was typed
+$("message").addEventListener("beforeinput", (e) => {
+  if (e.inputType === "insertText" && e.data === " " && autoSpaceAt >= 0 && composer.caret() === autoSpaceAt) {
+    e.preventDefault();
+    autoSpaceAt = -1;
+  }
+});
+$("message").addEventListener("input", (e) => {
+  autoSpaceAt = -1;
+  updateSuggest();
+  if (active) autoFinishEmote(e);
+});
 $("message").addEventListener("click", updateSuggest);
 $("message").addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== $("message")) closeSuggest(); }, 150));
 $("suggest").addEventListener("pointerdown", (e) => {

@@ -1098,7 +1098,7 @@ function cheerFor(tab, prefix, bits) {
 function appendCheer(tab, parent, prefix, bits, text) {
   const c = cheerFor(tab, prefix, bits);
   if (!c) { parent.appendChild(document.createTextNode(text)); return; }
-  appendEmote(parent, emoteImg(c.url, text, "Cheer"), false);
+  appendEmote(parent, emoteImg(c.url, text, "Cheer", "Bits cheer emote"), false);
   const amount = el("b", "cheer-bits", String(bits));
   amount.style.color = c.color;
   parent.appendChild(amount);
@@ -1201,13 +1201,28 @@ function userColor(ev) {
 
 function isDark(hex) { return luminance(hex) < 0.06; }
 
-function emoteImg(src, name, source) {
+/** `detail` is where it belongs ("this channel's emote", "global"), shown when you tap the emote. */
+function emoteImg(src, name, source, detail) {
   const img = document.createElement("img");
   img.src = src;
   img.alt = name;
-  img.title = name + " (" + source + ")";
+  img.title = name + " (" + source + (detail ? ", " + detail : "") + ")";
   img.loading = "lazy";
+  img.dataset.emote = name;
+  img.dataset.source = source;
+  if (detail) img.dataset.detail = detail;
   return img;
+}
+
+/** Where a Twitch emote comes from. EventSub names the owner; history lines don't, so fall back to the account's emote list. */
+function twitchEmoteDetail(tab, f) {
+  const owner = f.emote && f.emote.owner_id;
+  if (owner && tab.broadcaster && owner === tab.broadcaster.id) return "this channel's emote";
+  if (owner === "0") return "Twitch global emote";
+  if (owner) return "another channel's emote";
+  const te = tab.twitchEmotes && tab.twitchEmotes.ok ? tab.twitchEmotes.emotes.find((x) => x.name === f.text) : null;
+  if (te && te.group) return /global/i.test(te.group) ? "Twitch global emote" : /this channel/i.test(te.group) ? "this channel's emote" : te.group;
+  return "";
 }
 
 function appendEmote(parent, img, zeroWidth) {
@@ -1239,7 +1254,7 @@ function appendText(tab, parent, text, hasBits) {
       appendLink(parent, link);
       continue;
     }
-    if (e) appendEmote(parent, emoteImg(e.url, part, e.source), e.zeroWidth);
+    if (e) appendEmote(parent, emoteImg(e.url, part, e.source, tab.ext.has(part) ? "this channel's emote" : "global emote"), e.zeroWidth);
     else if (parent.lastChild && parent.lastChild.nodeType === 3) parent.lastChild.textContent += part;
     else parent.appendChild(document.createTextNode(part));
   }
@@ -1423,7 +1438,7 @@ function renderFragments(tab, parent, fragments, skipPrefix, hasBits, gigantify)
       appendCheer(tab, parent, f.cheermote.prefix, f.cheermote.bits, f.text);
     } else if (f.type === "emote" && f.emote) {
       const giant = k === giantAt;
-      const img = emoteImg("https://static-cdn.jtvnw.net/emoticons/v2/" + f.emote.id + "/default/dark/" + (giant ? "4.0" : "2.0"), f.text, giant ? "Twitch, gigantified" : "Twitch");
+      const img = emoteImg("https://static-cdn.jtvnw.net/emoticons/v2/" + f.emote.id + "/default/dark/" + (giant ? "4.0" : "2.0"), f.text, giant ? "Twitch, gigantified" : "Twitch", twitchEmoteDetail(tab, f));
       if (giant) img.classList.add("giant");
       appendEmote(parent, img, false);
     } else if (f.type === "gif" && f.gif) {
@@ -1625,9 +1640,62 @@ function handleEvent(type, ev, ts) {
   }
 }
 
+// ---------- emote tooltip: tap an emote for its name and where it comes from ----------
+
+let emoteTip = null; // { node, img }
+
+function hideEmoteTip() {
+  if (emoteTip) emoteTip.node.remove();
+  emoteTip = null;
+}
+
+function showEmoteTip(img) {
+  if (emoteTip && emoteTip.img === img) { hideEmoteTip(); return; } // tap again to close
+  hideEmoteTip();
+  const name = img.dataset.emote, source = img.dataset.source, detail = img.dataset.detail;
+  const tip = el("div", "emote-tip");
+  tip.setAttribute("role", "tooltip");
+  const pic = document.createElement("img");
+  pic.src = img.src;
+  pic.alt = "";
+  const text = el("div", "et-text");
+  text.append(el("div", "et-name", name), el("div", "et-src", source + (detail ? " · " + detail : "")));
+  tip.append(pic, text);
+  const usable = active && source !== "Cheer" && emoteInChannel(active, name);
+  if (usable) {
+    const add = btn("Add to message", () => { hideEmoteTip(); insertEmote(name); }, "small");
+    tip.appendChild(add);
+  }
+  document.body.appendChild(tip);
+  emoteTip = { node: tip, img };
+  placeEmoteTip();
+}
+
+/** Below the emote if it fits, else above; kept inside the screen. Goes away if the emote scrolled out of view. */
+function placeEmoteTip() {
+  if (!emoteTip) return;
+  const { node, img } = emoteTip;
+  const r = img.getBoundingClientRect(), list = img.closest(".messages");
+  const box = list ? list.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+  if (!img.isConnected || r.bottom < box.top || r.top > box.bottom) { hideEmoteTip(); return; }
+  const t = node.getBoundingClientRect();
+  const top = r.bottom + 8 + t.height <= innerHeight - 8 ? r.bottom + 8 : Math.max(8, r.top - 8 - t.height);
+  const left = Math.min(Math.max(8, r.left + r.width / 2 - t.width / 2), innerWidth - t.width - 8);
+  node.style.top = top + "px";
+  node.style.left = left + "px";
+}
+
+document.addEventListener("pointerdown", (e) => { if (emoteTip && !emoteTip.node.contains(e.target) && e.target !== emoteTip.img) hideEmoteTip(); }, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideEmoteTip(); });
+// Chat scrolls by itself as messages arrive: follow the emote rather than closing.
+document.addEventListener("scroll", () => placeEmoteTip(), true);
+window.addEventListener("resize", placeEmoteTip);
+
 // Touch devices have no hover, so tapping a message toggles its action bar.
 $("chat").addEventListener("click", (e) => {
   if (e.target.closest("a")) return; // links open in a new tab; don't also select the message
+  const emote = e.target.closest(".msg .body .emote-wrap img[data-emote]");
+  if (emote) { showEmoteTip(emote); return; } // an emote tap explains the emote instead of selecting the message
   const li = e.target.closest(".msg");
   const wasSelected = li && li.classList.contains("selected");
   document.querySelectorAll(".msg.selected").forEach((n) => n.classList.remove("selected"));

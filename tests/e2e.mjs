@@ -464,6 +464,50 @@ await page.evaluate(() => composer.setText(""));
   await page.keyboard.press("Escape");
 }
 
+// Tap an emote: its name and where it comes from.
+{
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  sockets[0].send(chat("999", "emotetip1", "Emoter", "6101", "hi Kappa catJAM", { fragments: [
+    { type: "text", text: "hi " }, { type: "emote", text: "Kappa", emote: { id: "25", emote_set_id: "0", owner_id: "0", format: ["static"] } },
+    { type: "text", text: " " }, { type: "emote", text: "uwoHype", emote: { id: "777", emote_set_id: "5", owner_id: "999", format: ["static"] } },
+    { type: "text", text: " catJAM" }] }));
+  await page.waitForSelector('li[data-id="emotetip1"] .emote-wrap img');
+  const tip = async (sel) => { await page.evaluate((sel) => document.querySelector(sel).click(), sel); await sleep(50); return page.evaluate(() => { const t = document.querySelector(".emote-tip"); return t && { name: t.querySelector(".et-name").textContent, src: t.querySelector(".et-src").textContent, add: !!t.querySelector("button"), inView: (() => { const r = t.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() }; }); };
+  let t1 = await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
+  check("tapping a Twitch global emote names it and says so", t1 && t1.name === "Kappa" && t1.src === "Twitch · Twitch global emote" && t1.inView, JSON.stringify(t1));
+  await page.screenshot({ path: dir + "/t64-emote-tip.png" });
+  await shot("emote-tooltip");
+  check("it isn't a message selection (no action bar)", await page.evaluate(() => !document.querySelector('li[data-id="emotetip1"]').classList.contains("selected")));
+  t1 = await tip('li[data-id="emotetip1"] img[data-emote="uwoHype"]');
+  check("tapping another emote replaces the tip; this channel's emote is labelled so", t1 && t1.name === "uwoHype" && /this channel's emote/.test(t1.src) && (await page.$$(".emote-tip")).length === 1, JSON.stringify(t1));
+  t1 = await tip('li[data-id="emotetip1"] img[data-emote="catJAM"]');
+  check("a third-party emote shows its service", t1 && t1.name === "catJAM" && /^7TV · /.test(t1.src), JSON.stringify(t1));
+  check("'Add to message' is offered for an emote you can use here", t1 && t1.add);
+  await page.evaluate(() => composer.setText(""));
+  await page.click('.emote-tip button');
+  check("Add to message puts the emote name in the box and closes the tip", (await page.evaluate(() => composer.getText())).trim() === "catJAM" && !(await page.$(".emote-tip")));
+  await page.evaluate(() => composer.setText(""));
+  await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
+  await page.evaluate(() => document.querySelector('li[data-id="emotetip1"] img[data-emote="Kappa"]').click());
+  check("tapping the same emote again closes the tip", !(await page.$(".emote-tip")));
+  await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
+  await page.keyboard.press("Escape");
+  check("Escape closes it", !(await page.$(".emote-tip")));
+  await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
+  await page.mouse.click(5, 400);
+  await sleep(100);
+  check("tapping elsewhere closes it", !(await page.$(".emote-tip")));
+  // Following the chat: scrolled out of view, the tip goes away; otherwise it stays with its emote.
+  await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
+  await page.evaluate(() => { const l = document.querySelector(".messages:not([hidden])"); l.scrollTop += 3; });
+  await sleep(100);
+  check("a small scroll keeps the tip with its emote", !!(await page.$(".emote-tip")));
+  await page.evaluate(() => { const l = document.querySelector(".messages:not([hidden])"); l.scrollTop = 0; });
+  await sleep(100);
+  check("scrolling it out of view closes it", !(await page.$(".emote-tip")));
+  await page.evaluate(() => scrollToBottom(active));
+}
+
 // close tab
 await page.click(".tab:nth-child(2) .tab-close");
 await sleep(150);
@@ -600,7 +644,7 @@ cur().send(chat("999", "ext1", "EmoteFan", "701", "OMEGALUL uwuDance sharedOne Z
 cur().send(chat("999", "cheer1", "Cheerer", "702", "Cheer100 nice", { fragments: [{ type: "cheermote", text: "Cheer100", cheermote: { prefix: "Cheer", bits: 100, tier: 100 } }, { type: "text", text: " nice" }] }));
 await sleep(150);
 const extImgs = await page.$$eval('li[data-id="ext1"] img', (is) => is.map((i) => i.title));
-check("BTTV global/channel/shared + FFZ emotes render", extImgs.join("|") === "OMEGALUL (BTTV)|uwuDance (BTTV)|sharedOne (BTTV)|ZrehplaR (FFZ)", extImgs.join("|"));
+check("BTTV global/channel/shared + FFZ emotes render", extImgs.join("|") === "OMEGALUL (BTTV, global emote)|uwuDance (BTTV, this channel's emote)|sharedOne (BTTV, this channel's emote)|ZrehplaR (FFZ, global emote)", extImgs.join("|"));
 check("cheermote renders tier image + bits", await page.$eval('li[data-id="cheer1"]', (l) => l.querySelector("img").src.endsWith("cheer100.gif") && l.querySelector(".cheer-bits").textContent === "100"));
 // AutoMod
 cur().send(msg("notification", { subscription: { type: "automod.message.hold" }, event: { broadcaster_user_id: "999", user_id: "703", user_login: "edgy", user_name: "Edgy", message_id: "held1", message: { text: "something spicy", fragments: [{ type: "text", text: "something spicy" }] }, reason: "automod", automod: { category: "aggressive", level: 2, boundaries: [] }, blocked_term: null, held_at: new Date().toISOString() } }));

@@ -744,6 +744,49 @@ const lay = await page.evaluate(() => {
 });
 check("wide: video left, 380px chat column right", lay.vRight <= lay.cLeft + 1 && lay.cW === 380 && Math.abs(lay.fRatio - 16 / 9) < 0.05 && lay.docW === 1280, JSON.stringify(lay));
 await page.screenshot({ path: dir + "/t12-video-wide.png" });
+// =============== pinned stream ===============
+{
+  await page.setViewportSize({ width: 390, height: 760 });
+  await sleep(200);
+  const live = () => ({ user_id: "1", title: "other title", game_name: "g", viewer_count: 5, started_at: new Date().toISOString() });
+  await page.evaluate(() => { settings.video = true; saveSettings(); activate(tabs.get("uwoslab")); });
+  await page.waitForSelector("#video:not([hidden]) iframe");
+  const calls = () => page.evaluate(() => __player.calls.filter((c) => c[0] === "setChannel").map((c) => c[1]));
+  const before = (await calls()).length;
+  check("pin button is offered while a stream shows, and starts unpinned", await page.$eval("#pin-btn", (b) => !b.hidden && b.getAttribute("aria-pressed") === "false" && /Pin this stream/.test(b.title)));
+  await page.click("#pin-btn");
+  check("pinning marks the button and the tab", await page.$eval("#pin-btn", (b) => b.getAttribute("aria-pressed") === "true") && await page.$eval(".tab:first-child .tab-pin", (p) => !p.hidden) && (await page.evaluate(() => localStorage.getItem("pinnedVideo"))) === "uwoslab");
+  await page.screenshot({ path: dir + "/t62-pinned.png" });
+  await shot("pinned-stream");
+  // Switch to a channel that isn't live: the pinned stream keeps playing, untouched.
+  await page.evaluate(() => { tabs.get("otherchan").stream = null; activate(tabs.get("otherchan")); });
+  await sleep(200);
+  check("switching tabs keeps the pinned video (same player, no channel change, layout unchanged)",
+    (await calls()).length === before && await page.$eval("#video", (v) => !v.hidden && !!v.querySelector("iframe")) && await page.$eval(".app", (a) => a.classList.contains("with-video")) && await page.evaluate(() => playerChannel === "uwoslab"));
+  check("the pin button still shows (pressed) on the other tab, offering to unpin", await page.$eval("#pin-btn", (b) => !b.hidden && b.getAttribute("aria-pressed") === "true" && /Tap to unpin/.test(b.title)));
+  // Another channel going live doesn't take the video over.
+  await page.evaluate((st) => { tabs.get("otherchan").stream = st; renderInfo(); renderVideo(); }, live());
+  await sleep(200);
+  check("another live channel doesn't take over while pinned", (await calls()).length === before && await page.evaluate(() => playerChannel === "uwoslab"));
+  // Unpin: the video follows the open tab again.
+  await page.click("#pin-btn");
+  await page.waitForFunction(() => playerChannel === "otherchan");
+  check("unpinning makes the video follow the open tab again", await page.$eval("#pin-btn", (b) => b.getAttribute("aria-pressed") === "false") && await page.$eval(".tab:first-child .tab-pin", (p) => p.hidden) && (await page.evaluate(() => localStorage.getItem("pinnedVideo"))) === null);
+  // Pinned stream goes offline: fall back to the open tab's stream, and keep the pin for when it's back.
+  await page.evaluate((st) => { tabs.get("otherchan").stream = st; activate(tabs.get("uwoslab")); setPinned("otherchan"); }, live());
+  await page.waitForFunction(() => playerChannel === "otherchan");
+  await page.evaluate(() => { tabs.get("otherchan").stream = null; activate(tabs.get("uwoslab")); renderVideo(); });
+  await page.waitForFunction(() => playerChannel === "uwoslab");
+  check("a pinned channel that went offline falls back to the open tab's stream (pin kept)", await page.evaluate(() => pinnedLogin === "otherchan") && await page.$eval("#pin-btn", (b) => /offline right now/.test(b.title)));
+  // Closing the pinned tab unpins.
+  await page.evaluate((st) => { tabs.get("otherchan").stream = st; }, live());
+  await page.evaluate(() => closeTab(tabs.get("otherchan")));
+  check("closing the pinned tab unpins", await page.evaluate(() => pinnedLogin === null && localStorage.getItem("pinnedVideo") === null));
+  await page.evaluate(() => openTab("otherchan"));
+  await page.waitForFunction(() => tabs.get("otherchan") && tabs.get("otherchan").broadcaster);
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+}
+
 // A phone turned sideways: video on the left, chat on the right (not stacked).
 for (const [w, h] of [[844, 390], [740, 360], [932, 430]]) {
   await page.setViewportSize({ width: w, height: h });

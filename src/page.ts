@@ -108,6 +108,9 @@ export function renderPage(): string {
       <button class="icon-btn" id="video-btn" type="button" title="Show or hide the stream" aria-label="Show or hide the stream" aria-pressed="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="m8 2 4 4 4-4"/></svg>
       </button>
+      <button class="icon-btn" id="pin-btn" type="button" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 3h6l-1 7 3 3v2H7v-2l3-3z"/></svg>
+      </button>
       <button class="icon-btn" id="pip-btn" type="button" title="Picture-in-picture" aria-label="Picture-in-picture" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor"/></svg>
       </button>

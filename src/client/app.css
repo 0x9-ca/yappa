@@ -252,7 +252,9 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .video .video-error .ve-title { font-weight: 700; }
 .video .video-error .ve-text { font-size: 13px; color: #adadb8; max-width: 34em; }
 .video .video-error .ve-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-#video-btn[aria-pressed="true"] { color: var(--link); }
+#video-btn[aria-pressed="true"], #pin-btn[aria-pressed="true"] { color: var(--link); }
+#pin-btn[aria-pressed="true"] svg { fill: currentColor; }
+.tab .tab-pin { width: 11px; height: 11px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23bf94ff' stroke='%23bf94ff' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 17v5M9 3h6l-1 7 3 3v2H7v-2l3-3z'/%3E%3C/svg%3E") center / contain no-repeat; flex: none; }
 /* Video beside the chat: on wide screens, and on a phone turned sideways (short and wide). */
 @media (min-width: 1000px), (orientation: landscape) and (max-height: 520px) and (min-width: 560px) {
   .app.with-video { max-width: none; margin: 0; border-inline: 0; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "video top" "video chat" "video footer"; }

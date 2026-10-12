@@ -11,6 +11,7 @@ const coarse = matchMedia("(pointer: coarse)").matches;
 const APP_TITLE = document.title; // set server-side from the app name
 
 let status = null;
+let pinnedLogin = null;         // channel whose stream stays in the video box when you switch tabs
 let me = null;                 // { userId, login }
 const tabs = new Map();        // login -> tab
 let active = null;             // active tab
@@ -93,6 +94,7 @@ function el(tag, cls, text) {
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+pinnedLogin = safeGet("pinnedVideo") || null;
 
 async function api(path, body) {
   let res;
@@ -268,7 +270,10 @@ function buildTabEl(tab) {
   unread.hidden = true;
   const live = el("span", "live-pill");
   live.hidden = true;
-  btn.append(dot, name, live, mod, unread);
+  const pin = el("span", "tab-pin");
+  pin.hidden = true;
+  pin.title = "This stream is pinned";
+  btn.append(dot, name, live, pin, mod, unread);
   btn.addEventListener("click", () => activate(tab));
   const close = el("button", "tab-close", "×");
   close.type = "button";
@@ -276,7 +281,7 @@ function buildTabEl(tab) {
   close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(tab); });
   wrap.append(btn, close);
   $("tabs").appendChild(wrap);
-  tab.tabEl = { wrap, name, mod, unread, live };
+  tab.tabEl = { wrap, name, mod, unread, live, pin };
   updateTabEl(tab);
 }
 
@@ -289,6 +294,7 @@ function updateTabEl(tab) {
   t.name.textContent = tab.broadcaster ? tab.broadcaster.name : tab.login;
   t.mod.hidden = !tab.isMod;
   t.live.hidden = !tab.stream;
+  t.pin.hidden = pinnedLogin !== tab.login;
   t.live.textContent = tab.stream ? compactCount(tab.stream.viewer_count) : "";
   t.wrap.title = tab.stream ? tab.stream.title + " — " + (tab.stream.game_name || "No category") + " · " + tab.stream.viewer_count.toLocaleString() + " viewers" : "";
   t.unread.hidden = tab.unread === 0;
@@ -325,6 +331,7 @@ function activate(tab) {
 function closeTab(tab, opts = {}) {
   if (!tabs.has(tab.login)) return;
   tabs.delete(tab.login);
+  if (pinnedLogin === tab.login && !opts.keepSaved) setPinned(null); // (logging out keeps the pin for when you're back)
   dropChatEmbed(tab.login);
   tab.list.remove();
   tab.tabEl.wrap.remove();
@@ -2481,15 +2488,58 @@ async function renderVideo() {
   try { await renderVideoNow(); } finally { renderQuality(); }
 }
 
+// ---------- pinned stream ----------
+
+// The video normally follows the open tab. Pinning keeps one channel's stream playing while you
+// switch tabs to chat elsewhere (the pinned channel needs to be live; if it isn't, the open tab's
+// stream shows as usual). `pinnedLogin` is declared with the other state at the top.
+
+function pinnedTab() {
+  const t = pinnedLogin && tabs.get(pinnedLogin);
+  return t || null;
+}
+
+/** The tab whose stream the video box shows. */
+function videoTab() {
+  const p = pinnedTab();
+  return p && p.stream ? p : active;
+}
+
+function setPinned(login) {
+  pinnedLogin = login;
+  if (login) safeSet("pinnedVideo", login); else { try { localStorage.removeItem("pinnedVideo"); } catch {} }
+  for (const t of tabs.values()) updateTabEl(t);
+  renderVideo();
+}
+
+function renderPinBtn() {
+  const btn = $("pin-btn");
+  const p = pinnedTab();
+  // Offered while a stream shows (so you can pin it), and always while something is pinned (so you can unpin).
+  const show_ = !!(p || (settings.video && me && active && active.stream));
+  btn.hidden = !show_;
+  btn.setAttribute("aria-pressed", String(!!p));
+  const name = p && p.broadcaster ? p.broadcaster.name : p ? p.login : "";
+  btn.title = btn.ariaLabel = p
+    ? "Pinned: " + name + "'s stream stays when you switch tabs" + (p.stream ? "" : " (offline right now, showing this tab's stream)") + ". Tap to unpin."
+    : "Pin this stream: keep it playing when you switch tabs";
+}
+
+$("pin-btn").addEventListener("click", () => {
+  if (pinnedTab()) setPinned(null);
+  else if (active && active.stream) setPinned(active.login);
+});
+
 async function renderVideoNow() {
   const box = videoBox;
-  const tab = active;
+  const tab = videoTab();
   const want = !!(settings.video && me && tab && tab.stream);
   if (!want && pipWindow) pipWindow.close(); // returns the player here (see openPip)
   document.querySelector(".app").classList.toggle("with-video", want && !pipWindow);
   $("pip-btn").hidden = !(want && "documentPictureInPicture" in window);
   $("video-btn").setAttribute("aria-pressed", String(!!settings.video));
   $("video-btn").title = settings.video ? "Hide the stream" + (tab && !tab.stream ? " (offline right now)" : "") : "Show the stream";
+  renderPinBtn();
   if (!want) {
     box.hidden = true;
     if (player) try { player.pause(); } catch {}
@@ -2513,8 +2563,8 @@ async function renderVideoNow() {
   }
   // Don't retry on every refresh (live status polls every minute); the panel has a Try again button.
   if (embedBlocked) { showEmbedBlocked(box); return; }
-  try { await loadEmbedScript(); } catch { embedBlocked = true; if (active === tab && !box.hidden) showEmbedBlocked(box); return; }
-  if (player || active !== tab || box.hidden) return;
+  try { await loadEmbedScript(); } catch { embedBlocked = true; if (videoTab() === tab && !box.hidden) showEmbedBlocked(box); return; }
+  if (player || videoTab() !== tab || box.hidden) return;
   const host = el("div", "player-host");
   host.id = "player-host";
   box.replaceChildren(host);

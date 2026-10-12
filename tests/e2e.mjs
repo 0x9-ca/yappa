@@ -19,7 +19,7 @@ const html = renderPage("testuser@example.com");
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
 });
-const ctx = await browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true });
+const ctx = await browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true, deviceScaleFactor: process.env.SHOTS ? 2 : 1 }); // 2x only for the README gallery
 const page = await ctx.newPage();
 // The README screenshots should look like a phone, not like this machine's fallback font: with
 // SHOTS_FONTS=<dir holding Roboto-Regular/Medium/Bold .woff2> the page renders in Roboto, Android's system font.

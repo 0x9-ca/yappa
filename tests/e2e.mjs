@@ -21,6 +21,23 @@ const browser = await chromium.launch({
 });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true });
 const page = await ctx.newPage();
+// The README screenshots should look like a phone, not like this machine's fallback font: with
+// SHOTS_FONTS=<dir holding Roboto-Regular/Medium/Bold .woff2> the page renders in Roboto, Android's system font.
+if (process.env.SHOTS && process.env.SHOTS_FONTS) {
+  const { readFileSync } = await import("node:fs");
+  await page.addInitScript(() => {
+    const css = ["400:Regular", "500:Medium", "700:Bold"].map((x) => x.split(":")).map(([w, n]) => `@font-face{font-family:ShotRoboto;font-weight:${w};src:url(/__shotfonts/Roboto-${n}.woff2) format("woff2")}`).join("");
+    const st = document.createElement("style");
+    st.textContent = css + 'body,button,input,select,textarea{font-family:ShotRoboto,system-ui,sans-serif !important}';
+    const add = () => (document.head || document.documentElement).appendChild(st);
+    if (document.documentElement) add(); else document.addEventListener("DOMContentLoaded", add);
+  });
+  await page.route("**/__shotfonts/*", (route) => {
+    const file = new URL(route.request().url()).pathname.split("/").pop();
+    route.fulfill({ body: readFileSync(process.env.SHOTS_FONTS + "/" + file.replace(/[^\w.-]/g, "")), contentType: "font/woff2" });
+  });
+}
+
 // README gallery: `SHOTS=1 npm run test:e2e` also saves each state at phone and desktop size to docs/screenshots.
 const galleryDir = fileURLToPath(new URL("../docs/screenshots", import.meta.url));
 async function shot(name) {

@@ -77,7 +77,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 
 ## Screenshots
 
-Each state is shown on a phone (390×760) and on a desktop-sized window (1280×800). They come from the end-to-end test, which fakes every Twitch response, so the names, pictures and thumbnails are placeholders and the video box is a stand-in for Twitch's player. Regenerate them with `SHOTS=1 npm run test:e2e` (they land in `docs/screenshots/`).
+Each state is shown on a phone (390×760) and on a desktop-sized window (1280×800). They come from the end-to-end test, which fakes every Twitch response, so the names, pictures and thumbnails are placeholders and the video box is a stand-in for Twitch's player. They're rendered in Roboto, Android's system font, so they look like a phone rather than the headless browser's fallback font. Regenerate them with `SHOTS=1 SHOTS_FONTS=<dir with Roboto-Regular.woff2, Roboto-Medium.woff2 and Roboto-Bold.woff2> npm run test:e2e` (the `roboto-fontface` npm package has them under `fonts/roboto/`; they land in `docs/screenshots/`).
 
 ### Chat
 

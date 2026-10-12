@@ -7,6 +7,8 @@ every time you send a message. Private: only the Twitch accounts on an allowlist
 
 ## Setup
 
+For a detailed, step-by-step walkthrough, see the **[self-hosting guide](docs/SELF-HOSTING.md)**. The short version:
+
 1. **Twitch app** – https://dev.twitch.tv/console/apps → Register (Confidential client).
    OAuth Redirect URL: `https://<your-worker-host>/auth/callback`.
 2. **Config** – your settings live in `wrangler.jsonc`, which is **not in git** (see

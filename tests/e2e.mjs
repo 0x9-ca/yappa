@@ -1984,6 +1984,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   let r = await get("/");
   let body = await r.text();
   check("signed out: the front page is just a sign-in page", r.status === 200 && body.includes("Sign in with Twitch") && !body.includes("/app.js") && !body.includes('id="chat"'));
+  check("the sign-in page links to the self-hosting guide", /href="https:\/\/github\.com\/0x9-ca\/yappa\/blob\/main\/docs\/SELF-HOSTING\.md"/.test(body));
   r = await get("/api/status");
   check("signed out: the API answers 401 signedOut", r.status === 401 && (await r.json()).signedOut === true);
   r = await get("/api/streams?ids=1");

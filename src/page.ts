@@ -15,6 +15,9 @@ export const PAGE_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
 };
 
+/** The step-by-step guide to running your own copy, linked from the sign-in page. */
+export const SELF_HOSTING_URL = "https://github.com/0x9-ca/yappa/blob/main/docs/SELF-HOSTING.md";
+
 const LOGIN_MESSAGES: Record<string, string> = {
   denied: "That Twitch account isn't allowed to use this app.",
   state: "The sign-in didn't complete (it may have taken too long). Try again.",
@@ -43,6 +46,7 @@ export function renderLogin(error?: string | null): string {
     ${message ? `<p class="banner error" role="alert">${escapeHtml(message)}</p>` : ""}
     <p>A private Twitch chat client. Sign in with Twitch to continue.</p>
     <a class="btn" href="/auth/login">Sign in with Twitch</a>
+    <p style="font-size:13px"><a href="${SELF_HOSTING_URL}" target="_blank" rel="noopener noreferrer">Want your own? Self-hosting guide</a></p>
   </div>
 </div>
 </body>

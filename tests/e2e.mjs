@@ -419,6 +419,23 @@ s = await state();
 check("@ inserted", s.input === "uwoHype @SomeViewer ", JSON.stringify(s.input));
 await page.evaluate(() => composer.setText(""));
 
+// A draft that moves with you between tabs shows only the emotes this channel has.
+{
+  const names = await page.evaluate(() => [...tabs.keys()]);
+  const [a, b] = [names[0], names[1]];
+  await page.evaluate(([a]) => activate(tabs.get(a)), [a]);
+  await page.evaluate(([a]) => { tabs.get(a).ext.set("OnlyHere", { url: "https://cdn.7tv.app/emote/O", source: "7TV", zeroWidth: false }); composer.setText(""); }, [a]);
+  await page.click("#message");
+  await page.keyboard.type("hi OnlyHere ok");
+  check("an emote this channel has shows as an emote", (await page.$$eval("#message .ce-emote", (e) => e.map((x) => x.dataset.name))).includes("OnlyHere"));
+  await page.evaluate(([b]) => activate(tabs.get(b)), [b]);
+  const away = await page.evaluate(() => ({ text: composer.getText(), emotes: [...document.querySelectorAll("#message .ce-emote")].map((x) => x.dataset.name) }));
+  check("switching to a channel without it turns it back into plain text (the draft is kept)", away.text === "hi OnlyHere ok" && !away.emotes.includes("OnlyHere"), JSON.stringify(away));
+  await page.evaluate(([a]) => activate(tabs.get(a)), [a]);
+  check("and back again it's an emote again", (await page.$$eval("#message .ce-emote", (e) => e.map((x) => x.dataset.name))).includes("OnlyHere"));
+  await page.evaluate(([a]) => { tabs.get(a).ext.delete("OnlyHere"); composer.setText(""); }, [a]);
+}
+
 // close tab
 await page.click(".tab:nth-child(2) .tab-close");
 await sleep(150);

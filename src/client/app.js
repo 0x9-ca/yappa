@@ -314,6 +314,7 @@ function activate(tab) {
   history.replaceState(null, "", "#" + tab.login);
   saveTabs();
   updateComposer();
+  composer.refresh(); // the draft carries over, but only this channel's emotes may show as emotes
   renderInfo();
   renderVideo();
   show("modes-panel", false);
@@ -931,6 +932,7 @@ async function loadTabExtras(tab) {
   const counts = EXT_SOURCES.map((src) => [src, [...ext.values()].filter((e) => e.source === src).length]).filter(([, n]) => n);
   if (counts.length && !tab.emotesLogged) { tab.emotesLogged = true; sysLine(tab, "Channel emotes: " + counts.map(([src, n]) => n + " " + src).join(" · ") + "."); }
   if (tab === active && !$("picker").hidden) renderPicker();
+  if (tab === active) composer.refresh(); // emotes typed before this channel's list arrived
 }
 
 function tabForBroadcaster(id) {

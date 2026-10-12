@@ -744,7 +744,26 @@ const lay = await page.evaluate(() => {
 });
 check("wide: video left, 380px chat column right", lay.vRight <= lay.cLeft + 1 && lay.cW === 380 && Math.abs(lay.fRatio - 16 / 9) < 0.05 && lay.docW === 1280, JSON.stringify(lay));
 await page.screenshot({ path: dir + "/t12-video-wide.png" });
+// A phone turned sideways: video on the left, chat on the right (not stacked).
+for (const [w, h] of [[844, 390], [740, 360], [932, 430]]) {
+  await page.setViewportSize({ width: w, height: h });
+  await sleep(250);
+  const side = await page.evaluate(() => {
+    const r = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const v = r("#video"), c = r("#chat"), t = r("header"), f = r("footer"), i = r("#video iframe");
+    return { vRight: Math.round(v.right), cLeft: Math.round(c.left), cW: Math.round(c.width), tLeft: Math.round(t.left), fLeft: Math.round(f.left), vH: Math.round(v.height), appH: Math.round(r(".app").height), iRatio: i.width / i.height, docW: document.documentElement.scrollWidth };
+  });
+  check(`landscape phone ${w}×${h}: video left, chat column (header, chat, message box) right, video fills the height`,
+    side.vRight <= side.cLeft + 1 && side.cW >= 280 && side.cW <= 380 && side.tLeft >= side.vRight - 1 && side.fLeft >= side.vRight - 1 && Math.abs(side.vH - side.appH) <= 1 && Math.abs(side.iRatio - 16 / 9) < 0.05 && side.docW === w, JSON.stringify(side));
+  if (w === 844) {
+    await page.screenshot({ path: dir + "/t61-landscape.png" });
+    if (process.env.SHOTS) await page.screenshot({ path: galleryDir + "/video-landscape.png" });
+  }
+}
+// ...and upright it's stacked again.
 await page.setViewportSize({ width: 390, height: 760 });
+await sleep(250);
+check("upright phone: video on top of the chat again", await page.evaluate(() => document.getElementById("video").getBoundingClientRect().bottom <= document.getElementById("chat").getBoundingClientRect().top + 1));
 
 // =============== native (HLS) player, opt-in ===============
 {

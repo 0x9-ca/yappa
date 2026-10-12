@@ -62,6 +62,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
   `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
   queue, chat-mode toggles and user cards (follow age, quick timeouts).
+- On a phone turned sideways, the video moves to the left and the chat to the right.
 - Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
 - "Gigantify an Emote" (Bits Power-up) messages show the emote enlarged.
 - Follow button: a heart in the info bar shows whether you follow the channel. Twitch removed its follow API, so tapping it opens the channel on Twitch to follow or unfollow, and Yappa refreshes the status when you come back.
@@ -176,6 +177,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | Phone | Desktop |
 |---|---|
 | <img src="docs/screenshots/video-mobile.png" width="240" alt="Embedded Twitch player (phone)"> | <img src="docs/screenshots/video-desktop.png" width="520" alt="Embedded Twitch player (desktop)"> |
+
+**Phone turned sideways: video on the left, chat on the right**
+
+<img src="docs/screenshots/video-landscape.png" width="620" alt="Phone in landscape: video left, chat right">
 
 **Native player quality menu**
 

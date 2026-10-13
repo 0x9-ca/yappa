@@ -3,7 +3,23 @@ import {
   OPTIONAL_SCOPES,
   SCOPES,
   TwitchError,
+  addBlockedTerm,
   banUser,
+  checkSubscription,
+  getBlockedTerms,
+  getBlockedUsers,
+  getChatters,
+  getShieldMode,
+  getUnbanRequests,
+  removeBlockedTerm,
+  resolveUnbanRequest,
+  sendAnnouncement,
+  sendShoutout,
+  sendWhisper,
+  setBlocked,
+  setShieldMode,
+  setSuspicious,
+  warnUser,
   createClip,
   createWebSocketSubscription,
   deleteChatMessages,
@@ -26,6 +42,8 @@ import {
   validateToken,
 } from "./twitch";
 import { clipFailure } from "./browse";
+import { slimTerm, slimUnban, toolFailure } from "./tools";
+import type { SubStatus, Term, UnbanRequest } from "./tools";
 
 // Twitch requires apps to re-validate held tokens at least hourly.
 const VALIDATE_EVERY_MS = 55 * 60_000;
@@ -174,6 +192,7 @@ export class ColorLoop extends DurableObject<Env> {
   async chatSubscribe(
     channel: string,
     sessionId: string,
+    opts: { modLog?: boolean } = {},
   ): Promise<
     | {
         ok: true;
@@ -182,6 +201,8 @@ export class ColorLoop extends DurableObject<Env> {
         subscriptionIds: string[];
         automod: boolean;
         settings: unknown;
+        /** Which extra moderator feeds are on for this channel. */
+        feeds: { suspicious: boolean; unbans: boolean; modLog: boolean };
       }
     | { ok: false; error: string }
   > {
@@ -225,6 +246,23 @@ export class ColorLoop extends DurableObject<Env> {
             automod = true;
           } catch {}
         }
+        // More moderator feeds, each best effort (a login from before they existed lacks the scope).
+        const feeds = { suspicious: false, unbans: false, modLog: false };
+        if (isMod) {
+          const modCondition = { broadcaster_user_id: user.id, moderator_user_id: t.userId };
+          const feed = async (key: keyof typeof feeds, type: string, version: string, scopes: string[]) => {
+            if (!scopes.some((sc) => t.scopes?.includes(sc))) return;
+            try {
+              subscriptionIds.push(await createWebSocketSubscription(this.env, t.accessToken, type, modCondition, sessionId, version));
+              feeds[key] = true;
+            } catch {}
+          };
+          await Promise.all([
+            feed("suspicious", "channel.suspicious_user.message", "1", ["moderator:read:suspicious_users", "moderator:manage:suspicious_users"]),
+            feed("unbans", "channel.unban_request.create", "1", ["moderator:manage:unban_requests"]),
+            ...(opts.modLog ? [feed("modLog", "channel.moderate", "2", ["moderator:manage:banned_users", "moderator:manage:chat_messages", "moderator:manage:chat_settings"])] : []),
+          ]);
+        }
         return {
           ok: true as const,
           broadcaster: { id: user.id, login: user.login, name: user.display_name },
@@ -232,10 +270,23 @@ export class ColorLoop extends DurableObject<Env> {
           subscriptionIds,
           automod,
           settings,
+          feeds,
         };
       });
     } catch (err) {
       return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  /** Incoming whispers for this browser session (one subscription per socket, not per channel). */
+  async whisperSubscribe(sessionId: string): Promise<{ ok: boolean; id?: string }> {
+    const tokens = await this.getTokens();
+    if (!tokens?.scopes?.includes("user:read:whispers")) return { ok: false };
+    try {
+      const id = await this.withToken((t) => createWebSocketSubscription(this.env, t.accessToken, "user.whisper.message", { user_id: t.userId }, sessionId));
+      return { ok: true, id };
+    } catch {
+      return { ok: false };
     }
   }
 
@@ -426,6 +477,134 @@ export class ColorLoop extends DurableObject<Env> {
       }
       return { ok: false, error: (err as Error).message };
     }
+  }
+
+  /**
+   * Moderator and personal tools. The scope is checked first so the page can offer a reconnect;
+   * Twitch itself decides whether this account may moderate the channel (moderator_id is always
+   * the signed-in user). `what` words the errors ("send the announcement").
+   */
+  private async tool<T extends object>(
+    what: string,
+    scope: string,
+    fn: (t: Tokens) => Promise<T>,
+  ): Promise<({ ok: true } & T) | { ok: false; error: string; needsScope?: boolean }> {
+    const tokens = await this.getTokens();
+    if (!tokens?.scopes?.includes(scope)) return { ok: false, error: "Reconnect Twitch to allow this.", needsScope: true };
+    try {
+      return { ok: true, ...(await this.withToken(fn)) };
+    } catch (err) {
+      if (err instanceof TwitchError) {
+        return { ok: false, error: toolFailure(what, err.status, err.message.replace(/^[^:]*(?:\(\d+\))?:?\s*/, "")), needsScope: err.status === 401 || undefined };
+      }
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  announce(broadcasterId: string, message: string, color: string) {
+    return this.tool("send the announcement", "moderator:manage:announcements", async (t) => {
+      await sendAnnouncement(this.env, t.accessToken, broadcasterId, t.userId, message, color);
+      return {};
+    });
+  }
+
+  shoutout(broadcasterId: string, toLogin: string) {
+    return this.tool("send the shoutout", "moderator:manage:shoutouts", async (t): Promise<{ target: string }> => {
+      const to = await getUser(this.env, t.accessToken, toLogin);
+      if (!to) throw new TwitchError(404, "Send Shoutout failed (404): no such channel");
+      await sendShoutout(this.env, t.accessToken, broadcasterId, to.id, t.userId);
+      return { target: to.display_name };
+    });
+  }
+
+  warn(broadcasterId: string, userId: string, reason: string) {
+    return this.tool("warn them", "moderator:manage:warnings", async (t) => {
+      await warnUser(this.env, t.accessToken, broadcasterId, t.userId, userId, reason);
+      return {};
+    });
+  }
+
+  blockedTerms(broadcasterId: string) {
+    return this.tool("load the blocked terms", "moderator:manage:blocked_terms", async (t): Promise<{ terms: Term[] }> => ({
+      terms: (await getBlockedTerms(this.env, t.accessToken, broadcasterId, t.userId)).map(slimTerm),
+    }));
+  }
+
+  addTerm(broadcasterId: string, text: string) {
+    return this.tool("add the term", "moderator:manage:blocked_terms", async (t): Promise<{ term: Term }> => ({
+      term: slimTerm(await addBlockedTerm(this.env, t.accessToken, broadcasterId, t.userId, text)),
+    }));
+  }
+
+  removeTerm(broadcasterId: string, id: string) {
+    return this.tool("remove the term", "moderator:manage:blocked_terms", async (t) => {
+      await removeBlockedTerm(this.env, t.accessToken, broadcasterId, t.userId, id);
+      return {};
+    });
+  }
+
+  shield(broadcasterId: string) {
+    return this.tool("read Shield Mode", "moderator:manage:shield_mode", async (t): Promise<{ active: boolean }> => ({
+      active: await getShieldMode(this.env, t.accessToken, broadcasterId, t.userId),
+    }));
+  }
+
+  setShield(broadcasterId: string, active: boolean) {
+    return this.tool("change Shield Mode", "moderator:manage:shield_mode", async (t): Promise<{ active: boolean }> => ({
+      active: await setShieldMode(this.env, t.accessToken, broadcasterId, t.userId, active),
+    }));
+  }
+
+  suspicious(broadcasterId: string, userId: string, status: "ACTIVE_MONITORING" | "RESTRICTED" | "NONE") {
+    return this.tool("change their status", "moderator:manage:suspicious_users", async (t) => {
+      await setSuspicious(this.env, t.accessToken, broadcasterId, t.userId, userId, status);
+      return {};
+    });
+  }
+
+  unbanRequests(broadcasterId: string) {
+    return this.tool("load unban requests", "moderator:manage:unban_requests", async (t): Promise<{ requests: UnbanRequest[] }> => ({
+      requests: (await getUnbanRequests(this.env, t.accessToken, broadcasterId, t.userId)).map(slimUnban),
+    }));
+  }
+
+  resolveUnban(broadcasterId: string, id: string, status: "approved" | "denied", text?: string) {
+    return this.tool("answer the request", "moderator:manage:unban_requests", async (t) => {
+      await resolveUnbanRequest(this.env, t.accessToken, broadcasterId, t.userId, id, status, text);
+      return {};
+    });
+  }
+
+  chatters(broadcasterId: string) {
+    return this.tool("load the chatters", "moderator:read:chatters", async (t): Promise<{ total: number; names: string[] }> => getChatters(this.env, t.accessToken, broadcasterId, t.userId));
+  }
+
+  /** Whether you subscribe to a channel (sub: null when you don't, or it has no subscriptions). */
+  subscription(broadcasterId: string) {
+    return this.tool("check your subscription", "user:read:subscriptions", async (t): Promise<{ sub: SubStatus | null }> => {
+      const s = await checkSubscription(this.env, t.accessToken, broadcasterId, t.userId);
+      return { sub: s ? { tier: s.tier, isGift: s.is_gift, gifter: s.gifter_name ?? null } : null };
+    });
+  }
+
+  blockedUsers() {
+    return this.tool("load your block list", "user:read:blocked_users", async (t): Promise<{ users: { id: string; login: string; name: string }[] }> => ({
+      users: (await getBlockedUsers(this.env, t.accessToken, t.userId)).map((u) => ({ id: u.user_id, login: u.user_login, name: u.display_name })),
+    }));
+  }
+
+  block(userId: string, block: boolean) {
+    return this.tool(block ? "block them" : "unblock them", "user:manage:blocked_users", async (t) => {
+      await setBlocked(this.env, t.accessToken, userId, block);
+      return {};
+    });
+  }
+
+  whisper(userId: string, message: string) {
+    return this.tool("send the whisper", "user:manage:whispers", async (t) => {
+      await sendWhisper(this.env, t.accessToken, t.userId, userId, message);
+      return {};
+    });
   }
 
   /** Clip ids made through Yappa by this account (a different account's history doesn't count). */

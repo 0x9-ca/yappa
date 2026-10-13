@@ -1,6 +1,8 @@
 import { PAGE_SIZE, slimClip, slimVideo } from "./browse";
 import type { ClipsQuery, VideosQuery } from "./browse";
-import { TwitchError, getBadges, getCheermotes, getClip, getClipsByIds, getClipsPage, getGameName, getGameNames, getStreamsByIds, getVideosPage } from "./twitch";
+import { slimCategory, slimChannel, slimSegment, slimStreamRow } from "./tools";
+import type { SearchQuery } from "./tools";
+import { TwitchError, getSchedule, getTopStreams, searchCategories, searchChannels, getBadges, getCheermotes, getClip, getClipsByIds, getClipsPage, getGameName, getGameNames, getStreamsByIds, getVideosPage } from "./twitch";
 
 /**
  * Public Twitch lookups (live status, clips, badges, cheermotes) don't need the user's own
@@ -120,3 +122,22 @@ export const clipsByIds = (env: Env, origin: string, ids: string[]) =>
       return c ? [slimClip(c, gameNames.get(c.game_id) ?? null)] : [];
     });
   });
+
+/** Channel search (live ones first), or null if Twitch can't be reached. */
+export const searchChannelsFor = (env: Env, origin: string, q: SearchQuery) =>
+  lookup(env, origin, async (t) => {
+    const r = await searchChannels(env, t, q.q, q.liveOnly, q.after);
+    return { ok: true as const, channels: r.channels.map(slimChannel).sort((a, b) => Number(b.live) - Number(a.live)), cursor: r.cursor };
+  });
+
+export const categoriesFor = (env: Env, origin: string, q: string) =>
+  lookup(env, origin, async (t) => ({ ok: true as const, categories: (await searchCategories(env, t, q)).map(slimCategory) }));
+
+export const topStreamsFor = (env: Env, origin: string, gameId?: string, after?: string) =>
+  lookup(env, origin, async (t) => {
+    const r = await getTopStreams(env, t, gameId, after);
+    return { ok: true as const, streams: r.streams.map(slimStreamRow), cursor: r.cursor };
+  });
+
+export const scheduleFor = (env: Env, origin: string, broadcasterId: string) =>
+  lookup(env, origin, async (t) => ({ ok: true as const, segments: (await getSchedule(env, t, broadcasterId)).map(slimSegment) }));

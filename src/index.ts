@@ -4,6 +4,7 @@ import { PAGE_HEADERS, renderLogin, renderPage } from "./page";
 import { clearSessionCookie, isAllowed, readSession, sessionCookie, signSession } from "./session";
 import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
+import { parseAnnounce, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
 import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
 import { authorizeUrl, exchangeCode, revokeToken, validateToken } from "./twitch";
 
@@ -18,6 +19,11 @@ function json(data: unknown, status = 200): Response {
 /** A lookup's result, or a 502 the client can tell apart from a genuinely empty answer. */
 function orFail(data: unknown): Response {
   return data === null ? json({ ok: false, error: "Couldn't reach Twitch." }, 502) : json(data);
+}
+
+/** A tool's result: 403 for a missing permission (the page offers a reconnect), 502 for Twitch refusing. */
+function toolResult(r: { ok: boolean; needsScope?: boolean }): Response {
+  return json(r, r.ok ? 200 : r.needsScope ? 403 : 502);
 }
 
 function getCookie(request: Request, name: string): string | undefined {
@@ -125,6 +131,23 @@ async function handle(request: Request, env: Env): Promise<Response> {
       if (typeof q === "string") return json({ ok: false, error: q }, 400);
       return orFail(await publicApi.videosPage(env, url.origin, q));
     }
+    // Discovery: public data, answered with the app token.
+    case "GET /api/discover/search": {
+      const q = parseSearch(url.searchParams);
+      return typeof q === "string" ? json({ ok: false, error: q }, 400) : orFail(await publicApi.searchChannelsFor(env, url.origin, q));
+    }
+    case "GET /api/discover/categories": {
+      const q = parseSearch(url.searchParams);
+      return typeof q === "string" ? json({ ok: false, error: q }, 400) : orFail(await publicApi.categoriesFor(env, url.origin, q.q));
+    }
+    case "GET /api/discover/top": {
+      const q = parseTop(url.searchParams);
+      return typeof q === "string" ? json({ ok: false, error: q }, 400) : orFail(await publicApi.topStreamsFor(env, url.origin, q.gameId, q.after));
+    }
+    case "GET /api/schedule": {
+      const id = url.searchParams.get("broadcaster_id") ?? "";
+      return /^\d{1,20}$/.test(id) ? orFail(await publicApi.scheduleFor(env, url.origin, id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
     // The native player's quality list (see src/usher.ts). No Durable Object needed.
     case "POST /api/hls/master": {
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -154,11 +177,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
     }
 
     case "POST /api/chat/subscribe": {
-      const body = (await request.json().catch(() => ({}))) as { channel?: unknown; session_id?: unknown };
+      const body = (await request.json().catch(() => ({}))) as { channel?: unknown; session_id?: unknown; mod_log?: unknown };
       const channel = parseChannel(body.channel);
       if (!channel) return json({ ok: false, error: "Enter a valid channel name." }, 400);
       if (typeof body.session_id !== "string") return json({ ok: false, error: "Missing session_id." }, 400);
-      const result = await stub.chatSubscribe(channel, body.session_id);
+      const result = await stub.chatSubscribe(channel, body.session_id, { modLog: body.mod_log === true });
       return json(result, result.ok ? 200 : 502);
     }
 
@@ -175,6 +198,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const reply = typeof body.reply_parent_message_id === "string" ? body.reply_parent_message_id : undefined;
       const result = await stub.chatSend(body.broadcaster_id, message, reply);
       return json(result, result.ok ? 200 : 502);
+    }
+
+    case "POST /api/whispers/subscribe": {
+      const body = (await request.json().catch(() => ({}))) as { session_id?: unknown };
+      if (typeof body.session_id !== "string") return json({ ok: false, error: "Missing session_id." }, 400);
+      return json(await stub.whisperSubscribe(body.session_id));
     }
 
     case "POST /api/chat/unsubscribe": {
@@ -257,6 +286,71 @@ async function handle(request: Request, env: Env): Promise<Response> {
       if (typeof req === "string") return json({ ok: false, error: req }, 400);
       const result = await stub.createClip(req.broadcasterId, { title: req.title, duration: req.duration });
       return json(result, result.ok ? 200 : result.needsScope ? 403 : 502);
+    }
+
+    // Moderator tools: the channel is named by the page, Twitch checks that you moderate it.
+    case "POST /api/mod/announce": {
+      const r = parseAnnounce((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.announce(r.broadcasterId, r.message, r.color));
+    }
+    case "POST /api/mod/shoutout": {
+      const r = parseShoutout((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.shoutout(r.broadcasterId, r.toLogin));
+    }
+    case "POST /api/mod/warn": {
+      const r = parseWarn((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.warn(r.broadcasterId, r.userId, r.reason));
+    }
+    case "GET /api/mod/terms": {
+      const id = parseBroadcaster(url.searchParams);
+      return id ? toolResult(await stub.blockedTerms(id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    case "POST /api/mod/terms": {
+      const r = parseTerm((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.addTerm(r.broadcasterId, r.text));
+    }
+    case "POST /api/mod/terms/remove": {
+      const r = parseTermRemove((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.removeTerm(r.broadcasterId, r.id));
+    }
+    case "GET /api/mod/shield": {
+      const id = parseBroadcaster(url.searchParams);
+      return id ? toolResult(await stub.shield(id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    case "POST /api/mod/shield": {
+      const r = parseShield((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.setShield(r.broadcasterId, r.active));
+    }
+    case "POST /api/mod/suspicious": {
+      const r = parseSuspicious((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.suspicious(r.broadcasterId, r.userId, r.status));
+    }
+    case "GET /api/mod/unbans": {
+      const id = parseBroadcaster(url.searchParams);
+      return id ? toolResult(await stub.unbanRequests(id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    case "POST /api/mod/unbans": {
+      const r = parseUnbanResolve((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.resolveUnban(r.broadcasterId, r.id, r.status, r.text));
+    }
+    case "GET /api/mod/chatters": {
+      const id = parseBroadcaster(url.searchParams);
+      return id ? toolResult(await stub.chatters(id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    // Personal tools.
+    case "GET /api/sub": {
+      const id = parseBroadcaster(url.searchParams);
+      return id ? toolResult(await stub.subscription(id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    case "GET /api/blocks":
+      return toolResult(await stub.blockedUsers());
+    case "POST /api/blocks": {
+      const r = parseBlock((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.block(r.userId, r.block));
+    }
+    case "POST /api/whisper": {
+      const r = parseWhisper((await request.json().catch(() => ({}))) as Record<string, unknown>);
+      return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.whisper(r.userId, r.message));
     }
 
     case "POST /api/cycle/bump": {

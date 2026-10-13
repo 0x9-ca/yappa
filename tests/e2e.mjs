@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = fileURLToPath(new URL("./output", import.meta.url)); // screenshots + bundle (git-ignored)
 mkdirSync(dir, { recursive: true });
 await build({
-  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { renderMoved } from "./src/moved.ts"; export { relayMaster } from "./src/usher.ts"; export { parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure } from "./src/browse.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
+  stdin: { contents: 'export { renderPage, PAGE_HEADERS } from "./src/page.ts"; export { renderMoved } from "./src/moved.ts"; export * as toolsLib from "./src/tools.ts"; export { relayMaster } from "./src/usher.ts"; export { parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure } from "./src/browse.ts"; export { staticFiles } from "./src/static.ts";', resolveDir: root, sourcefile: "entry.ts", loader: "ts" },
   bundle: true, format: "esm", outfile: dir + "/page.bundle.mjs", logLevel: "warning",
   loader: { ".css": "text", ".js": "text", ".png": "base64" },
 });
@@ -25,7 +25,7 @@ await build({
   } }],
 });
 const worker = await import(dir + "/worker.bundle.mjs?" + Date.now());
-const { renderPage, PAGE_HEADERS, renderMoved, relayMaster, parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
+const { toolsLib, renderPage, PAGE_HEADERS, renderMoved, relayMaster, parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure, staticFiles } = await import(dir + "/page.bundle.mjs?" + Date.now());
 const html = renderPage();
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || process.env.HOME + "/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
@@ -506,6 +506,20 @@ await page.evaluate(() => composer.setText(""));
   await sleep(100);
   check("scrolling it out of view closes it", !(await page.$(".emote-tip")));
   await page.evaluate(() => scrollToBottom(active));
+}
+
+// =============== moderator and personal tools: request checking ===============
+{
+  const T = toolsLib;
+  check("announcement: 1-500 characters, known colors only", T.parseAnnounce({ broadcaster_id: "9", message: " hi  there ", color: "blue" }).message === "hi there" && T.parseAnnounce({ broadcaster_id: "9", message: "x" }).color === "primary" && typeof T.parseAnnounce({ broadcaster_id: "9", message: "" }) === "string" && typeof T.parseAnnounce({ broadcaster_id: "9", message: "x".repeat(501) }) === "string" && typeof T.parseAnnounce({ broadcaster_id: "9", message: "x", color: "red" }) === "string" && typeof T.parseAnnounce({ broadcaster_id: "abc", message: "x" }) === "string");
+  check("shoutout target is cleaned up (name, @name, URL) or refused", T.parseShoutout({ broadcaster_id: "9", to_login: "@SomeChan" }).toLogin === "somechan" && T.parseShoutout({ broadcaster_id: "9", to_login: "https://www.twitch.tv/SomeChan/about" }).toLogin === "somechan" && typeof T.parseShoutout({ broadcaster_id: "9", to_login: "bad name" }) === "string");
+  check("warning needs a reason (≤500) and numeric ids", T.parseWarn({ broadcaster_id: "9", user_id: "5", reason: "be nice" }).reason === "be nice" && typeof T.parseWarn({ broadcaster_id: "9", user_id: "5", reason: "  " }) === "string" && typeof T.parseWarn({ broadcaster_id: "9", user_id: "x", reason: "r" }) === "string");
+  check("blocked term: 2-500 characters; removal needs a plain id", T.parseTerm({ broadcaster_id: "9", text: "spoiler" }).text === "spoiler" && typeof T.parseTerm({ broadcaster_id: "9", text: "a" }) === "string" && T.parseTermRemove({ broadcaster_id: "9", id: "abc-123" }).id === "abc-123" && typeof T.parseTermRemove({ broadcaster_id: "9", id: "a b" }) === "string");
+  check("shield mode needs a real boolean; suspicious status is one of three", T.parseShield({ broadcaster_id: "9", active: true }).active === true && typeof T.parseShield({ broadcaster_id: "9", active: "yes" }) === "string" && T.parseSuspicious({ broadcaster_id: "9", user_id: "5", status: "RESTRICTED" }).status === "RESTRICTED" && T.parseSuspicious({ broadcaster_id: "9", user_id: "5", status: "NONE" }).status === "NONE" && typeof T.parseSuspicious({ broadcaster_id: "9", user_id: "5", status: "BANNED" }) === "string");
+  check("unban answer: approved or denied, optional note ≤500", T.parseUnbanResolve({ broadcaster_id: "9", id: "r-1", status: "approved" }).status === "approved" && T.parseUnbanResolve({ broadcaster_id: "9", id: "r-1", status: "denied", text: "no" }).text === "no" && typeof T.parseUnbanResolve({ broadcaster_id: "9", id: "r-1", status: "maybe" }) === "string" && typeof T.parseUnbanResolve({ broadcaster_id: "9", id: "r-1", status: "denied", text: "x".repeat(501) }) === "string");
+  check("whisper: 1-500 characters to a numeric id; block needs a boolean", T.parseWhisper({ user_id: "5", message: "hey" }).message === "hey" && typeof T.parseWhisper({ user_id: "5", message: "" }) === "string" && T.parseBlock({ user_id: "5", block: false }).block === false && typeof T.parseBlock({ user_id: "5" }) === "string");
+  check("search and top-streams parameters are checked", T.parseSearch(new URLSearchParams("q=cats&live=1")).liveOnly === true && typeof T.parseSearch(new URLSearchParams("q=")) === "string" && typeof T.parseTop(new URLSearchParams("game_id=x")) === "string" && T.parseTop(new URLSearchParams("game_id=33214")).gameId === "33214");
+  check("tool failures are explained in words", /Reconnect Twitch/.test(T.toolFailure("x", 401, "")) && /may not be a moderator/.test(T.toolFailure("send the announcement", 403, "")) && /rate limiting/.test(T.toolFailure("x", 429, "")) && T.slimUnban({ id: "1", user_id: "2", user_login: "l", user_name: "L", text: "t", created_at: "c", status: "pending" }).login === "l" && T.slimStreamRow({ user_id: "1", user_login: "a", user_name: "A", title: "t", game_name: "g", viewer_count: 5, started_at: "s", thumbnail_url: "https://x/{width}x{height}.jpg", language: "en" }).thumbnail === "https://x/320x180.jpg");
 }
 
 // close tab

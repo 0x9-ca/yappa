@@ -1,3 +1,4 @@
+import { TOOL_SCOPES } from "./tools";
 const ID_BASE = "https://id.twitch.tv/oauth2";
 const API_BASE = "https://api.twitch.tv/helix";
 
@@ -14,6 +15,7 @@ export const OPTIONAL_SCOPES = [
   "moderator:manage:chat_settings",
   "user:read:follows",
   "clips:edit",
+  ...TOOL_SCOPES,
 ];
 
 export class TwitchError extends Error {
@@ -592,4 +594,178 @@ export function getFollowedStreams(
   const url = new URL(`${API_BASE}/streams/followed`);
   url.searchParams.set("user_id", userId);
   return allPages(env, accessToken, url, "Get Followed Streams", 5);
+}
+
+// ---------- moderator tools and personal tools ----------
+
+function modParams(broadcasterId: string, moderatorId: string, extra: Record<string, string> = {}): URLSearchParams {
+  return new URLSearchParams({ broadcaster_id: broadcasterId, moderator_id: moderatorId, ...extra });
+}
+
+const withJson = (env: Env, accessToken: string): HeadersInit => ({ ...helixHeaders(env, accessToken), "Content-Type": "application/json" });
+
+export async function sendShoutout(env: Env, accessToken: string, fromId: string, toId: string, moderatorId: string): Promise<void> {
+  const q = new URLSearchParams({ from_broadcaster_id: fromId, to_broadcaster_id: toId, moderator_id: moderatorId });
+  await check(await fetch(`${API_BASE}/chat/shoutouts?${q}`, { method: "POST", headers: helixHeaders(env, accessToken) }), "Send Shoutout");
+}
+
+export async function sendAnnouncement(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, message: string, color: string): Promise<void> {
+  await check(
+    await fetch(`${API_BASE}/chat/announcements?${modParams(broadcasterId, moderatorId)}`, { method: "POST", headers: withJson(env, accessToken), body: JSON.stringify({ message, color }) }),
+    "Send Announcement",
+  );
+}
+
+export async function warnUser(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, userId: string, reason: string): Promise<void> {
+  await check(
+    await fetch(`${API_BASE}/moderation/warnings?${modParams(broadcasterId, moderatorId)}`, {
+      method: "POST", headers: withJson(env, accessToken), body: JSON.stringify({ data: { user_id: userId, reason } }),
+    }),
+    "Warn User",
+  );
+}
+
+export async function getBlockedTerms(env: Env, accessToken: string, broadcasterId: string, moderatorId: string): Promise<{ id: string; text: string; created_at: string }[]> {
+  const url = new URL(`${API_BASE}/moderation/blocked_terms`);
+  for (const [k, v] of modParams(broadcasterId, moderatorId)) url.searchParams.set(k, v);
+  url.searchParams.set("first", "100");
+  return allPages(env, accessToken, url, "Get Blocked Terms", 5);
+}
+
+export async function addBlockedTerm(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, text: string): Promise<{ id: string; text: string; created_at: string }> {
+  const res = await check(
+    await fetch(`${API_BASE}/moderation/blocked_terms?${modParams(broadcasterId, moderatorId)}`, { method: "POST", headers: withJson(env, accessToken), body: JSON.stringify({ text }) }),
+    "Add Blocked Term",
+  );
+  return ((await res.json()) as { data: { id: string; text: string; created_at: string }[] }).data[0];
+}
+
+export async function removeBlockedTerm(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, id: string): Promise<void> {
+  await check(
+    await fetch(`${API_BASE}/moderation/blocked_terms?${modParams(broadcasterId, moderatorId, { id })}`, { method: "DELETE", headers: helixHeaders(env, accessToken) }),
+    "Remove Blocked Term",
+  );
+}
+
+export async function getShieldMode(env: Env, accessToken: string, broadcasterId: string, moderatorId: string): Promise<boolean> {
+  const res = await check(await fetch(`${API_BASE}/moderation/shield_mode?${modParams(broadcasterId, moderatorId)}`, { headers: helixHeaders(env, accessToken) }), "Get Shield Mode");
+  return !!((await res.json()) as { data: { is_active: boolean }[] }).data[0]?.is_active;
+}
+
+export async function setShieldMode(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, active: boolean): Promise<boolean> {
+  const res = await check(
+    await fetch(`${API_BASE}/moderation/shield_mode?${modParams(broadcasterId, moderatorId)}`, { method: "PUT", headers: withJson(env, accessToken), body: JSON.stringify({ is_active: active }) }),
+    "Update Shield Mode",
+  );
+  return !!((await res.json()) as { data: { is_active: boolean }[] }).data[0]?.is_active;
+}
+
+/** Marks a chatter as monitored or restricted ("NONE" removes the mark). */
+export async function setSuspicious(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, userId: string, status: "ACTIVE_MONITORING" | "RESTRICTED" | "NONE"): Promise<void> {
+  if (status === "NONE") {
+    await check(
+      await fetch(`${API_BASE}/moderation/suspicious_users?${modParams(broadcasterId, moderatorId, { user_id: userId })}`, { method: "DELETE", headers: helixHeaders(env, accessToken) }),
+      "Remove Suspicious Status",
+    );
+    return;
+  }
+  await check(
+    await fetch(`${API_BASE}/moderation/suspicious_users?${modParams(broadcasterId, moderatorId)}`, {
+      method: "POST", headers: withJson(env, accessToken), body: JSON.stringify({ user_id: userId, status }),
+    }),
+    "Add Suspicious Status",
+  );
+}
+
+export interface RawUnbanRequest { id: string; user_id: string; user_login: string; user_name: string; text: string; created_at: string; status: string }
+
+export async function getUnbanRequests(env: Env, accessToken: string, broadcasterId: string, moderatorId: string): Promise<RawUnbanRequest[]> {
+  const url = new URL(`${API_BASE}/moderation/unban_requests`);
+  for (const [k, v] of modParams(broadcasterId, moderatorId, { status: "pending", first: "50" })) url.searchParams.set(k, v);
+  return allPages(env, accessToken, url, "Get Unban Requests", 2);
+}
+
+export async function resolveUnbanRequest(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, id: string, status: "approved" | "denied", text?: string): Promise<void> {
+  const extra: Record<string, string> = { unban_request_id: id, status };
+  if (text) extra.resolution_text = text;
+  await check(await fetch(`${API_BASE}/moderation/unban_requests?${modParams(broadcasterId, moderatorId, extra)}`, { method: "PATCH", headers: helixHeaders(env, accessToken) }), "Resolve Unban Request");
+}
+
+/** Who's in chat (first page of up to 1000 names, plus the total). */
+export async function getChatters(env: Env, accessToken: string, broadcasterId: string, moderatorId: string): Promise<{ total: number; names: string[] }> {
+  const res = await check(await fetch(`${API_BASE}/chat/chatters?${modParams(broadcasterId, moderatorId, { first: "1000" })}`, { headers: helixHeaders(env, accessToken) }), "Get Chatters");
+  const body = (await res.json()) as { data: { user_name: string }[]; total: number };
+  return { total: body.total, names: body.data.map((c) => c.user_name) };
+}
+
+/** Whether the user subscribes to the channel (null if not, or if the channel can't have subscribers). */
+export async function checkSubscription(env: Env, accessToken: string, broadcasterId: string, userId: string): Promise<{ tier: string; is_gift: boolean; gifter_name?: string } | null> {
+  const res = await fetch(`${API_BASE}/subscriptions/user?broadcaster_id=${encodeURIComponent(broadcasterId)}&user_id=${encodeURIComponent(userId)}`, { headers: helixHeaders(env, accessToken) });
+  if (res.status === 404 || res.status === 400) return null; // 404: not subscribed; 400: not a partner or affiliate
+  await check(res, "Check User Subscription");
+  return ((await res.json()) as { data: { tier: string; is_gift: boolean; gifter_name?: string }[] }).data[0] ?? null;
+}
+
+export async function getBlockedUsers(env: Env, accessToken: string, userId: string): Promise<{ user_id: string; user_login: string; display_name: string }[]> {
+  const url = new URL(`${API_BASE}/users/blocks`);
+  url.searchParams.set("broadcaster_id", userId);
+  url.searchParams.set("first", "100");
+  return allPages(env, accessToken, url, "Get User Block List", 10);
+}
+
+export async function setBlocked(env: Env, accessToken: string, targetId: string, block: boolean): Promise<void> {
+  const url = `${API_BASE}/users/blocks?target_user_id=${encodeURIComponent(targetId)}`;
+  await check(await fetch(url, { method: block ? "PUT" : "DELETE", headers: helixHeaders(env, accessToken) }), block ? "Block User" : "Unblock User");
+}
+
+export async function sendWhisper(env: Env, accessToken: string, fromId: string, toId: string, message: string): Promise<void> {
+  const q = new URLSearchParams({ from_user_id: fromId, to_user_id: toId });
+  await check(await fetch(`${API_BASE}/whispers?${q}`, { method: "POST", headers: withJson(env, accessToken), body: JSON.stringify({ message }) }), "Send Whisper");
+}
+
+// ---------- discovery (public: app token) ----------
+
+export interface RawChannelHit { id: string; broadcaster_login: string; display_name: string; is_live: boolean; title: string; game_name: string; started_at: string }
+
+export async function searchChannels(env: Env, accessToken: string, query: string, liveOnly: boolean, after?: string): Promise<{ channels: RawChannelHit[]; cursor: string | null }> {
+  const url = new URL(`${API_BASE}/search/channels`);
+  url.searchParams.set("query", query);
+  url.searchParams.set("first", "20");
+  if (liveOnly) url.searchParams.set("live_only", "true");
+  if (after) url.searchParams.set("after", after);
+  const body = (await (await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Search Channels")).json()) as { data: RawChannelHit[]; pagination?: { cursor?: string } };
+  return { channels: body.data, cursor: body.pagination?.cursor ?? null };
+}
+
+export interface RawCategory { id: string; name: string; box_art_url: string }
+
+export async function searchCategories(env: Env, accessToken: string, query: string): Promise<RawCategory[]> {
+  const url = new URL(`${API_BASE}/search/categories`);
+  url.searchParams.set("query", query);
+  url.searchParams.set("first", "10");
+  return ((await (await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Search Categories")).json()) as { data: RawCategory[] }).data;
+}
+
+export interface RawStreamRow { user_id: string; user_login: string; user_name: string; title: string; game_name: string; viewer_count: number; started_at: string; thumbnail_url: string; language: string }
+
+/** Live streams, most viewers first, optionally within one category. */
+export async function getTopStreams(env: Env, accessToken: string, gameId?: string, after?: string): Promise<{ streams: RawStreamRow[]; cursor: string | null }> {
+  const url = new URL(`${API_BASE}/streams`);
+  url.searchParams.set("first", "20");
+  url.searchParams.set("type", "live");
+  if (gameId) url.searchParams.set("game_id", gameId);
+  if (after) url.searchParams.set("after", after);
+  const body = (await (await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Streams")).json()) as { data: RawStreamRow[]; pagination?: { cursor?: string } };
+  return { streams: body.data, cursor: body.pagination?.cursor ?? null };
+}
+
+export interface RawSegment { id: string; start_time: string; end_time: string | null; title: string; canceled_until: string | null; category: { name: string } | null; is_recurring: boolean }
+
+/** A channel's upcoming stream schedule (empty when it has none). */
+export async function getSchedule(env: Env, accessToken: string, broadcasterId: string): Promise<RawSegment[]> {
+  const url = `${API_BASE}/schedule?broadcaster_id=${encodeURIComponent(broadcasterId)}&first=10`;
+  const res = await fetch(url, { headers: helixHeaders(env, accessToken) });
+  if (res.status === 404) return [];
+  await check(res, "Get Schedule");
+  return ((await res.json()) as { data: { segments: RawSegment[] | null } }).data.segments ?? [];
 }

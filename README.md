@@ -6,109 +6,238 @@
 
 <p align="center"><b>A personal Twitch chat client that runs on your own Cloudflare Worker.</b></p>
 
-Built on EventSub WebSocket + Helix. It can also change your chat color to a random hex color
-every time you send a message. Private: only the Twitch accounts on an allowlist can sign in.
+<p align="center">
+  Tabs · 7TV / BTTV / FFZ emotes · mod tools · whispers · clips · native player · installable PWA
+</p>
 
-## Setup
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#development">Development</a> ·
+  <a href="#screenshots">Screenshots</a>
+</p>
 
-For a detailed, step-by-step walkthrough, see the **[self-hosting guide](docs/SELF-HOSTING.md)**. The short version:
+<p align="center">
+  <img src="docs/screenshots/chat-mobile.png" width="200" alt="Chat tabs with history and a first-time chatter flag">
+  <img src="docs/screenshots/mod-tools-mobile.png" width="200" alt="Moderator tools">
+  <img src="docs/screenshots/emote-picker-by-channel-mobile.png" width="200" alt="Emote picker grouped by channel">
+  <img src="docs/screenshots/mentions-mobile.png" width="200" alt="Mentions from every open channel">
+</p>
 
-1. **Twitch app** – https://dev.twitch.tv/console/apps → Register (Confidential client).
-   OAuth Redirect URL: `https://<your-worker-host>/auth/callback`.
-2. **Config** – your settings live in `wrangler.jsonc`, which is **not in git** (see
-   [Configuration files](#configuration-files)). Create it from the template and fill it in:
+## What it is
+
+Yappa is a full-featured Twitch chat client for one person (or a few people you list), written as a single
+Cloudflare Worker. You sign in with Twitch, open channels as tabs, and chat. It's built on Twitch's EventSub
+WebSocket and Helix API, and it runs as a web app you can install on your phone or desktop.
+
+- **Private.** Only the Twitch accounts on your allowlist can sign in. There is no public page and no shared
+  server. Your Twitch tokens stay in the Worker and never reach the browser.
+- **Yours.** You deploy it to your own Cloudflare account; there's no build step and no database to run.
+- **Phone first.** The layout starts from a phone and scales up to desktop, with the video beside the chat on
+  wide windows and on a phone turned sideways.
+
+## Features
+
+### Chat
+
+- Channel tabs sharing one EventSub WebSocket, with live status, viewer counts and unread/mention badges.
+- Emotes from Twitch, 7TV, BTTV and FFZ, plus cheermotes and GIFs from Tier 2+ subscribers (Settings → Show
+  GIFs turns them into links). The composer shows finished emote names as images.
+- Emote picker (grouped by where each emote comes from, including one section per channel you're subscribed
+  to, with favorites and recents) and autocomplete for `:name`, Tab and `@user`.
+- Tap an emote for its name and source; tap a name for their user card (badges with a plain-language
+  explanation of each, follow age, recent messages, quick timeouts).
+- Optional chat history (via [recent-messages.robotty.de](https://recent-messages.robotty.de/), only after
+  you opt in) with older pages as you scroll up, and gap filling after a reconnect.
+- Clip links in chat show as cards; first-time chatters, deleted messages, highlighted and channel-points
+  messages, raids and Gigantified emotes are marked.
+- Reply, save a message as a bookmark, or translate it (with the browser's own translator where it has one,
+  otherwise Google Translate opens with that message).
+
+### Moderation
+
+- In channels you moderate: delete, timeout and ban from the message menu, plus `/ban`, `/unban`, `/timeout`,
+  `/untimeout` and `/clear`.
+- The **Mod tools** sheet (shield icon): chat modes (slow, followers-only, subscribers-only, emote-only,
+  unique), announcements, shoutouts, blocked terms, Shield Mode, unban requests and the chatters list.
+- AutoMod queue (allow or deny held messages), warnings, and monitoring or restricting suspicious users.
+- Messages Twitch flags as suspicious are marked in chat; an optional line shows other moderators' actions.
+
+### Video, clips and VODs
+
+- Twitch's own embedded player beside (or above) the chat, with Picture-in-Picture where the browser supports it.
+- **Pin a stream** so it keeps playing while you switch chat tabs, or **watch alongside** to show a second
+  stream next to the first (windows 1000px wide or more).
+- Opt-in **native player** for browsers where the embed doesn't work: quality menu including Source and
+  audio-only. The video never goes through the Worker; it only relays the small quality list.
+- **Clips & VODs:** browse a channel's clips (by period), past broadcasts, highlights and uploads, play them in
+  Twitch's embeds and share them. Create a clip of the live stream (15, 30 or 60 s; a blank title uses the
+  stream's title) and optionally post the link to chat. "Your clips" lists the ones you made with Yappa.
+- Hand-off button for Bits and channel points, which Twitch doesn't allow third-party apps to use.
+
+### Staying on top of things
+
+- **Mentions** (account menu or Alt+M) collects @mentions and highlights from every open channel; **All chats**
+  (Alt+A) shows them all in one feed.
+- Highlight rules, notifications and sound; go-live alerts for followed channels and a line in chat when a
+  channel changes its title or category (only while Yappa is open).
+- Mute filters: hide known bots, `!commands`, and words, phrases or `/patterns/`.
+- Tap the live chip for uptime and a viewer graph; a countdown shows when slow mode lets you chat again.
+- **Discover** top live streams, browse categories, search channels and see schedules.
+- Whispers, your Twitch block list, and a chip showing your subscription to the open channel.
+
+### Make it yours
+
+- **Settings sync** across your devices: settings, open tabs and the pinned stream (video player, theme, text
+  size and notification choices stay per device).
+- Per-channel overrides for notifications, sound, go-live alerts and muted words.
+- Private notes and colored labels on people; quick messages for things you type often; favorite emotes.
+- Light and dark themes, compact or shaded rows, hidden times or badges, monospace or serif font.
+- Tab menu (move, live-first, pin, close others), desktop shortcuts (`?` lists them), save a chat as text or
+  JSON, and a settings backup you can restore from a file.
+- Optional **chat color cycling**: a new random hex color every time you send a message (needs Twitch Turbo or
+  Prime; the color is account-wide, so it changes in every channel).
+
+### What Twitch doesn't allow
+
+Some things people expect from a chat client aren't possible for a third-party app, so Yappa doesn't pretend:
+
+- **Follow and unfollow:** Twitch removed the API (2023). The heart shows your status and opens the channel on
+  Twitch to change it.
+- **Spending Bits or channel points, starting polls, predictions or raids, and choosing your badges:** no API for
+  an app acting as you (some need the broadcaster's own token). Yappa hands off to Twitch where it can.
+- **Watch-time and stream streaks:** only Twitch's own embed, while you're signed in, counts as watching;
+  Yappa deliberately doesn't simulate it.
+- **Full channel-points redemption feed:** only the broadcaster can see it; Yappa marks the redemptions that
+  show up in chat.
+
+## Quick start
+
+For the full walkthrough, see the **[self-hosting guide](docs/SELF-HOSTING.md)**. The short version:
+
+1. **Twitch app:** register one at <https://dev.twitch.tv/console/apps> (Confidential client). Set the OAuth
+   Redirect URL to `https://<your-hostname>/auth/callback`.
+2. **Config:** copy the template and fill it in (see [Configuration](#configuration)).
    ```sh
    cp wrangler.sample.jsonc wrangler.jsonc
-   ```
-   Set the hostname in `routes` and `APP_HOST`, `ALLOWED_LOGINS` (who may sign in, see below) and
-   `TWITCH_CLIENT_ID`. Then:
-   ```sh
    npm install
-   npm run types        # generates worker-configuration.d.ts (also not in git)
+   npm run types        # generates worker-configuration.d.ts (not in git)
+   ```
+3. **Secrets and deploy:**
+   ```sh
    npx wrangler secret put TWITCH_CLIENT_SECRET
    openssl rand -base64 48 | npx wrangler secret put SESSION_SECRET   # signs sign-in cookies
    npm run deploy
    ```
-3. **Who can sign in** – there's no other gate (no Cloudflare Access): visitors see only a
-   "Sign in with Twitch" page, and Twitch proves who they are. `ALLOWED_LOGINS` is a comma- or
-   space-separated list of Twitch logins and/or numeric Twitch user ids; an empty list allows
-   nobody. Prefer ids for strictness: a login can be renamed, and someone else could then claim
-   the old name (an id can't be). The list is checked on every request, so removing someone
-   ends their access immediately. After changing it, `npm run deploy`. Sign-in is a signed,
-   30-day, HttpOnly cookie (`SESSION_SECRET` signs it; changing the secret signs everyone out);
-   each account's Twitch tokens live in its own Durable Object, named by the Twitch user id.
+4. Open your hostname and sign in with Twitch. Add Yappa to your home screen to install it.
 
-## Configuration files
+## Configuration
 
-These hold your own hostnames, allowlist and IDs, so they are in `.gitignore` and never
-committed:
+Your settings live in files that hold your own hostnames, allowlist and IDs, so they're in `.gitignore` and
+never committed:
 
 | File | What it is |
 |---|---|
 | `wrangler.jsonc` | Your Worker config. Create it from `wrangler.sample.jsonc` (placeholders). |
-| `worker-configuration.d.ts` | Generated by `npm run types` from `wrangler.jsonc`; it embeds the same values. Run it after cloning and after changing bindings or vars; `npm run check` needs it. |
+| `worker-configuration.d.ts` | Generated by `npm run types` from `wrangler.jsonc`; run it after cloning and after changing bindings or vars (`npm run check` needs it). |
 | `.dev.vars` | Local secrets for `wrangler dev`. |
 | `.claude/` | Personal Claude Code settings. |
 
-`wrangler.sample.jsonc` is the tracked copy. If you change the structure of `wrangler.jsonc`
-(bindings, `rules`, migrations, vars), make the same change in the sample so a fresh clone
-still works. The Twitch client secret is a Worker secret (`npx wrangler secret put
-TWITCH_CLIENT_SECRET`), not part of any file; the config declares it under `secrets.required`,
-so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
+If you change the structure of `wrangler.jsonc` (bindings, `rules`, migrations, vars), make the same change in
+`wrangler.sample.jsonc` so a fresh clone still works.
 
-## Behavior
+| Setting | Where | What it does |
+|---|---|---|
+| `routes`, `APP_HOST` | `wrangler.jsonc` | Your hostname. Extra `routes` entries keep an old address working: it forwards browsers to `APP_HOST`, carrying their settings. |
+| `TWITCH_CLIENT_ID` | `wrangler.jsonc` | Your Twitch app's client id. |
+| `ALLOWED_LOGINS` | `wrangler.jsonc` | Who may sign in: a comma- or space-separated list of Twitch logins and/or numeric user ids. Empty allows nobody. Prefer ids: a login can be renamed and claimed by someone else, an id can't. |
+| `TWITCH_CLIENT_SECRET` | Worker secret | Your Twitch app's secret. Declared under `secrets.required`, so a deploy fails if it's missing. |
+| `SESSION_SECRET` | Worker secret | 32+ random characters; signs the sign-in cookie. Changing it signs everyone out. |
 
-- Twitch scopes: `user:manage:chat_color`, `user:read:chat`, `user:write:chat` (required);
-  `user:read:emotes`, `user:read:moderated_channels`, `moderator:manage:chat_messages`,
-  `moderator:manage:banned_users`, `moderator:read:followers`, `moderator:manage:automod`,
-  `moderator:manage:chat_settings`, `user:read:follows`, `clips:edit`, `moderator:manage:announcements`, `moderator:manage:shoutouts`, `moderator:manage:warnings`, `moderator:manage:blocked_terms`, `moderator:manage:shield_mode`, `moderator:manage:suspicious_users`, `moderator:read:suspicious_users`, `moderator:manage:unban_requests`, `moderator:read:chatters`, `user:read:subscriptions`, `user:read:blocked_users`, `user:manage:blocked_users`, `user:manage:whispers`, `user:read:whispers` (optional: each only powers its feature; if you added any since you last signed in, Yappa offers to reconnect).
-- Chat: channel tabs sharing one EventSub WebSocket, 7TV/BTTV/FFZ emotes, cheermotes, emote picker, autocomplete
-  (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
-  `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
-  queue, chat-mode toggles and user cards (follow age, quick timeouts).
-- Tap an emote in chat to see its name and where it comes from (Twitch global or channel, 7TV, BTTV, FFZ, cheermote), with a button to add it to your message.
-- Tap a name for their user card, which lists the badges on that message with a plain-language explanation of each.
-- Pin a stream (the pin button in the info bar) to keep it playing while you switch to other chat tabs; unpin to make the video follow the open tab again.
-- On a phone turned sideways, the video moves to the left and the chat to the right.
-- Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
-- "Gigantify an Emote" (Bits Power-up) messages show the emote enlarged.
-- Follow button: a heart in the info bar shows whether you follow the channel. Twitch removed its follow API, so tapping it opens the channel on Twitch to follow or unfollow, and Yappa refreshes the status when you come back.
-- Moderator tools (the shield icon in the info bar, in channels you moderate): chat modes (slow, followers-only, subscribers-only, emote-only, unique chat), send announcements and shoutouts, manage blocked terms, turn Shield Mode on or off, answer unban requests, see who's in chat; on a user card, Warn and mark someone as monitored or restricted. Messages from users Twitch flags as suspicious are marked in chat, and Settings can add a line for other moderators' actions.
-- Whispers (account menu), your Twitch block list (hides blocked users' messages; Block/Unblock on the user card), a chip showing your subscription to the open channel, and labels on messages that come from another channel in a shared chat.
-- Alerts: optional notifications when followed channels go live (only while Yappa is open), and a line in chat when a channel changes its title or category.
-- Discover streams (account menu): top live streams, category browsing and channel search; typing in the channel box also searches all of Twitch. The Clips & VODs window has a Schedule tab.
-- Sync: settings, open tabs and the pinned stream follow your account across devices (newest change wins). Video player, theme, text size and notification choices stay per device. Settings → Sync across my devices turns it off.
-- Mute filters (Settings): hide known bots, `!commands`, and words, phrases or `/patterns/`. Mentions (account menu, or Alt+M) collects @mentions and highlights from every open channel; All chats (Alt+A) shows every open channel in one read-only feed.
-- Tap the live chip in the info bar for the stream's uptime and a graph of viewers since you opened it. After you send a message in a slow-mode channel, a countdown shows when you can chat again.
-- Save a chat as text or JSON from the account menu. Desktop shortcuts: Alt+1…9 / Alt+←→ switch tabs, Alt+V video, `/` message box, `?` lists them all.
-- The emote picker groups the emotes of channels you're subscribed to by channel.
-- Per channel (account menu or a tab's menu → "Settings for #channel"): notifications, sound and go-live alerts set to Always / Never for just that channel, and words muted only there.
-- Notes on people: "Add note" on a user card puts a colored label after their name everywhere (private, synced). Quick messages (the bolt button by the message box) hold things you type often: tap one to insert it, or Send when the box is empty. Favorite emotes: long-press or right-click one in the picker. Bookmarks: "Save" in a message's menu, listed in the account menu. "Translate" uses the browser's built-in translator where it has one, otherwise opens Google Translate with that message.
-- Tabs: right-click or long-press a tab for Move left/right, Live channels first, Pin, Close others and (in a window 1000px or wider) Watch alongside, which shows a second stream next to the first. Desktop users can also drag tabs.
-- Chat layout (Settings, per device): compact spacing, alternate row shading, hide times or badges, and a monospace or serif font. Settings → Backup saves everything to a file and restores it.
-- Account menu: your Twitch picture in the corner opens a menu with your name, Settings, "Your clips" (the
-  clips you made through Yappa) and Log out.
-- Clips & VODs: browse a channel's clips (most viewed by period), past broadcasts, highlights and uploads,
-  play them in Twitch's own embeds, share them (the phone's share sheet, or copy the link), and create a clip of the live stream (15 / 30 / 60 s; a blank title uses the stream's title).
-  New clips can be posted to the channel's chat automatically (on by default; Settings → Clips).
-- GIFs sent by Tier 2+ subscribers are shown inline (Settings → Show GIFs turns them into links).
-- Channel points redemptions that show up in chat (highlighted messages, sub-only-mode messages and
-  reward messages) are marked; Twitch only exposes the full redemption feed to the broadcaster.
-- Live status on tabs, search/filter, highlight words, mention notifications and sound, ignored
-  users, text size. Color cycling also reacts to messages you send from other apps while their
-  channel is open in a tab.
-- Client code lives in `src/client/` and is bundled as text modules (see `rules` in `wrangler.sample.jsonc`).
-- Color cycling picks a new color when switched on and again after every message sent
-  through the app, so each message comes out a different color.
-- Twitch only allows hex colors for **Turbo or Prime** accounts; otherwise the
-  first color change fails with a 400 error and cycling switches off.
-- Chat color is account-wide on Twitch, so it changes in every channel, not only the selected one.
+`ALLOWED_LOGINS` is checked on every request, so removing someone ends their access immediately (run
+`npm run deploy` after changing it). Sign-in is a signed, 30-day, HttpOnly cookie; each account's Twitch tokens
+live in its own Durable Object, named by the Twitch user id.
+
+### Twitch permissions
+
+Three scopes are required; the rest are optional and each only powers its own feature. If you add features
+after signing in, Yappa offers to reconnect so you can grant the new ones.
+
+| Scope | Used for |
+|---|---|
+| `user:read:chat`, `user:write:chat` | Reading and sending chat (required) |
+| `user:manage:chat_color` | Color cycling (required) |
+| `user:read:emotes` | Your Twitch emotes in the picker |
+| `user:read:follows` | Followed channels, the follow heart, go-live alerts |
+| `user:read:subscriptions` | The subscription chip |
+| `user:read:blocked_users`, `user:manage:blocked_users` | Your block list |
+| `user:read:whispers`, `user:manage:whispers` | Whispers |
+| `clips:edit` | Creating clips |
+| `user:read:moderated_channels` | Knowing which channels you moderate |
+| `moderator:manage:chat_messages`, `moderator:manage:banned_users` | Delete, timeout and ban; the moderator log |
+| `moderator:manage:chat_settings` | Chat modes |
+| `moderator:manage:automod` | The AutoMod queue |
+| `moderator:read:followers` | Follow age on user cards |
+| `moderator:manage:announcements`, `moderator:manage:shoutouts`, `moderator:manage:warnings` | Announcements, shoutouts, warnings |
+| `moderator:manage:blocked_terms`, `moderator:manage:shield_mode` | Blocked terms, Shield Mode |
+| `moderator:read:suspicious_users`, `moderator:manage:suspicious_users` | Suspicious-user flags and marking |
+| `moderator:manage:unban_requests`, `moderator:read:chatters` | Unban requests, the chatters list |
+
+## How it works
+
+```
+ Browser (plain JS, no build step)
+   ├─ Twitch EventSub WebSocket   chat events, shared by all tabs
+   ├─ Twitch embeds               player, clips, VODs
+   ├─ 7TV / BTTV / FFZ            emotes
+   ├─ recent-messages.robotty.de  history (only after you opt in)
+   └─ anonymous Twitch IRC        only for first-time-chatter flags
+        │  (same-origin, signed session cookie)
+        ▼
+ Cloudflare Worker ──► app token ──► public Twitch lookups (live status, badges, clips)
+        │
+        ▼
+ Durable Object, one per Twitch account ──► Helix API as that user
+   (holds the tokens, refreshes them, color-cycling state, synced settings)
+```
+
+- **Tokens never reach the browser.** The Worker exchanges the sign-in code itself, checks the allowlist, and
+  hands the tokens to that account's Durable Object. A stranger's grant is revoked and nothing is kept.
+- **The Worker serves the app and answers `/api`.** Anything that needs your identity or permissions goes
+  through your Durable Object; public lookups use a shared app token so polling doesn't wake it.
+- **The browser talks to Twitch directly** for chat events (one EventSub WebSocket for all tabs), embeds and
+  third-party emote services. History comes from a community service and is opt-in.
+- **Client code is plain JS and CSS** in `src/client/`, imported into the Worker as text modules.
+- The page ships a strict Content-Security-Policy: scripts only from the app and Twitch's player.
+
+More detail, including the gotchas learned along the way, is in [CLAUDE.md](CLAUDE.md).
+
+## Development
+
+```sh
+npm install
+npm run types      # after cloning and after changing wrangler.jsonc
+npm run check      # type-check the Worker
+npm test           # unit tests, then the browser tests (about 40 s)
+npm run deploy     # wrangler deploy; there is no staging
+```
+
+- `npm run test:unit` is the fast, browser-free half (request validation, the usher relay, and the Worker's
+  sign-in, sessions, allowlist and sync run directly in Node). `npm run test:e2e` loads the real page in
+  headless Chromium at phone size with every external service faked, so real Twitch is never exercised.
+- Browser setup for the tests (the Chromium path and missing shared libraries) is described in
+  [CLAUDE.md](CLAUDE.md#testing).
+- The app icon and the GitHub social preview are drawn by `scripts/draw-icon.mjs` and
+  `scripts/draw-social.mjs`.
+- Screenshots below are regenerated by the browser tests (see the note at the start of that section).
 
 ## Screenshots
 
 Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-sized window (1280×800, also 2×). They come from the end-to-end test, which fakes every Twitch response, so the names, pictures and thumbnails are placeholders and the video box is a stand-in for Twitch's player. They're rendered in Roboto, Android's system font, so they look like a phone rather than the headless browser's fallback font. Regenerate them with `SHOTS=1 SHOTS_FONTS=<dir with Roboto-Regular.woff2, Roboto-Medium.woff2 and Roboto-Bold.woff2> npm run test:e2e` (the `roboto-fontface` npm package has them under `fonts/roboto/`; they land in `docs/screenshots/`).
 
-### Chat
+<details>
+<summary><b>Chat</b> (11 screens)</summary>
 
 **Chat tabs, history, first-time chatter flag, live status**
 
@@ -176,7 +305,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/history-optin-mobile.png" width="240" alt="Chat history opt-in prompt (phone)"> | <img src="docs/screenshots/history-optin-desktop.png" width="520" alt="Chat history opt-in prompt (desktop)"> |
 
-### Channels and account
+</details>
+
+<details>
+<summary><b>Channels and account</b> (3 screens)</summary>
 
 **Followed channels, live ones first**
 
@@ -196,7 +328,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/account-menu-mobile.png" width="240" alt="Account menu: Settings, Your clips, Log out (phone)"> | <img src="docs/screenshots/account-menu-desktop.png" width="520" alt="Account menu: Settings, Your clips, Log out (desktop)"> |
 
-### Video
+</details>
+
+<details>
+<summary><b>Video</b> (4 screens)</summary>
 
 **Embedded Twitch player**
 
@@ -226,7 +361,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/bits-and-points-mobile.png" width="240" alt="Bits and channel points hand-off button (phone)"> | <img src="docs/screenshots/bits-and-points-desktop.png" width="520" alt="Bits and channel points hand-off button (desktop)"> |
 
-### Clips and VODs
+</details>
+
+<details>
+<summary><b>Clips and VODs</b> (4 screens)</summary>
 
 **Browse a channel's clips and VODs**
 
@@ -252,7 +390,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/your-clips-mobile.png" width="240" alt="Clips you made through Yappa (phone)"> | <img src="docs/screenshots/your-clips-desktop.png" width="520" alt="Clips you made through Yappa (desktop)"> |
 
-### Moderation
+</details>
+
+<details>
+<summary><b>Moderation</b> (8 screens)</summary>
 
 **Moderator tools**
 
@@ -302,7 +443,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/user-card-mobile.png" width="240" alt="User card with follow age and quick timeouts (phone)"> | <img src="docs/screenshots/user-card-desktop.png" width="520" alt="User card with follow age and quick timeouts (desktop)"> |
 
-### Mentions, filters, stats
+</details>
+
+<details>
+<summary><b>Mentions, filters, stats</b> (5 screens)</summary>
 
 **Mentions** and **mute filters**
 
@@ -324,7 +468,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/emote-picker-by-channel-mobile.png" width="240" alt="Emote picker grouped by channel (phone)"> | <img src="docs/screenshots/emote-picker-by-channel-desktop.png" width="520" alt="Emote picker grouped by channel (desktop)"> |
 
-### Personal touches
+</details>
+
+<details>
+<summary><b>Personal touches</b> (8 screens)</summary>
 
 **Per-channel settings** and **notes on people**
 
@@ -349,7 +496,10 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | <img src="docs/screenshots/watch-alongside-mobile.png" width="240" alt="Two streams side by side (phone window)"> | <img src="docs/screenshots/watch-alongside-desktop.png" width="520" alt="Two streams side by side (desktop)"> |
 | <img src="docs/screenshots/chat-layout-mobile.png" width="240" alt="Compact monospace chat (phone)"> | <img src="docs/screenshots/chat-layout-desktop.png" width="520" alt="Compact monospace chat (desktop)"> |
 
-### Settings and color cycling
+</details>
+
+<details>
+<summary><b>Settings and color cycling</b> (3 screens)</summary>
 
 **Settings**
 
@@ -369,3 +519,4 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/color-cycling-mobile.png" width="240" alt="Chat color cycling (phone)"> | <img src="docs/screenshots/color-cycling-desktop.png" width="520" alt="Chat color cycling (desktop)"> |
 
+</details>

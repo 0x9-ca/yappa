@@ -3,7 +3,7 @@
 // Twitch player all faked. Run with `npm run test:e2e` (see CLAUDE.md for browser setup).
 import { chromium } from "playwright-core";
 import { build } from "esbuild";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -89,6 +89,8 @@ const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "6
 let followingMode = "ok";
 let followedExtra = false;
 let toolsScope = true;
+const uwoStartedAt = new Date(Date.now() - 3 * 3600e3).toISOString();
+let syncStore = null, syncMockOff = false;
 const tools = { terms: [{ id: "t1", text: "spoiler", createdAt: "2024-01-01T00:00:00Z" }], shield: false, unbans: [{ id: "r1", userId: "501", login: "oldtimer", name: "OldTimer", text: "sorry about before!", createdAt: new Date(Date.now() - 3600e3).toISOString(), status: "pending" }] };
 let flakyClip = 0;
 let embedScriptFails = false;
@@ -165,6 +167,16 @@ await ctx.route("**/*", async (route) => {
                { id: "999", login: "uwoslab", name: "UwoSlab", title: "Building a chat app", game: "Software and Game Development", viewers: 1234, startedAt: new Date().toISOString() }],
         channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "uwoslab", name: "UwoSlab" }, ...(followedExtra ? [{ id: ids.otherchan, login: "otherchan", name: "OtherChan" }] : [])] });
     }
+    if (u.pathname === "/api/sync") {
+      if (route.request().method() === "POST") {
+        const b = body();
+        log.sync = [...(log.sync || []), b];
+        if (syncStore && syncStore.at > b.at) return j({ ok: true, stored: false, current: syncStore });
+        syncStore = b;
+        return j({ ok: true, stored: true, current: b });
+      }
+      return j({ ok: true, sync: syncMockOff ? null : syncStore });
+    }
     if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
     if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", displayName: "TestUser", avatar: noAvatar ? null : "https://img.test/avatar.png", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
     if (u.pathname === "/auth/logout") { log.logouts = (log.logouts || 0) + 1; return j({ ok: true }); }
@@ -205,7 +217,7 @@ await ctx.route("**/*", async (route) => {
       return j({ ok: true, streams: [{ id: "1", login: "topstreamer", name: "TopStreamer", title: gid ? "Minecraft run" : "Huge stream", game: gid ? "Minecraft" : "Fortnite", viewers: 45000, startedAt: new Date().toISOString(), thumbnail: "https://img.test/thumb-top.jpg", language: "en" }], cursor: null });
     }
     if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan", alphachan: "AlphaChan" }[b.channel] || b.channel }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
-    if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: new Date(Date.now() - 3 * 3600e3).toISOString() }]);
+    if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: uwoStartedAt }]);
     if (u.pathname === "/api/chat/settings") { const b = body(); log.settings.push(b); Object.assign(chatSettings, b); delete chatSettings.broadcaster_id; return j({ ok: true, settings: chatSettings }); }
     if (u.pathname === "/api/chat/user") return j({ ok: true, user: { id: u.searchParams.get("user_id"), login: "spammer", display_name: "Spammer", description: "I sell followers", profile_image_url: "https://img.test/a.png", broadcaster_type: "", created_at: "2020-01-02T00:00:00Z" }, followedAt: "2024-05-06T00:00:00Z" });
     if (u.pathname === "/api/chat/automod") { log.automod.push(body()); return j({ ok: true }); }
@@ -2306,7 +2318,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#profile-btn");
   const menu = await page.evaluate(() => ({ expanded: document.getElementById("profile-btn").getAttribute("aria-expanded"), name: document.querySelector("#account-menu .dn").textContent, login: document.querySelector("#account-menu .ln").textContent, items: [...document.querySelectorAll("#account-menu button")].map((b) => b.textContent), h: Math.round(document.querySelector("#account-menu button").getBoundingClientRect().height), pic: !!document.querySelector("#account-menu .who img") }));
   check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
-    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items) === '["Settings","Your clips","Whispers","Discover streams","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
+    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Whispers","Mentions","All chats in one feed","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
   await page.screenshot({ path: dir + "/t35-account-menu.png" });
   await shot("account-menu");
   await page.keyboard.press("Escape");
@@ -2396,6 +2408,180 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.keyboard.press("Escape");
 }
 
+
+// =============== sync, mute filters, mentions, combined feed, stats, slow mode, export, shortcuts ===============
+{
+  // ---- sync between devices ----
+  await page.evaluate(() => { settings.sync = true; settings.liveAlerts = !settings.liveAlerts; saveSettings(); });
+  await sleep(2600);
+  const pushed = (log.sync || []).at(-1);
+  check("a changed setting is pushed to the account, with the tabs", !!pushed && typeof pushed.at === "number" && Array.isArray(pushed.tabs) && pushed.tabs.length > 0 && "liveAlerts" in pushed.settings, JSON.stringify(pushed).slice(0, 200));
+  check("per-device settings stay out of the sync", !!pushed && ["player", "theme", "fontSize", "history", "notify", "sound", "nativeQuality", "bitsButton", "sync"].every((k) => !(k in pushed.settings)), Object.keys(pushed.settings).join());
+  const before = await page.evaluate(() => ({ fontSize: settings.fontSize, player: settings.player, tabs: localStorage.getItem("tabs") }));
+  syncStore = { at: Date.now() + 5000, settings: { liveAlerts: false, rules: [{ phrase: "fromphone", user: "" }], fontSize: 99, player: "native", mute: { words: ["zzz"], bots: true, commands: false } }, tabs: ["alphachan"], pinned: "alphachan" };
+  await page.evaluate(() => syncPull(false));
+  let got = await page.evaluate(() => ({ rules: settings.rules, fontSize: settings.fontSize, player: settings.player, mute: settings.mute, tabs: localStorage.getItem("tabs"), pinned: localStorage.getItem("pinnedVideo"), syncAt: Number(localStorage.getItem("syncAt")) }));
+  check("a newer copy from another device is adopted", got.rules[0].phrase === "fromphone" && got.mute.words[0] === "zzz" && got.syncAt === syncStore.at, JSON.stringify(got));
+  check("...but not the other device's player, text size...", got.fontSize === before.fontSize && got.player === before.player);
+  check("...and tabs are left alone while the app is running", got.tabs === before.tabs && got.pinned !== "alphachan");
+  syncStore.at += 1000;
+  await page.evaluate(() => syncPull(true));
+  got = await page.evaluate(() => ({ tabs: localStorage.getItem("tabs"), pinned: localStorage.getItem("pinnedVideo") }));
+  check("at startup the other device's tabs and pinned stream are adopted", got.tabs === '["alphachan"]' && got.pinned === "alphachan", JSON.stringify(got));
+  // Put things back the way the rest of the run expects.
+  await page.evaluate(() => { setPinned(null); settings.rules = []; settings.mute = { words: [], bots: false, commands: false }; saveSettings(); saveTabs(); });
+  const pushesBefore = (log.sync || []).length;
+  await page.evaluate(() => { syncedJson = JSON.stringify(syncBlob()); syncChanged(); });
+  await sleep(2400);
+  check("an unchanged copy isn't pushed again", (log.sync || []).length === pushesBefore);
+  await page.evaluate(() => { settings.sync = false; saveSettings(); });
+  const off = (log.sync || []).length;
+  await page.evaluate(() => { settings.liveAlerts = !settings.liveAlerts; saveSettings(); });
+  await sleep(2400);
+  check("with syncing switched off nothing is sent", (log.sync || []).length === off);
+  await page.evaluate(() => { settings.sync = true; saveSettings(); });
+  syncStore = null;
+
+  // ---- emote picker: one section per channel ----
+  await page.evaluate(() => {
+    const te = active.twitchEmotes;
+    te.emotes.push({ id: "o1", name: "zedWave", group: "Other channels", animated: false, owner: "Zed" }, { id: "o2", name: "alphaHi", group: "Other channels", animated: false, owner: "alpha" },
+      { id: "o3", name: "alphaBye", group: "Other channels", animated: false, owner: "alpha" }, { id: "o4", name: "mysteryEmote", group: "Other channels", animated: false, owner: "" });
+  });
+  await page.click("#emote-btn");
+  await page.waitForSelector("#picker-list");
+  const heads = await page.$$eval("#picker-list h3", (n) => n.map((x) => x.textContent.replace(/ \(\d+\)$/, "")));
+  check("emotes from other channels are grouped by channel, A to Z, unnamed last", JSON.stringify(heads.filter((h) => /Twitch · (alpha|Zed|other channels)/.test(h))) === '["Twitch · alpha","Twitch · Zed","Twitch · other channels"]' && !heads.some((h) => /your other subs/.test(h)), JSON.stringify(heads));
+  await shot("emote-picker-by-channel");
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { closePicker(); const te = active.twitchEmotes; te.emotes = te.emotes.filter((e) => e.group !== "Other channels"); });
+
+  // ---- mute filters ----
+  const bid = await page.evaluate(() => active.broadcaster.id);
+  await page.evaluate(() => { settings.mute = { words: ["spoilerword", "/^gg+$/"], bots: true, commands: true }; saveSettings(); });
+  cur().send(chat(bid, "mu1", "Nightbot", "9101", "Follow us on socials"));
+  cur().send(chat(bid, "mu2", "SomeoneElse", "9102", "!so friend"));
+  cur().send(chat(bid, "mu3", "SomeoneElse", "9102", "this has a SpoilerWord inside"));
+  cur().send(chat(bid, "mu4", "SomeoneElse", "9102", "ggggg"));
+  cur().send(chat(bid, "mu5", "SomeoneElse", "9102", "a perfectly fine message"));
+  cur().send(chat(bid, "mu6", "TestUser", "111", "!mine is never hidden"));
+  await sleep(500);
+  await page.waitForSelector('li[data-id="mu6"]', { state: "attached" });
+  const muted = await page.evaluate(() => ["mu1", "mu2", "mu3", "mu4", "mu5", "mu6"].map((id) => document.querySelector('li[data-id="' + id + '"]').classList.contains("ignored")));
+  check("bots, !commands and muted words/patterns are hidden; normal and own messages stay", JSON.stringify(muted) === "[true,true,true,true,false,false]", JSON.stringify(muted));
+  check("an invalid pattern is refused and doesn't hide anything", await page.evaluate(() => muteMatcher("/(/") === null && !isMuted({ chatter_user_id: "1", chatter_user_login: "x", message: { text: "(" } })));
+  await page.evaluate(() => toolsReloadBlocks());
+  await sleep(300);
+  check("reloading the block list doesn't bring muted messages back", await page.$eval('li[data-id="mu3"]', (l) => l.classList.contains("ignored")));
+  await openSettingsUI();
+  await page.waitForSelector("#sheet");
+  check("Settings has the mute filters", /Mute filters/.test(await page.textContent("#sheet")) && /Hide known bots/.test(await page.textContent("#sheet")));
+  await page.fill('#sheet input[placeholder="Word, phrase or /pattern/"]', "/(/");
+  await page.click('#sheet button:has-text("Mute")');
+  check("a bad pattern shows an error in Settings", /isn't a valid pattern/.test(await page.textContent("#sheet")));
+  await page.fill('#sheet input[placeholder="Word, phrase or /pattern/"]', "newword");
+  await page.click('#sheet button:has-text("Mute")');
+  check("a word is added from Settings", await page.evaluate(() => settings.mute.words.includes("newword")));
+  await shot("mute-filters");
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { settings.mute = { words: [], bots: false, commands: false }; saveSettings(); });
+
+  // ---- mentions across channels ----
+  cur().send(chat(bid, "men1", "Talker", "9201", "hey @testuser look", { fragments: [{ type: "text", text: "hey " }, { type: "mention", text: "@testuser", mention: { user_id: "111" } }, { type: "text", text: " look" }] }));
+  await page.waitForSelector('li[data-id="men1"]', { state: "attached" });
+  await page.click("#profile-btn");
+  check("the account menu shows how many mentions are unread", /Mentions \(\d+\)/.test(await page.textContent("#account-menu")));
+  await page.click('#account-menu button:has-text("Mentions")');
+  await page.waitForSelector("#sheet [data-mentions]");
+  const rows = await page.$$eval("#sheet .mention-row", (r) => r.map((x) => x.textContent));
+  check("the Mentions sheet lists mentions from the open channels", rows.length >= 2 && rows.some((r) => r.includes("Talker") && r.includes("hey @testuser look")), JSON.stringify(rows));
+  await shot("mentions");
+  await page.click("#sheet .mention-row >> nth=0");
+  check("tapping a mention closes the sheet and goes to that channel", await page.$eval("#sheet", (s) => s.hidden));
+  await page.click("#profile-btn");
+  check("the unread count resets after opening it", !/Mentions \(\d+\)/.test(await page.textContent("#account-menu")));
+  await page.keyboard.press("Escape");
+
+  // ---- all chats in one feed ----
+  const tabCount = await page.evaluate(() => tabs.size);
+  if (tabCount < 2) { await page.evaluate(() => openTab("alphachan", false)); await page.waitForFunction(() => tabs.get("alphachan") && tabs.get("alphachan").joined); }
+  const names = await page.evaluate(() => [...tabs.keys()]);
+  const other = names.find((n) => n !== "uwoslab") || names[0];
+  const otherId = await page.evaluate((n) => tabs.get(n).broadcaster.id, other);
+  cur().send(chat(otherId, "cmb0", "Early", "9301", "before opening the feed"));
+  await page.waitForFunction(() => document.querySelector('li[data-id="cmb0"]'));
+  await page.keyboard.press("Alt+a");
+  await page.waitForSelector("#sheet [data-combined]");
+  check("Alt+A opens all chats with earlier lines and channel tags", await page.evaluate(() => { const l = document.querySelector("#sheet .combined"); return !!l.querySelector(".shared-pill") && l.textContent.includes("before opening the feed"); }));
+  cur().send(chat(otherId, "cmb1", "Livetalk", "9302", "arrives while it is open"));
+  await page.waitForFunction(() => document.querySelector("#sheet .combined").textContent.includes("arrives while it is open"));
+  const bidNow = await page.evaluate(() => active.broadcaster.id);
+  cur().send(chat(bidNow, "cmb2", "Livetalk", "9302", "and in the other channel"));
+  await page.waitForFunction(() => document.querySelector("#sheet .combined").textContent.includes("and in the other channel"));
+  check("new messages from every channel arrive live, without action buttons", await page.evaluate(() => !document.querySelector("#sheet .combined .actions")));
+  await shot("combined-feed");
+  await page.evaluate((n) => { [...document.querySelectorAll("#sheet .combined li")].find((li) => li.dataset.channel === n).click(); }, other);
+  check("tapping a line opens that channel", (await page.evaluate(() => active.login)) === other && await page.$eval("#sheet", (s) => s.hidden));
+
+  // ---- stream stats ----
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => refreshStreams());
+  await sleep(150);
+  await page.evaluate(() => refreshStreams());
+  await sleep(150);
+  check("the info bar shows how long the stream has been live", /^3h\d\d$/.test(await page.textContent("#live .uptime")), await page.textContent("#live"));
+  await page.click("#live");
+  await page.waitForSelector("#sheet [data-stats]");
+  const stats = await page.textContent("#sheet");
+  check("tapping the live chip opens stream stats with a viewer graph", /Live for\s*3h/.test(stats) && /1,234/.test(stats) && !!(await page.$("#sheet svg.sparkline polyline")), stats.slice(0, 160));
+  await shot("stream-stats");
+  await page.keyboard.press("Escape");
+
+  // ---- slow mode countdown ----
+  await page.evaluate((n) => activate(tabs.get(n)), other);
+  await page.evaluate(() => { active.settings = { ...(active.settings || {}), slow_mode: true, slow_mode_wait_time: 10 }; active.isMod = false; });
+  await page.evaluate(() => { composer.setText("hello there"); });
+  await page.click("#send");
+  await page.waitForFunction(() => !document.getElementById("slow-note").hidden);
+  check("after sending in a slow-mode channel a countdown shows", /Slow mode: you can chat again in (9|10)s/.test(await page.textContent("#slow-note")), await page.textContent("#slow-note"));
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  check("the countdown belongs to its channel", await page.$eval("#slow-note", (n) => n.hidden));
+  await page.evaluate((n) => { tabs.get(n).slowUntil = Date.now() + 1200; activate(tabs.get(n)); }, other);
+  await page.waitForFunction(() => document.getElementById("slow-note").hidden, null, { timeout: 4000 });
+  check("and it clears itself when the time is up", true);
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+
+  // ---- export ----
+  await page.click("#profile-btn");
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.click('#account-menu button:has-text("Save this chat (text)")')]);
+  const dlText = readFileSync(await dl.path(), "utf8");
+  check("Save this chat (text) downloads the visible messages", /^uwoslab-chat-.*\.txt$/i.test(dl.suggestedFilename()) && /SomeoneElse: a perfectly fine message/.test(dlText) && !/Nightbot/.test(dlText), dl.suggestedFilename() + " " + dlText.slice(0, 120));
+  await page.click("#profile-btn");
+  const [dl2] = await Promise.all([page.waitForEvent("download"), page.click('#account-menu button:has-text("Save this chat (JSON)")')]);
+  const parsed = JSON.parse(readFileSync(await dl2.path(), "utf8"));
+  check("...and as JSON with times", parsed.channel && parsed.messages.length > 3 && !!parsed.messages[0].time && /^\d{4}-/.test(parsed.messages[0].time));
+
+  // ---- keyboard shortcuts ----
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.keyboard.press("?");
+  await page.waitForSelector("#sheet [data-shortcuts]");
+  check("? lists the keyboard shortcuts", /Alt \+ M/.test(await page.textContent("#sheet")));
+  await page.keyboard.press("Escape");
+  const a0 = await page.evaluate(() => active.login);
+  await page.keyboard.press("Alt+ArrowRight");
+  const a1 = await page.evaluate(() => active.login);
+  await page.keyboard.press("Alt+ArrowLeft");
+  check("Alt+arrows move between tabs", a1 !== a0 && (await page.evaluate(() => active.login)) === a0, a0 + " " + a1);
+  const vid = await page.evaluate(() => settings.video);
+  await page.keyboard.press("Alt+v");
+  check("Alt+V toggles the video", (await page.evaluate(() => settings.video)) === !vid);
+  await page.keyboard.press("Alt+v");
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.keyboard.press("/");
+  check("/ jumps to the message box", await page.evaluate(() => document.activeElement === document.getElementById("message")));
+  syncMockOff = true;
+}
+
 // =============== moving to a new address ===============
 {
   const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });
@@ -2431,6 +2617,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
 
 // =============== sign-in and the allowlist (the Worker, run directly) ===============
 {
+  let syncSaved = null;
   const calls = { stored: [], disconnected: [], revoked: 0, names: [] };
   let twitchLogin = { user_id: "4242", login: "AllowedUser" };
   const env = {
@@ -2439,6 +2626,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
     COLOR_LOOP: { getByName: (name) => { calls.names.push(name); return {
       syncVersion: async () => {}, storeTokens: async (tok, info) => { calls.stored.push([name, info.login, tok.access_token]); }, disconnectTwitch: async () => { calls.disconnected.push(name); },
       status: async () => ({ ok: true, twitch: null }),
+      getSync: async () => syncSaved, putSync: async (b) => { syncSaved = b; return { ok: true, stored: true, current: b }; },
     }; } },
   };
   const realFetch = globalThis.fetch;
@@ -2536,6 +2724,24 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("a callback without the state cookie is refused", r.headers.get("Location") === "/?error=state");
   r = await cb("error=access_denied&error_description=" + encodeURIComponent("<b>hi</b>"));
   check("cancelling at Twitch comes back with a fixed code, not Twitch's text", r.headers.get("Location") === "/?error=cancelled");
+
+  // Syncing settings between devices.
+  const syncReq = (method, bodyObj, cookie = sess) => worker.default.fetch(req("/api/sync", { method, headers: { Cookie: cookie, Origin: "https://app.test", "Content-Type": "application/json" }, ...(bodyObj !== undefined ? { body: JSON.stringify(bodyObj) } : {}) }), env);
+  r = await get("/api/sync");
+  check("sync needs a session", r.status === 401);
+  r = await syncReq("GET");
+  check("sync: nothing saved yet", (await r.json()).sync === null);
+  const good = { at: 1700000000000, settings: { rules: [] }, tabs: ["uwoslab"], pinned: null };
+  r = await syncReq("POST", good);
+  check("sync: a valid copy is saved", r.status === 200 && syncSaved && syncSaved.tabs[0] === "uwoslab");
+  r = await syncReq("GET");
+  check("sync: ...and read back", (await r.json()).sync.at === good.at);
+  for (const [label, bad] of [["a bad time", { ...good, at: "now" }], ["settings that aren't an object", { ...good, settings: [] }], ["tabs that aren't channel names", { ...good, tabs: ["<script>"] }], ["too many tabs", { ...good, tabs: Array(101).fill("a") }], ["a bad pinned name", { ...good, pinned: "x y" }], ["oversized settings", { ...good, settings: { big: "x".repeat(70000) } }]]) {
+    r = await syncReq("POST", bad);
+    check("sync refuses " + label, r.status === 400);
+  }
+  r = await worker.default.fetch(req("/api/sync", { method: "POST", headers: { Cookie: sess, Origin: "https://evil.test", "Content-Type": "application/json" }, body: JSON.stringify(good) }), env);
+  check("sync from another origin is refused", r.status === 403);
 
   // Logging out.
   r = await post("/auth/logout", sess);

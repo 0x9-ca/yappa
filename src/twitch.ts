@@ -348,6 +348,18 @@ export async function getUserById(env: Env, accessToken: string, id: string): Pr
   return ((await res.json()) as { data: TwitchUserProfile[] }).data[0] ?? null;
 }
 
+/** Display names for up to 100 user ids per request (Get Users), as id -> name. */
+export async function getDisplayNames(env: Env, accessToken: string, ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const url = new URL(`${API_BASE}/users`);
+    for (const id of ids.slice(i, i + 100)) url.searchParams.append("id", id);
+    const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Users");
+    for (const u of ((await res.json()) as { data: { id: string; display_name: string }[] }).data) out.set(u.id, u.display_name);
+  }
+  return out;
+}
+
 /** When userId followed the channel (null if not following). Needs moderator:read:followers + mod. */
 export async function getFollowedAt(
   env: Env,

@@ -4,6 +4,7 @@ import { PAGE_HEADERS, renderLogin, renderPage } from "./page";
 import { clearSessionCookie, isAllowed, readSession, sessionCookie, signSession } from "./session";
 import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
+import { parseSync } from "./sync";
 import { parseAnnounce, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
 import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
 import { authorizeUrl, exchangeCode, revokeToken, validateToken } from "./twitch";
@@ -167,6 +168,15 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
     case "GET /api/following":
       return json(await stub.followed(url.searchParams.has("fresh")));
+
+    case "GET /api/sync":
+      return json({ ok: true, sync: await stub.getSync() });
+
+    case "POST /api/sync": {
+      const blob = parseSync(await request.json().catch(() => null));
+      if (typeof blob === "string") return json({ ok: false, error: blob }, 400);
+      return json(await stub.putSync(blob));
+    }
 
     case "GET /api/status":
       return json(await stub.status());

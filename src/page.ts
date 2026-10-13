@@ -165,6 +165,7 @@ export function renderPage(): string {
         data-placeholder="Open a channel to chat" autocapitalize="off" autocorrect="off" spellcheck="true" enterkeyhint="send"></div>
       <button type="submit" id="send" disabled>Chat</button>
     </form>
+    <div id="slow-note" hidden></div>
     <div id="send-error" hidden></div>
   </footer>
 </div>

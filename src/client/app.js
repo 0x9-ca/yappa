@@ -49,7 +49,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true, mute: { words: [], bots: false, commands: false } };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -62,11 +62,79 @@ function loadSettings() {
   }
   return s;
 }
-function saveSettings() { safeSet("settings", JSON.stringify(settings)); applySettings(); }
+function saveSettings() { safeSet("settings", JSON.stringify(settings)); applySettings(); syncChanged(); }
 function applySettings() {
   document.querySelector(".app").style.setProperty("--chat-font", settings.fontSize + "px");
   applyTheme();
 }
+
+// ---------- sync between devices ----------
+
+// Settings, open tabs and the pinned stream follow the account (the Durable Object keeps one copy;
+// the newest change wins). What belongs to the device stays here: how video plays, the theme,
+// text size, notification permission, and whether the history service was agreed to.
+const DEVICE_SETTINGS = ["notify", "sound", "fontSize", "theme", "player", "nativeQuality", "bitsButton", "history", "sync"];
+let syncTimer = null, syncedJson = "", lastPullAt = 0;
+const syncTime = () => Number(safeGet("syncAt")) || 0;
+
+function syncBlob() {
+  const shared = {};
+  for (const [k, v] of Object.entries(settings)) if (!DEVICE_SETTINGS.includes(k)) shared[k] = v;
+  let list = [];
+  try { list = JSON.parse(safeGet("tabs") || "[]"); } catch {}
+  return { settings: shared, tabs: Array.isArray(list) ? list.filter((t) => typeof t === "string").slice(0, 100) : [], pinned: safeGet("pinnedVideo") || null };
+}
+
+/** Something syncable may have changed: send it shortly, if it really differs from what was last synced. */
+function syncChanged() {
+  if (settings.sync === false || !me) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncPush, 2000);
+}
+
+async function syncPush() {
+  if (settings.sync === false || !me) return;
+  const blob = syncBlob();
+  const json = JSON.stringify(blob);
+  if (json === syncedJson) return;
+  const at = Date.now();
+  const r = await api("/api/sync", { ...blob, at });
+  if (!r || !r.ok) return; // offline or mid-deploy: the next change tries again
+  if (r.stored) { safeSet("syncAt", String(at)); syncedJson = json; } else applySync(r.current, false);
+}
+
+function applySync(remote, initial) {
+  const keep = {};
+  for (const k of DEVICE_SETTINGS) if (k in settings) keep[k] = settings[k];
+  const shared = {};
+  for (const [k, v] of Object.entries(remote.settings || {})) if (!DEVICE_SETTINGS.includes(k)) shared[k] = v;
+  settings = { ...structuredClone(DEFAULT_SETTINGS), ...shared, ...keep };
+  safeSet("settings", JSON.stringify(settings));
+  applySettings();
+  // Tabs and the pinned stream are only adopted at startup; reshuffling tabs under you mid-chat would be worse.
+  if (initial) {
+    safeSet("tabs", JSON.stringify(remote.tabs || []));
+    if (remote.pinned) { safeSet("pinnedVideo", remote.pinned); pinnedLogin = remote.pinned; }
+    else { try { localStorage.removeItem("pinnedVideo"); } catch {} pinnedLogin = null; }
+  }
+  safeSet("syncAt", String(remote.at));
+  syncedJson = initial ? JSON.stringify(syncBlob()) : "";
+}
+
+async function syncPull(initial) {
+  if (settings.sync === false || !me) return;
+  lastPullAt = Date.now();
+  const r = await api("/api/sync");
+  if (!r || !r.ok) return;
+  if (!r.sync) { syncChanged(); return; } // the first device to sync seeds the account's copy
+  if (r.sync.at > syncTime()) applySync(r.sync, initial);
+  else if (r.sync.at === syncTime()) syncedJson = JSON.stringify(syncBlob());
+  else syncChanged(); // this device has changes that never got sent
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && Date.now() - lastPullAt > 30000) syncPull(false);
+});
 
 // ---------- theme ----------
 
@@ -158,7 +226,11 @@ async function refreshStatus() {
   renderAccount();
 
   renderCycle(s.cycle);
-  if (first && tw && tw.missingScopes.length === 0) restoreTabs();
+  if (first && tw && tw.missingScopes.length === 0) {
+    // Adopt another device's tabs before opening any, but never wait long for it.
+    await Promise.race([syncPull(true), new Promise((r) => setTimeout(r, 3000))]);
+    restoreTabs();
+  }
 }
 
 function renderCycle(cycle) {
@@ -200,6 +272,7 @@ async function logout() {
 function saveTabs() {
   safeSet("tabs", JSON.stringify([...tabs.keys()]));
   if (active) safeSet("lastChannel", active.login);
+  syncChanged();
 }
 
 function restoreTabs() {
@@ -320,6 +393,7 @@ function activate(tab) {
   history.replaceState(null, "", "#" + tab.login);
   saveTabs();
   updateComposer();
+  window.toolsActivated?.(tab);
   composer.refresh(); // the draft carries over, but only this channel's emotes may show as emotes
   renderInfo();
   renderVideo();
@@ -1221,8 +1295,9 @@ function twitchEmoteDetail(tab, f) {
   const owner = f.emote && f.emote.owner_id;
   if (owner && tab.broadcaster && owner === tab.broadcaster.id) return "this channel's emote";
   if (owner === "0") return "Twitch global emote";
-  if (owner) return "another channel's emote";
   const te = tab.twitchEmotes && tab.twitchEmotes.ok ? tab.twitchEmotes.emotes.find((x) => x.name === f.text) : null;
+  if (owner) return te && te.owner ? te.owner + "'s emote" : "another channel's emote";
+  if (te && te.owner) return te.owner + "'s emote";
   if (te && te.group) return /global/i.test(te.group) ? "Twitch global emote" : /this channel/i.test(te.group) ? "this channel's emote" : te.group;
   return "";
 }
@@ -1519,6 +1594,7 @@ function renderMessage(tab, ev, opts = {}) {
   li.dataset.user = ev.chatter_user_id;
   li.dataset.login = ev.chatter_user_login || "";
   if (isHidden(ev.chatter_user_id)) li.classList.add("ignored");
+  else if (isMuted(ev)) { li.classList.add("ignored"); li.dataset.muted = "1"; }
   if (ev.chatter_user_login) tab.chatters.set(ev.chatter_user_login, ev.chatter_user_name);
   if (tab.chatters.size > 1000) tab.chatters.delete(tab.chatters.keys().next().value);
 
@@ -1556,7 +1632,10 @@ function renderMessage(tab, ev, opts = {}) {
   if (mentioned) li.classList.add("mentioned");
   const highlighted = !mentioned && !mine && matchesHighlight(ev);
   if (highlighted) li.classList.add("highlighted");
-  if ((mentioned || highlighted) && !mine && !opts.historical && !opts.merge && !li.classList.contains("ignored")) alertFor(tab, ev);
+  if ((mentioned || highlighted) && !mine && !opts.historical && !opts.merge && !li.classList.contains("ignored")) {
+    alertFor(tab, ev);
+    window.toolsMention?.(tab, ev, mentioned ? "mention" : "highlight");
+  }
   if (mine && !opts.historical && !opts.merge) maybeBumpColor(ev.message_id);
 
   const actions = el("div", "actions");
@@ -1587,6 +1666,7 @@ function renderMessage(tab, ev, opts = {}) {
     append(tab, li, !li.classList.contains("ignored") && !mine);
   }
   if (mentioned && tab !== active && !opts.historical && !li.classList.contains("ignored")) { tab.mentioned = true; updateTabEl(tab); }
+  if (!opts.historical && !opts.merge && !li.classList.contains("ignored")) window.toolsMirror?.(tab, li);
   return li;
 }
 
@@ -1911,7 +1991,17 @@ function renderPicker() {
   if (!q) add("Recent", recentHere(tab));
   add("Twitch · this channel", tw("This channel"));
   if (tab) for (const src of EXT_SOURCES) add(src + " · this channel", ext(tab.ext, src));
-  add("Twitch · your other subs", tw("Other channels"));
+  // One section per channel the emotes come from (alphabetical); any whose owner couldn't be named share one.
+  const others = tab && tab.twitchEmotes && tab.twitchEmotes.ok ? tab.twitchEmotes.emotes.filter((e) => e.group === "Other channels") : [];
+  const byOwner = new Map();
+  for (const e of others) {
+    const k = e.owner || "";
+    if (!byOwner.has(k)) byOwner.set(k, []);
+    byOwner.get(k).push({ name: e.name, url: twitchEmoteUrl(e) });
+  }
+  for (const k of [...byOwner.keys()].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b, undefined, { sensitivity: "base" })))) {
+    add(k ? "Twitch · " + k : "Twitch · other channels", byOwner.get(k));
+  }
   add("Twitch · global", tw("Twitch global"));
   for (const src of EXT_SOURCES) add(src + " · global", ext(extGlobal, src));
   add("Twitch · other", tw("Other"));
@@ -2491,6 +2581,7 @@ $("send-form").addEventListener("submit", async (e) => {
   updateComposer();
   if (r.ok) {
     lastSent = text;
+    window.toolsSent?.(tab);
     if (composer.getText().trim() === text) composer.setText(""); // keep anything typed meanwhile
     setReply(null);
     closePicker();
@@ -2535,6 +2626,11 @@ async function refreshStreams() {
     if (!t.broadcaster) continue;
     const before = t.stream;
     t.stream = byId.get(t.broadcaster.id) || null;
+    if (t.stream) { // a point per poll, for the viewer graph
+      const samples = t.viewerSamples = t.viewerSamples && t.viewerSamples.startedAt === t.stream.started_at ? t.viewerSamples : Object.assign([], { startedAt: t.stream.started_at });
+      samples.push([Date.now(), t.stream.viewer_count]);
+      if (samples.length > 240) samples.shift();
+    } else t.viewerSamples = null;
     if (settings.streamChanges !== false && before && t.stream) {
       if (before.title !== t.stream.title) sysLine(t, "Stream title changed: " + t.stream.title);
       if ((before.game_name || "") !== (t.stream.game_name || "")) sysLine(t, "Category changed: " + (before.game_name || "none") + " → " + (t.stream.game_name || "none"));
@@ -2597,6 +2693,7 @@ function setPinned(login) {
   if (login) safeSet("pinnedVideo", login); else { try { localStorage.removeItem("pinnedVideo"); } catch {} }
   for (const t of tabs.values()) updateTabEl(t);
   renderVideo();
+  syncChanged();
 }
 
 function renderPinBtn() {
@@ -3211,6 +3308,12 @@ function fitTitle() {
 }
 new ResizeObserver(() => fitTitle()).observe($("live"));
 
+/** "2h14" / "37m": how long the stream has been live, for the info bar. */
+function uptimeLabel(iso) {
+  const mins = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60000));
+  return mins >= 60 ? Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") : mins + "m";
+}
+
 function renderInfo() {
   const tab = active;
   if (!tab || !tab.broadcaster) { show("infobar", false); return; }
@@ -3222,7 +3325,7 @@ function renderInfo() {
     live.className = "live on";
     const title = el("span", "title");
     title.appendChild(el("span", "title-text", (st.game_name ? st.game_name + " · " : "") + st.title));
-    live.append(el("span", "dot"), el("b", null, compactCount(st.viewer_count)), title);
+    live.append(el("span", "dot"), el("b", null, compactCount(st.viewer_count)), el("span", "uptime", uptimeLabel(st.started_at)), title);
     live.title = st.title + "\n" + (st.game_name || "No category") + " · " + st.viewer_count.toLocaleString() + " viewers · live for " + since(st.started_at);
   } else {
     live.className = "live";
@@ -3874,6 +3977,34 @@ function mentionName(login, name) {
 function normLogin(u) { return String(u || "").trim().replace(/^@/, "").toLowerCase(); }
 
 /** Highlight rules: a phrase, a user, or a phrase only when that user says it. */
+/** Well-known chat bots, hidden by "Hide bots". Names you want gone beyond these go on the ignore list. */
+const KNOWN_BOTS = new Set(["nightbot", "streamelements", "streamlabs", "moobot", "fossabot", "wizebot", "soundalerts", "sery_bot", "pokemoncommunitygame"]);
+const muteRegexes = new Map();
+
+/** A mute entry is a plain word or phrase (whole words, any case) or /pattern/flags. Null if it isn't valid. */
+function muteMatcher(entry) {
+  if (muteRegexes.has(entry)) return muteRegexes.get(entry);
+  let re = null;
+  const m = /^\/(.+)\/([a-z]*)$/.exec(entry);
+  try {
+    if (m) re = new RegExp(m[1], m[2].replace(/[^imsu]/g, "") || "i");
+    else if (entry.trim()) re = new RegExp("(^|[^\\p{L}\\p{N}_])" + entry.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+") + "($|[^\\p{L}\\p{N}_])", "iu");
+  } catch { re = null; }
+  if (muteRegexes.size > 200) muteRegexes.clear();
+  muteRegexes.set(entry, re);
+  return re;
+}
+
+/** Messages the mute filters hide (never your own). */
+function isMuted(ev) {
+  const mute = settings.mute;
+  if (!mute || (me && ev.chatter_user_id === me.userId)) return false;
+  const text = (ev.message && ev.message.text) || "";
+  if (mute.bots && KNOWN_BOTS.has(normLogin(ev.chatter_user_login))) return true;
+  if (mute.commands && /^\s*!\w/.test(text)) return true;
+  return (mute.words || []).some((w) => { const re = muteMatcher(w); return re && re.test(text); });
+}
+
 function matchesHighlight(ev) {
   const login = normLogin(ev.chatter_user_login || ev.chatter_user_name);
   return settings.rules.some((r) =>
@@ -4073,6 +4204,40 @@ function openSettings() {
   }, "small");
   addRule.append(phraseIn, userIn, addBtn);
 
+  // Mute filters
+  const muteList = el("div", "rules");
+  const renderMute = () => {
+    muteList.replaceChildren();
+    const words = settings.mute.words;
+    if (!words.length) { muteList.appendChild(el("div", "hint", "No muted words yet.")); return; }
+    words.forEach((w, i) => {
+      const line = el("div", "row");
+      const desc = el("label");
+      desc.appendChild(el("div", null, w));
+      line.append(desc, btn("Remove", () => { settings.mute.words.splice(i, 1); saveSettings(); renderMute(); }, "ghost small"));
+      muteList.appendChild(line);
+    });
+  };
+  renderMute();
+  const muteIn = document.createElement("input");
+  muteIn.type = "text";
+  muteIn.placeholder = "Word, phrase or /pattern/";
+  muteIn.autocapitalize = "off";
+  const muteErr = el("div", "hint");
+  const addMute = el("div", "rule-form");
+  const addMuteBtn = btn("Mute", () => {
+    const w = muteIn.value.trim();
+    if (!w) { muteIn.focus(); return; }
+    if (!muteMatcher(w)) { muteErr.textContent = "That isn't a valid pattern."; return; }
+    muteErr.textContent = "";
+    if (!settings.mute.words.includes(w)) settings.mute.words.push(w);
+    saveSettings();
+    muteIn.value = "";
+    renderMute();
+  }, "small");
+  muteIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addMuteBtn.click(); } });
+  addMute.append(muteIn, addMuteBtn);
+
   const seg = el("div", "seg");
   for (const [label, px] of [["S", 13], ["M", 14], ["L", 16], ["XL", 18]]) {
     const b = btn(label, () => { settings.fontSize = px; saveSettings(); seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
@@ -4151,6 +4316,16 @@ function openSettings() {
     el("div", "hint", "Matching messages are highlighted in orange (and alert you, if on). Phrases match whole words, ignoring case."),
     rulesList,
     addRule,
+    el("h3", null, "Mute filters"),
+    el("div", "hint", "Hide messages instead of highlighting them. Your own are never hidden, and changes apply to new messages."),
+    row("Hide known bots", checkbox(!!settings.mute.bots, (c) => { settings.mute.bots = c.checked; saveSettings(); }),
+      "Nightbot, StreamElements, Streamlabs, Moobot, Fossabot, WizeBot, SoundAlerts, Sery_Bot and the Pokémon community game bot."),
+    row("Hide !commands", checkbox(!!settings.mute.commands, (c) => { settings.mute.commands = c.checked; saveSettings(); }),
+      "Messages that start with ! (people triggering bot commands)."),
+    el("div", "hint", "Muted words and phrases match whole words, ignoring case. Wrap a regular expression in slashes, like /^gg+$/, to match a pattern."),
+    muteList,
+    addMute,
+    muteErr,
     el("h3", null, "Video player"),
     playerSeg,
     el("div", "hint", "Native plays the stream directly in a plain video player, which can autoplay (muted) on phones. " +
@@ -4179,6 +4354,12 @@ function openSettings() {
       "Add a line to a channel's chat when its title or category changes."),
     row("Use my Twitch block list", checkbox(settings.syncBlocks !== false, (c) => { settings.syncBlocks = c.checked; saveSettings(); window.toolsReloadBlocks?.(); }),
       "Hide messages from people you've blocked on Twitch, as Twitch's own chat does."),
+    el("h3", null, "Devices"),
+    row("Sync across my devices", checkbox(settings.sync !== false, (c) => {
+      settings.sync = c.checked;
+      saveSettings();
+      if (c.checked) syncPull(false);
+    }), "Keep settings, open tabs and the pinned stream the same on every device you sign in on (the newest change wins). Video player, theme, text size and notifications stay per device."),
     el("h3", null, "Ignored users"),
     hiddenList,
   );

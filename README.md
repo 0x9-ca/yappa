@@ -73,6 +73,11 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Whispers (account menu), your Twitch block list (hides blocked users' messages; Block/Unblock on the user card), a chip showing your subscription to the open channel, and labels on messages that come from another channel in a shared chat.
 - Alerts: optional notifications when followed channels go live (only while Yappa is open), and a line in chat when a channel changes its title or category.
 - Discover streams (account menu): top live streams, category browsing and channel search; typing in the channel box also searches all of Twitch. The Clips & VODs window has a Schedule tab.
+- Sync: settings, open tabs and the pinned stream follow your account across devices (newest change wins). Video player, theme, text size and notification choices stay per device. Settings → Sync across my devices turns it off.
+- Mute filters (Settings): hide known bots, `!commands`, and words, phrases or `/patterns/`. Mentions (account menu, or Alt+M) collects @mentions and highlights from every open channel; All chats (Alt+A) shows every open channel in one read-only feed.
+- Tap the live chip in the info bar for the stream's uptime and a graph of viewers since you opened it. After you send a message in a slow-mode channel, a countdown shows when you can chat again.
+- Save a chat as text or JSON from the account menu. Desktop shortcuts: Alt+1…9 / Alt+←→ switch tabs, Alt+V video, `/` message box, `?` lists them all.
+- The emote picker groups the emotes of channels you're subscribed to by channel.
 - Account menu: your Twitch picture in the corner opens a menu with your name, Settings, "Your clips" (the
   clips you made through Yappa) and Log out.
 - Clips & VODs: browse a channel's clips (most viewed by period), past broadcasts, highlights and uploads,
@@ -288,6 +293,28 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | Phone | Desktop |
 |---|---|
 | <img src="docs/screenshots/user-card-mobile.png" width="240" alt="User card with follow age and quick timeouts (phone)"> | <img src="docs/screenshots/user-card-desktop.png" width="520" alt="User card with follow age and quick timeouts (desktop)"> |
+
+### Mentions, filters, stats
+
+**Mentions** and **mute filters**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/mentions-mobile.png" width="240" alt="Mentions (phone)"> | <img src="docs/screenshots/mentions-desktop.png" width="520" alt="Mentions (desktop)"> |
+| <img src="docs/screenshots/mute-filters-mobile.png" width="240" alt="Mute filters (phone)"> | <img src="docs/screenshots/mute-filters-desktop.png" width="520" alt="Mute filters (desktop)"> |
+
+**All chats in one feed** and **stream stats**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/combined-feed-mobile.png" width="240" alt="All chats in one feed (phone)"> | <img src="docs/screenshots/combined-feed-desktop.png" width="520" alt="All chats in one feed (desktop)"> |
+| <img src="docs/screenshots/stream-stats-mobile.png" width="240" alt="Stream stats (phone)"> | <img src="docs/screenshots/stream-stats-desktop.png" width="520" alt="Stream stats (desktop)"> |
+
+**Emote picker by channel**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/emote-picker-by-channel-mobile.png" width="240" alt="Emote picker grouped by channel (phone)"> | <img src="docs/screenshots/emote-picker-by-channel-desktop.png" width="520" alt="Emote picker grouped by channel (desktop)"> |
 
 ### Settings and color cycling
 

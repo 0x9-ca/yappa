@@ -27,6 +27,7 @@ import {
   getChatSettings,
   getFollowedAt,
   getUserById,
+  getDisplayNames,
   manageHeldMessage,
   updateChatSettings,
   getUser,
@@ -44,6 +45,7 @@ import {
 import { clipFailure } from "./browse";
 import { slimTerm, slimUnban, toolFailure } from "./tools";
 import type { SubStatus, Term, UnbanRequest } from "./tools";
+import type { SyncBlob } from "./sync";
 
 // Twitch requires apps to re-validate held tokens at least hourly.
 const VALIDATE_EVERY_MS = 55 * 60_000;
@@ -111,6 +113,8 @@ function randomHexColor(): string {
 
 /** One instance per Access user. Holds Twitch tokens and the color-cycling setting. */
 export class ColorLoop extends DurableObject<Env> {
+  /** Channel owners' display names, for grouping emotes. */
+  private ownerNames = new Map<string, string>();
   private moderated: { at: number; ids: Set<string> } | undefined;
   /** The refresh in progress, shared so concurrent requests don't spend the refresh token twice. */
   private refreshing: Promise<Tokens> | undefined;
@@ -370,7 +374,7 @@ export class ColorLoop extends DurableObject<Env> {
   /** Twitch emotes the user can use in this channel, slimmed down for the picker. */
   async chatEmotes(
     broadcasterId: string,
-  ): Promise<{ ok: true; emotes: { id: string; name: string; group: string; animated: boolean }[] } | { ok: false; error: string; needsScope?: boolean }> {
+  ): Promise<{ ok: true; emotes: { id: string; name: string; group: string; animated: boolean; owner?: string }[] } | { ok: false; error: string; needsScope?: boolean }> {
     const tokens = await this.getTokens();
     if (!tokens?.scopes?.includes("user:read:emotes")) return { ok: false, error: "Missing user:read:emotes", needsScope: true };
     try {
@@ -388,9 +392,15 @@ export class ColorLoop extends DurableObject<Env> {
               : e.emote_type === "subscriptions" || e.emote_type === "follower"
                 ? "Other channels"
                 : "Other";
-        emotes.push({ id: e.id, name: e.name, group, animated: e.format.includes("animated") });
+        emotes.push({ id: e.id, name: e.name, group, animated: e.format.includes("animated"), owner: group === "Other channels" ? e.owner_id : undefined });
       }
-      return { ok: true, emotes };
+      // Other channels' emotes are listed per channel, so look up whose they are (names rarely change: remembered).
+      const unknown = [...new Set(emotes.map((e) => e.owner).filter((o): o is string => !!o && !this.ownerNames.has(o)))];
+      if (unknown.length) {
+        const names = await this.withToken((t) => getDisplayNames(this.env, t.accessToken, unknown)).catch(() => new Map<string, string>());
+        for (const [id, name] of names) this.ownerNames.set(id, name);
+      }
+      return { ok: true, emotes: emotes.map((e) => (e.owner ? { ...e, owner: this.ownerNames.get(e.owner) ?? "" } : e)) };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
@@ -644,6 +654,19 @@ export class ColorLoop extends DurableObject<Env> {
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
+  }
+
+  /** Settings, open tabs and the pinned stream, as last saved from any of the user's devices. */
+  async getSync(): Promise<SyncBlob | null> {
+    return (await this.ctx.storage.get<SyncBlob>("sync")) ?? null;
+  }
+
+  /** Newest write wins: an older blob (a device that's been offline) doesn't overwrite a newer one. */
+  async putSync(blob: SyncBlob): Promise<{ ok: true; stored: boolean; current: SyncBlob }> {
+    const current = await this.getSync();
+    if (current && current.at > blob.at) return { ok: true, stored: false, current };
+    await this.ctx.storage.put("sync", blob);
+    return { ok: true, stored: true, current: blob };
   }
 
   async disconnectTwitch(): Promise<void> {

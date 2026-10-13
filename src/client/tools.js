@@ -443,7 +443,14 @@ function renderWhispers() {
 window.toolsAccountItems = (item) => {
   const out = [];
   if (hasScope("user:manage:whispers")) out.push(item("Whispers" + (wh.unread ? " (" + wh.unread + ")" : ""), openWhispers));
+  out.push(item("Mentions" + (mentionsUnread ? " (" + Math.min(mentionsUnread, 99) + ")" : ""), openMentions));
+  if (tabs.size > 1) out.push(item("All chats in one feed", openCombined));
   out.push(item("Discover streams", openDiscover));
+  if (active && active.list.querySelector(".msg")) {
+    out.push(item("Save this chat (text)", () => exportChat("txt")));
+    out.push(item("Save this chat (JSON)", () => exportChat("json")));
+  }
+  if (!coarse) out.push(item("Keyboard shortcuts", openShortcuts));
   return out;
 };
 
@@ -455,7 +462,7 @@ window.toolsOnSession = (sid) => {
 // ---------- your Twitch block list ----------
 
 function applyBlocked() {
-  document.querySelectorAll(".msg[data-user]").forEach((n) => n.classList.toggle("ignored", isHidden(n.dataset.user)));
+  document.querySelectorAll(".msg[data-user]").forEach((n) => n.classList.toggle("ignored", isHidden(n.dataset.user) || !!n.dataset.muted));
 }
 
 async function loadBlocks() {
@@ -639,5 +646,255 @@ window.toolsFollowExtra = (q, box) => {
     }
   }, 350);
 };
+
+// ---------- mentions across channels ----------
+
+const mentionLog = []; // newest first; kept in memory only
+let mentionsUnread = 0; // added since the sheet was last opened
+const MAX_MENTIONS = 200;
+
+window.toolsMention = (tab, ev, kind) => {
+  mentionLog.unshift({
+    login: tab.login, channel: tab.broadcaster ? tab.broadcaster.name : tab.login, id: ev.message_id,
+    user: ev.chatter_user_name, color: ev.color || "", text: ev.message.text, ts: ev.ts || Date.now(), kind,
+  });
+  if (mentionLog.length > MAX_MENTIONS) mentionLog.pop();
+  mentionsUnread++;
+  if (sheetShows("mentions")) { mentionsUnread = 0; renderMentions(); }
+};
+
+function openMentions() {
+  mentionsUnread = 0;
+  renderMentions();
+}
+
+function renderMentions() {
+  const root = el("div", "tools");
+  root.dataset.mentions = "1";
+  root.appendChild(el("h2", null, "Mentions"));
+  root.appendChild(el("p", "hint", "Messages that @mention you or match a highlight rule, from every open channel since you opened Yappa. Tap one to go to that chat."));
+  const list = el("div", "tool-list");
+  for (const m of mentionLog) {
+    const row = el("button", "mention-row");
+    row.type = "button";
+    const head = el("div", "mr-head");
+    const who = el("b", null, m.user);
+    if (m.color) who.style.color = m.color;
+    head.append(el("span", "shared-pill", m.channel), who, el("span", "hint", " " + timeLabel(m.ts) + (m.kind === "highlight" ? " · highlight" : "")));
+    row.append(head, el("div", "mr-text", m.text));
+    row.addEventListener("click", () => { closeSheet(); openTab(m.login); });
+    list.appendChild(row);
+  }
+  if (!mentionLog.length) list.appendChild(el("div", "hint", "Nothing yet."));
+  root.appendChild(list);
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+}
+
+// ---------- all chats in one feed ----------
+
+const COMBINED_PER_TAB = 25, COMBINED_MAX = 300;
+let combinedList = null;
+
+function combinedLine(tab, li) {
+  const c = li.cloneNode(true);
+  c.querySelectorAll(".actions, .clip-card").forEach((n) => n.remove());
+  c.classList.remove("selected", "filtered");
+  const pill = el("span", "shared-pill", tab.broadcaster ? tab.broadcaster.name : tab.login);
+  c.insertBefore(pill, c.querySelector(".time") ? c.querySelector(".time").nextSibling : c.firstChild);
+  c.dataset.channel = tab.login;
+  return c;
+}
+
+function openCombined() {
+  const root = el("div", "tools");
+  root.dataset.combined = "1";
+  root.appendChild(el("h2", null, "All chats"));
+  root.appendChild(el("p", "hint", "Every open channel in one feed, newest at the bottom. Read-only: tap a line to go to that chat."));
+  const list = el("ul", "messages combined");
+  list.style.setProperty("--chat-font", settings.fontSize + "px");
+  list.addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-channel]");
+    if (li) { closeSheet(); openTab(li.dataset.channel); }
+  });
+  const lines = [];
+  for (const t of tabs.values()) {
+    for (const li of [...t.list.querySelectorAll(".msg:not(.ignored)")].slice(-COMBINED_PER_TAB)) lines.push([Number(li.dataset.ts) || 0, t, li]);
+  }
+  lines.sort((a, b) => a[0] - b[0]);
+  for (const [, t, li] of lines) list.appendChild(combinedLine(t, li));
+  if (!lines.length) list.appendChild(el("li", "sys", "Nothing yet. New messages from your open channels will show up here."));
+  root.appendChild(list);
+  combinedList = list;
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+  list.scrollTop = list.scrollHeight;
+}
+
+window.toolsMirror = (tab, li) => {
+  if (!sheetShows("combined") || !combinedList || !combinedList.isConnected) return;
+  const stick = combinedList.scrollHeight - combinedList.scrollTop - combinedList.clientHeight < 40;
+  const placeholder = combinedList.querySelector("li.sys");
+  if (placeholder) placeholder.remove();
+  combinedList.appendChild(combinedLine(tab, li));
+  while (combinedList.children.length > COMBINED_MAX) combinedList.firstChild.remove();
+  if (stick) combinedList.scrollTop = combinedList.scrollHeight;
+};
+
+// ---------- stream stats: uptime and viewers over time ----------
+
+function openStats() {
+  const tab = active;
+  if (!tab || !tab.stream) return;
+  const root = el("div", "tools");
+  root.dataset.stats = "1";
+  const st = tab.stream;
+  root.append(el("h2", null, tab.broadcaster ? tab.broadcaster.name : tab.login), el("p", "hint", st.title));
+  const samples = tab.viewerSamples || [];
+  const peak = samples.reduce((m, s) => Math.max(m, s[1]), st.viewer_count);
+  const facts = el("div", "stat-facts");
+  for (const [k, v] of [["Live for", since(st.started_at)], ["Viewers now", st.viewer_count.toLocaleString()], ["Peak while you watched", peak.toLocaleString()], ["Category", st.game_name || "None"]]) {
+    const f = el("div", "stat");
+    f.append(el("div", "hint", k), el("b", null, v));
+    facts.appendChild(f);
+  }
+  root.appendChild(facts);
+  root.appendChild(el("h3", null, "Viewers since you opened this channel"));
+  root.appendChild(sparkline(samples));
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+}
+
+function sparkline(samples) {
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 300, H = 70;
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("class", "sparkline");
+  svg.setAttribute("role", "img");
+  if (samples.length < 2) {
+    svg.setAttribute("aria-label", "Not enough data yet");
+    const t = document.createElementNS(NS, "text");
+    t.setAttribute("x", "0"); t.setAttribute("y", "40"); t.setAttribute("fill", "currentColor");
+    t.textContent = "Collecting… (a point is added every minute)";
+    svg.appendChild(t);
+    return svg;
+  }
+  const t0 = samples[0][0], t1 = samples[samples.length - 1][0];
+  const lo = Math.min(...samples.map((s) => s[1])), hi = Math.max(...samples.map((s) => s[1]));
+  const span = Math.max(hi - lo, 1);
+  const pts = samples.map((s) => ((s[0] - t0) / Math.max(t1 - t0, 1) * (W - 4) + 2).toFixed(1) + "," + (H - 6 - (s[1] - lo) / span * (H - 12)).toFixed(1));
+  svg.setAttribute("aria-label", "Viewers from " + lo.toLocaleString() + " to " + hi.toLocaleString() + " over " + Math.round((t1 - t0) / 60000) + " minutes");
+  const line = document.createElementNS(NS, "polyline");
+  line.setAttribute("points", pts.join(" "));
+  line.setAttribute("fill", "none"); line.setAttribute("stroke", "var(--accent)"); line.setAttribute("stroke-width", "2");
+  line.setAttribute("stroke-linejoin", "round"); line.setAttribute("stroke-linecap", "round");
+  svg.appendChild(line);
+  return svg;
+}
+
+$("live").addEventListener("click", () => { if (active && active.stream) openStats(); });
+
+// ---------- slow mode countdown ----------
+
+// Informational only: VIPs and some other roles are exempt and we can't tell, so it never blocks sending.
+let slowTimer = null;
+const slowNote = $("slow-note");
+
+function slowTick() {
+  const tab = active;
+  const left = tab && tab.slowUntil ? Math.ceil((tab.slowUntil - Date.now()) / 1000) : 0;
+  if (left > 0) {
+    slowNote.textContent = "Slow mode: you can chat again in " + left + "s";
+    slowNote.hidden = false;
+  } else {
+    slowNote.hidden = true;
+    if (tab) tab.slowUntil = 0;
+    clearInterval(slowTimer);
+    slowTimer = null;
+  }
+}
+
+function slowEnsureTicking() {
+  if (slowTimer) return;
+  slowTimer = setInterval(slowTick, 500);
+  slowTick();
+}
+
+window.toolsSent = (tab) => {
+  const wait = tab.settings && tab.settings.slow_mode ? tab.settings.slow_mode_wait_time || 30 : 0;
+  if (!wait || tab.isMod || (me && tab.broadcaster && tab.broadcaster.id === me.userId)) return;
+  tab.slowUntil = Date.now() + wait * 1000;
+  if (tab === active) slowEnsureTicking();
+};
+window.toolsActivated = (tab) => {
+  slowNote.hidden = true;
+  if (tab && tab.slowUntil > Date.now()) slowEnsureTicking();
+};
+
+// ---------- export a chat ----------
+
+function exportChat(format) {
+  const tab = active;
+  if (!tab) return;
+  const rows = [...tab.list.querySelectorAll(".msg:not(.ignored)")].map((li) => ({
+    time: Number(li.dataset.ts) || 0,
+    user: (li.querySelector(".name") || {}).textContent || "",
+    text: (li.querySelector(".body") || {}).innerText || (li.querySelector(".body") || {}).textContent || "",
+  }));
+  const channel = tab.broadcaster ? tab.broadcaster.name : tab.login;
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  const body = format === "json"
+    ? JSON.stringify({ channel, exported: new Date().toISOString(), messages: rows.map((r) => ({ ...r, time: new Date(r.time).toISOString() })) }, null, 2)
+    : rows.map((r) => "[" + new Date(r.time).toLocaleString() + "] " + r.user + ": " + r.text).join("\n") + "\n";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([body], { type: format === "json" ? "application/json" : "text/plain" }));
+  a.download = channel + "-chat-" + stamp + "." + (format === "json" ? "json" : "txt");
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  sysLine(tab, "Saved " + rows.length + " message" + (rows.length === 1 ? "" : "s") + " as " + a.download + ".");
+}
+window.toolsExport = exportChat;
+
+// ---------- keyboard shortcuts ----------
+
+function openShortcuts() {
+  const root = el("div", "tools");
+  root.dataset.shortcuts = "1";
+  root.appendChild(el("h2", null, "Keyboard shortcuts"));
+  const list = el("div", "shortcut-list");
+  for (const [keys, what] of [
+    ["Alt + 1 … 9", "Go to that tab"], ["Alt + ←  /  →", "Previous / next tab"], ["Alt + W", "Close this tab"],
+    ["Alt + V", "Show or hide the video"], ["Alt + M", "Mentions"], ["Alt + A", "All chats in one feed"],
+    ["/", "Jump to the message box"], ["?", "This list"], ["Esc", "Close a sheet or menu"],
+  ]) {
+    const r = el("div", "row");
+    r.append(el("kbd", null, keys), el("span", null, what));
+    list.appendChild(r);
+  }
+  root.appendChild(list);
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey) return;
+  const typing = e.target.closest && e.target.closest("input, textarea, [contenteditable='true']");
+  if (e.altKey) { // (Alt+digits and Alt+W are in app.js)
+    const list = [...tabs.values()];
+    const i = active ? list.indexOf(active) : -1;
+    if (e.key === "ArrowLeft" && list.length > 1) { activate(list[(i - 1 + list.length) % list.length]); e.preventDefault(); }
+    else if (e.key === "ArrowRight" && list.length > 1) { activate(list[(i + 1) % list.length]); e.preventDefault(); }
+    else if (e.code === "KeyV") { $("video-btn").click(); e.preventDefault(); }
+    else if (e.code === "KeyM") { openMentions(); e.preventDefault(); }
+    else if (e.code === "KeyA") { openCombined(); e.preventDefault(); }
+    return;
+  }
+  if (typing) return;
+  if (e.key === "/" && active) { composer.focus(); e.preventDefault(); }
+  else if (e.key === "?") { openShortcuts(); e.preventDefault(); }
+});
 
 })();

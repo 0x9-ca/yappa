@@ -35,21 +35,21 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   globalThis.fetch = async (url, init) => { calls.push(String(url)); return new Response(globalThis.__usherBody ?? MASTER, { status: globalThis.__usherStatus ?? 200 }); };
   const sig = "f9db5ddefa11ef4ea9e92a6cafaa1b6c3d52d387", tokenFor = (c) => JSON.stringify({ channel: c, authorization: { forbidden: false } });
   const bads = [
-    relayMaster({ login: "../etc", sig, token: tokenFor("x") }), relayMaster({ login: "uwoslab", sig: "zz", token: tokenFor("uwoslab") }),
-    relayMaster({ login: "uwoslab", sig, token: tokenFor("someoneelse") }), relayMaster({ login: "uwoslab", sig, token: "not json" }),
-    relayMaster({ login: "uwoslab", sig, token: "x".repeat(9000) }), relayMaster({}),
+    relayMaster({ login: "../etc", sig, token: tokenFor("x") }), relayMaster({ login: "yappa", sig: "zz", token: tokenFor("yappa") }),
+    relayMaster({ login: "yappa", sig, token: tokenFor("someoneelse") }), relayMaster({ login: "yappa", sig, token: "not json" }),
+    relayMaster({ login: "yappa", sig, token: "x".repeat(9000) }), relayMaster({}),
   ];
   check("relay refuses bad channel names, signatures, tokens for another channel, and junk (without calling Twitch)", (await Promise.all(bads)).every((r) => r.ok === false && r.status === 400) && calls.length === 0, JSON.stringify(await Promise.all(bads)));
-  const good = await relayMaster({ login: "UwoSlab", sig, token: tokenFor("uwoslab") });
+  const good = await relayMaster({ login: "Yappa", sig, token: tokenFor("yappa") });
   check("relay fetches only usher, for that channel, asking for audio-only too", good.ok && good.playlist.startsWith("#EXTM3U") && calls.length === 1 &&
-    calls[0].startsWith("https://usher.ttvnw.net/api/channel/hls/uwoslab.m3u8?") && new URL(calls[0]).searchParams.get("allow_audio_only") === "true" && new URL(calls[0]).searchParams.get("sig") === sig, calls[0]);
+    calls[0].startsWith("https://usher.ttvnw.net/api/channel/hls/yappa.m3u8?") && new URL(calls[0]).searchParams.get("allow_audio_only") === "true" && new URL(calls[0]).searchParams.get("sig") === sig, calls[0]);
   globalThis.__usherStatus = 403;
   const realErr = console.error; console.error = () => {}; // the relay logs refusals for the Worker's logs
-  const denied = await relayMaster({ login: "uwoslab", sig, token: tokenFor("uwoslab") });
+  const denied = await relayMaster({ login: "yappa", sig, token: tokenFor("yappa") });
   console.error = realErr;
   check("relay reports Twitch refusing", denied.ok === false && denied.status === 502 && /403/.test(denied.error), JSON.stringify(denied));
   globalThis.__usherStatus = 200; globalThis.__usherBody = "<html>not a playlist</html>";
-  check("relay rejects something that isn't a playlist", (await relayMaster({ login: "uwoslab", sig, token: tokenFor("uwoslab") })).ok === false);
+  check("relay rejects something that isn't a playlist", (await relayMaster({ login: "yappa", sig, token: tokenFor("yappa") })).ok === false);
   globalThis.fetch = realFetch; delete globalThis.__usherBody; delete globalThis.__usherStatus;
 
 }
@@ -193,9 +193,9 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   check("sync needs a session", r.status === 401);
   r = await syncReq("GET");
   check("sync: nothing saved yet", (await r.json()).sync === null);
-  const good = { at: 1700000000000, settings: { rules: [] }, tabs: ["uwoslab"], pinned: null };
+  const good = { at: 1700000000000, settings: { rules: [] }, tabs: ["yappa"], pinned: null };
   r = await syncReq("POST", good);
-  check("sync: a valid copy is saved", r.status === 200 && syncSaved && syncSaved.tabs[0] === "uwoslab");
+  check("sync: a valid copy is saved", r.status === 200 && syncSaved && syncSaved.tabs[0] === "yappa");
   r = await syncReq("GET");
   check("sync: ...and read back", (await r.json()).sync.at === good.at);
   for (const [label, bad] of [["a bad time", { ...good, at: "now" }], ["settings that aren't an object", { ...good, settings: [] }], ["tabs that aren't channel names", { ...good, tabs: ["<script>"] }], ["too many tabs", { ...good, tabs: Array(101).fill("a") }], ["a bad pinned name", { ...good, pinned: "x y" }], ["oversized settings", { ...good, settings: { big: "x".repeat(70000) } }]]) {

@@ -95,11 +95,11 @@ let sendCounter = 0;
 const cycle = { enabled: false, changes: 0, lastColor: "#30E51E" };
 let statusCalls = 0;
 let statusDown = false, slowSend = 0;
-const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
+const ids = { yappa: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
 let followingMode = "ok";
 let followedExtra = false;
 let toolsScope = true;
-const uwoStartedAt = new Date(Date.now() - 3 * 3600e3).toISOString();
+const yappaStartedAt = new Date(Date.now() - 3 * 3600e3).toISOString();
 let syncStore = null, syncMockOff = false;
 const tools = { terms: [{ id: "t1", text: "spoiler", createdAt: "2024-01-01T00:00:00Z" }], shield: false, unbans: [{ id: "r1", userId: "501", login: "oldtimer", name: "OldTimer", text: "sorry about before!", createdAt: new Date(Date.now() - 3600e3).toISOString(), status: "pending" }] };
 let flakyClip = 0;
@@ -108,7 +108,7 @@ let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
 let masterFails = false;
 let noAvatar = false, noMyClips = false;
 let browseFails = false, noClipsScope = false, clipCreateError = null, newClipPolls = 0, sendFailure = null;
-const mkClip = (id, title, views, extra = {}) => ({ id, url: "https://clips.twitch.tv/" + id, title, creator: "Clipper" + id.slice(-1), broadcaster: "UwoSlab", views, createdAt: new Date(Date.now() - 2 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting", ...extra });
+const mkClip = (id, title, views, extra = {}) => ({ id, url: "https://clips.twitch.tv/" + id, title, creator: "Clipper" + id.slice(-1), broadcaster: "Yappa", views, createdAt: new Date(Date.now() - 2 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting", ...extra });
 const mkVideo = (id, title, views, seconds, type = "archive") => ({ id, url: "https://www.twitch.tv/videos/" + id, title, type, views, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/vod-" + id + ".jpg", seconds });
 // A master playlist shaped like Twitch's: best first (the source last in the file, as seen live), audio-only at the end.
 const rendition = (group, name, w, h, fps, bw) => `#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="${group}",NAME="${name}",AUTOSELECT=YES,DEFAULT=YES\n#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${w}x${h},CODECS="avc1.4D401F,mp4a.40.2",VIDEO="${group}",FRAME-RATE=${fps}.000\nhttps://use23.playlist.ttvnw.net/v1/playlist/${group}.m3u8`;
@@ -174,8 +174,8 @@ await ctx.route("**/*", async (route) => {
       if (followingMode === "newlive") return j({ ok: true, live: [{ id: "4040", login: "newstreamer", name: "NewStreamer", title: "just started", game: "Chess", viewers: 5, startedAt: new Date().toISOString() }], channels: [{ id: "4040", login: "newstreamer", name: "NewStreamer" }] });
       return j({ ok: true,
         live: [{ id: "777", login: "targetchan", name: "TargetChan", title: "speedrun attempts", game: "Celeste", viewers: 4321, startedAt: new Date().toISOString() },
-               { id: "999", login: "uwoslab", name: "UwoSlab", title: "Building a chat app", game: "Software and Game Development", viewers: 1234, startedAt: new Date().toISOString() }],
-        channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "uwoslab", name: "UwoSlab" }, ...(followedExtra ? [{ id: ids.otherchan, login: "otherchan", name: "OtherChan" }] : [])] });
+               { id: "999", login: "yappa", name: "Yappa", title: "Building a chat app", game: "Software and Game Development", viewers: 1234, startedAt: new Date().toISOString() }],
+        channels: [{ id: "555", login: "zetachan", name: "ZetaChan" }, { id: "666", login: "alphachan", name: "AlphaChan" }, { id: "777", login: "targetchan", name: "TargetChan" }, { id: "999", login: "yappa", name: "Yappa" }, ...(followedExtra ? [{ id: ids.otherchan, login: "otherchan", name: "OtherChan" }] : [])] });
     }
     if (u.pathname === "/api/sync") {
       if (route.request().method() === "POST") {
@@ -226,8 +226,8 @@ await ctx.route("**/*", async (route) => {
       const gid = u.searchParams.get("game_id");
       return j({ ok: true, streams: [{ id: "1", login: "topstreamer", name: "TopStreamer", title: gid ? "Minecraft run" : "Huge stream", game: gid ? "Minecraft" : "Fortnite", viewers: 45000, startedAt: new Date().toISOString(), thumbnail: "https://img.test/thumb-top.jpg", language: "en" }], cursor: null });
     }
-    if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan", alphachan: "AlphaChan" }[b.channel] || b.channel }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
-    if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: uwoStartedAt }]);
+    if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { yappa: "Yappa", otherchan: "OtherChan", targetchan: "TargetChan", alphachan: "AlphaChan" }[b.channel] || b.channel }, isMod: b.channel === "yappa", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "yappa", settings: b.channel === "yappa" ? chatSettings : null }); }
+    if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: yappaStartedAt }]);
     if (u.pathname === "/api/chat/settings") { const b = body(); log.settings.push(b); Object.assign(chatSettings, b); delete chatSettings.broadcaster_id; return j({ ok: true, settings: chatSettings }); }
     if (u.pathname === "/api/chat/user") return j({ ok: true, user: { id: u.searchParams.get("user_id"), login: "spammer", display_name: "Spammer", description: "I sell followers", profile_image_url: "https://img.test/a.png", broadcaster_type: "", created_at: "2020-01-02T00:00:00Z" }, followedAt: "2024-05-06T00:00:00Z" });
     if (u.pathname === "/api/chat/automod") { log.automod.push(body()); return j({ ok: true }); }
@@ -237,7 +237,7 @@ await ctx.route("**/*", async (route) => {
       if (id === "MissingClip") return j({ ok: true, clip: null });
       if (id === "FlakySlug" && flakyClip++ < 1) return route.fulfill({ status: 502, json: { ok: false, error: "Couldn't reach Twitch." } });
       if (id === "NewClip1" && newClipPolls++ < 1) return j({ ok: true, clip: null }); // not published yet
-      return j({ ok: true, clip: { id, url: "https://clips.twitch.tv/" + id, title: id === "SecondSlug" ? "Second clip" : "An incredible play nobody saw coming and a very long title that wraps", broadcaster: "UwoSlab", creator: "Clipper", views: 12345, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting" } });
+      return j({ ok: true, clip: { id, url: "https://clips.twitch.tv/" + id, title: id === "SecondSlug" ? "Second clip" : "An incredible play nobody saw coming and a very long title that wraps", broadcaster: "Yappa", creator: "Clipper", views: 12345, createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(), thumbnail: "https://img.test/clip-" + id + ".jpg", duration: 27.4, game: "Just Chatting" } });
     }
     if (u.pathname === "/api/cycle/bump") { log.bumps++; log.bumpIds = [...(log.bumpIds || []), body().message_id]; return j({ ok: true, cycle }); }
     if (u.pathname === "/api/chat/unsubscribe") { log.unsubs.push(...body().ids); return j({ ok: true }); }
@@ -255,7 +255,7 @@ await ctx.route("**/*", async (route) => {
       "weird-badge/1": { url: "https://img.test/badge-weird.png", title: "Weird Badge", description: "Awarded for doing something unusual" },
     });
     if (u.pathname === "/api/chat/emotes") { log.emotes = [...(log.emotes || []), u.searchParams.get("broadcaster_id")]; }
-    if (u.pathname === "/api/chat/emotes") return j({ ok: true, emotes: [{ id: "25", name: "Kappa", group: "Twitch global", animated: false }, { id: "e1", name: "uwoHype", group: "This channel", animated: false }] });
+    if (u.pathname === "/api/chat/emotes") return j({ ok: true, emotes: [{ id: "25", name: "Kappa", group: "Twitch global", animated: false }, { id: "e1", name: "yappaHype", group: "This channel", animated: false }] });
   }
   // The app's old address (src/moved.ts).
   if (u.host === "old.test") return route.fulfill({ body: u.pathname === "/" ? renderMoved("yappa.test") : "<p>old</p>", contentType: "text/html" });
@@ -378,8 +378,8 @@ const check = (label, cond, extra = "") => {
   console.log((cond ? "PASS " : "FAIL ") + label + (extra && !cond ? "  → " + extra : ""));
 };
 
-await page.goto("https://yappa.test/#uwoslab");
-await page.waitForFunction(() => document.body.innerText.includes("Joined #UwoSlab"));
+await page.goto("https://yappa.test/#yappa");
+await page.waitForFunction(() => document.body.innerText.includes("Joined #Yappa"));
 
 {
   const cdp = await ctx.newCDPSession(page);
@@ -396,8 +396,8 @@ await page.fill("#channel", "otherchan");
 await page.press("#channel", "Enter");
 await page.waitForFunction(() => document.body.innerText.includes("Joined #OtherChan"));
 let s = await state();
-check("two tabs, second active, MOD pill on uwoslab", s.tabs === "UwoSlab[MOD] | OtherChan*", s.tabs);
-check("both subscribed on one shared session", JSON.stringify(log.subs) === '["uwoslab@sess1","otherchan@sess1"]', JSON.stringify(log.subs));
+check("two tabs, second active, MOD pill on yappa", s.tabs === "Yappa[MOD] | OtherChan*", s.tabs);
+check("both subscribed on one shared session", JSON.stringify(log.subs) === '["yappa@sess1","otherchan@sess1"]', JSON.stringify(log.subs));
 check("not a mod in otherchan → no mod hint", !s.placeholder.includes("mod"), s.placeholder);
 
 sockets[0].send(chat("999", "u1", "SomeViewer", "222", "hey @testuser", { fragments: [{ type: "text", text: "hey " }, { type: "mention", text: "@testuser", mention: { user_id: "111" } }] }));
@@ -405,14 +405,14 @@ sockets[0].send(chat("999", "u2", "Spammer", "333", "buy followers"));
 sockets[0].send(chat("888", "o1", "OtherPerson", "444", "hello other chan catJAM"));
 await settle(200);
 s = await state();
-check("unread + mention badge on background tab", s.tabs === "UwoSlab[MOD](2!) | OtherChan*", s.tabs);
+check("unread + mention badge on background tab", s.tabs === "Yappa[MOD](2!) | OtherChan*", s.tabs);
 check("active tab shows only its own messages", s.visibleMsgs.some((t) => t.includes("hello other chan")) && !s.visibleMsgs.some((t) => t.includes("buy followers")));
 await page.screenshot({ path: dir + "/t1-tabs.png" });
 await shot("chat");
 
 await page.click(".tab:first-child .tab-name");
 s = await state();
-check("switching clears unread, updates hash", s.tabs === "UwoSlab*[MOD] | OtherChan" && s.hash === "#uwoslab", s.tabs + " " + s.hash);
+check("switching clears unread, updates hash", s.tabs === "Yappa*[MOD] | OtherChan" && s.hash === "#yappa", s.tabs + " " + s.hash);
 check("mod hint in placeholder", s.placeholder.includes("/ban"), s.placeholder);
 const modBtns = await page.$$eval('li[data-id="u2"] .actions button', (bs) => bs.map((b) => b.textContent));
 check("mod actions on others' messages", modBtns.join(",") === "Reply,Save,Translate,Delete,Timeout,Ban", modBtns.join(","));
@@ -478,16 +478,16 @@ await page.keyboard.type("poggers");
 s = await state();
 check("an all-lowercase emote name (an ordinary word) isn't auto-finished", s.input === "poggers", JSON.stringify(s.input));
 await page.evaluate(() => { active.ext.delete("pog"); composer.setText(""); });
-await page.keyboard.type("uw");
+await page.keyboard.type("yap");
 await page.keyboard.press("Tab");
 s = await state();
-check("Tab completes short prefix", s.input === "uwoHype ", JSON.stringify(s.input));
+check("Tab completes short prefix", s.input === "yappaHype ", JSON.stringify(s.input));
 await page.keyboard.type("@So");
 s = await state();
 check("@ completes chatters", s.suggest && s.suggest.startsWith("@SomeViewer"), s.suggest);
 await page.keyboard.press("Tab");
 s = await state();
-check("@ inserted", s.input === "uwoHype @SomeViewer ", JSON.stringify(s.input));
+check("@ inserted", s.input === "yappaHype @SomeViewer ", JSON.stringify(s.input));
 await page.evaluate(() => composer.setText(""));
 
 // A draft that moves with you between tabs shows only the emotes this channel has.
@@ -509,7 +509,7 @@ await page.evaluate(() => composer.setText(""));
 
 // Clicking a name shows the badges on that message, and what they mean.
 {
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
   sockets[0].send(chat("999", "badged1", "Badgey", "6001", "look at my badges", { badges: [{ set_id: "moderator", id: "1", info: "" }, { set_id: "subscriber", id: "2003", info: "" }, { set_id: "bits", id: "1000", info: "" }, { set_id: "weird-badge", id: "1", info: "" }, { set_id: "mystery", id: "9", info: "" }] }));
   await page.waitForSelector('li[data-id="badged1"]');
   await page.evaluate(() => document.querySelector('li[data-id="badged1"] .name').click());
@@ -532,10 +532,10 @@ await page.evaluate(() => composer.setText(""));
 
 // Tap an emote: its name and where it comes from.
 {
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
   sockets[0].send(chat("999", "emotetip1", "Emoter", "6101", "hi Kappa catJAM", { fragments: [
     { type: "text", text: "hi " }, { type: "emote", text: "Kappa", emote: { id: "25", emote_set_id: "0", owner_id: "0", format: ["static"] } },
-    { type: "text", text: " " }, { type: "emote", text: "uwoHype", emote: { id: "777", emote_set_id: "5", owner_id: "999", format: ["static"] } },
+    { type: "text", text: " " }, { type: "emote", text: "yappaHype", emote: { id: "777", emote_set_id: "5", owner_id: "999", format: ["static"] } },
     { type: "text", text: " catJAM" }] }));
   await page.waitForSelector('li[data-id="emotetip1"] .emote-wrap img');
   const tip = async (sel) => { await page.evaluate((sel) => document.querySelector(sel).click(), sel); await settle(50); return page.evaluate(() => { const t = document.querySelector(".emote-tip"); return t && { name: t.querySelector(".et-name").textContent, src: t.querySelector(".et-src").textContent, add: !!t.querySelector("button"), inView: (() => { const r = t.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() }; }); };
@@ -544,8 +544,8 @@ await page.evaluate(() => composer.setText(""));
   await page.screenshot({ path: dir + "/t64-emote-tip.png" });
   await shot("emote-tooltip");
   check("it isn't a message selection (no action bar)", await page.evaluate(() => !document.querySelector('li[data-id="emotetip1"]').classList.contains("selected")));
-  t1 = await tip('li[data-id="emotetip1"] img[data-emote="uwoHype"]');
-  check("tapping another emote replaces the tip; this channel's emote is labelled so", t1 && t1.name === "uwoHype" && /this channel's emote/.test(t1.src) && (await page.$$(".emote-tip")).length === 1, JSON.stringify(t1));
+  t1 = await tip('li[data-id="emotetip1"] img[data-emote="yappaHype"]');
+  check("tapping another emote replaces the tip; this channel's emote is labelled so", t1 && t1.name === "yappaHype" && /this channel's emote/.test(t1.src) && (await page.$$(".emote-tip")).length === 1, JSON.stringify(t1));
   t1 = await tip('li[data-id="emotetip1"] img[data-emote="catJAM"]');
   check("a third-party emote shows its service", t1 && t1.name === "catJAM" && /^7TV · /.test(t1.src), JSON.stringify(t1));
   check("'Add to message' is offered for an emote you can use here", t1 && t1.add);
@@ -594,7 +594,7 @@ await page.evaluate(() => composer.setText(""));
 // =============== moderator tools, whispers, block list, subscription chip, alerts, discovery ===============
 {
   const L = () => log.tools.at(-1);
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
   await settle(300);
 
   // Subscription chip
@@ -602,23 +602,23 @@ await page.evaluate(() => composer.setText(""));
   await page.evaluate(() => activate(tabs.get("otherchan")));
   await settle(300);
   check("no chip where you're not subscribed", await page.$eval("#sub-chip", (c) => c.hidden));
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
 
   // Info bar: tight icon spacing, and a long stream title scrolls instead of being cut off.
   const gaps = await page.evaluate(() => { const ids = ["video-btn", "pin-btn", "pip-btn", "follow-btn", "modtools-btn"].map((i) => document.getElementById(i)).filter((b) => b && !b.hidden); const r = ids.map((b) => b.getBoundingClientRect()); return r.slice(1).map((x, i) => Math.round(x.left - r[i].right)).filter((g) => g > -50 && g < 50); });
   check("info bar icon buttons sit close together", gaps.length >= 2 && gaps.every((g) => g <= 4), JSON.stringify(gaps));
-  await page.evaluate(() => { tabs.get("uwoslab").stream.title = "A very long stream title that cannot possibly fit in the space the info bar gives it on a phone screen, so it has to scroll"; renderInfo(); });
+  await page.evaluate(() => { tabs.get("yappa").stream.title = "A very long stream title that cannot possibly fit in the space the info bar gives it on a phone screen, so it has to scroll"; renderInfo(); });
   const scroll = await page.evaluate(() => { const t = document.querySelector("#live .title"); return { scrolls: t.classList.contains("scrolls"), shift: parseFloat(t.style.getPropertyValue("--shift")), anim: getComputedStyle(t.firstElementChild).animationName }; });
   check("a stream title too long for its space scrolls (slides left to its end)", scroll.scrolls && scroll.shift < -20 && scroll.anim === "title-scroll", JSON.stringify(scroll));
-  await page.evaluate(() => { const st = tabs.get("uwoslab").stream; st.title = "Hi"; st.game_name = ""; renderInfo(); });
+  await page.evaluate(() => { const st = tabs.get("yappa").stream; st.title = "Hi"; st.game_name = ""; renderInfo(); });
   check("a short title stays put", await page.evaluate(() => !document.querySelector("#live .title").classList.contains("scrolls")));
-  await page.evaluate(() => { const st = tabs.get("uwoslab").stream; st.title = "Building a chat app"; st.game_name = "Software and Game Development"; renderInfo(); });
+  await page.evaluate(() => { const st = tabs.get("yappa").stream; st.title = "Building a chat app"; st.game_name = "Software and Game Development"; renderInfo(); });
 
   // Mod tools button: only where you moderate
   check("Mod tools button shows in a channel you moderate", await page.$eval("#modtools-btn", (b) => !b.hidden));
   await page.evaluate(() => activate(tabs.get("otherchan")));
   check("and not elsewhere", await page.$eval("#modtools-btn", (b) => b.hidden));
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
 
   await page.click("#modtools-btn");
   await page.waitForSelector(".modtools .modes-grid");
@@ -732,12 +732,12 @@ await page.evaluate(() => composer.setText(""));
   sockets[0].send(msg("notification", { subscription: { type: "channel.unban_request.create" }, event: { id: "r2", broadcaster_user_id: "999", user_id: "7004", user_login: "banned1", user_name: "Banned1", text: "I'm sorry", created_at: new Date().toISOString() } }));
   await page.waitForFunction(() => document.getElementById("modtools-count").textContent === "1" && !document.getElementById("modtools-count").hidden);
   check("a new unban request says so in chat and puts a count on the Mod tools icon", (await page.$$eval("li.modlog", (l) => l.some((x) => /Banned1 asked to be unbanned: \u201cI'm sorry\u201d/.test(x.textContent)))));
-  await page.evaluate(() => { tabs.get("uwoslab").unbanCount = 0; renderInfo(); });
+  await page.evaluate(() => { tabs.get("yappa").unbanCount = 0; renderInfo(); });
   // Shared chat
   sockets[0].send(chat("999", "shared1", "Visitor", "7005", "hi from another chat", { source_broadcaster_user_id: "888", source_broadcaster_user_name: "OtherChan" }));
   await page.waitForSelector('li[data-id="shared1"] .shared-pill');
   check("a message from another channel in a shared chat names where it came from", (await page.textContent('li[data-id="shared1"] .shared-pill')) === "OtherChan");
-  sockets[0].send(chat("999", "notshared", "Local", "7006", "just us", { source_broadcaster_user_id: "999", source_broadcaster_user_name: "UwoSlab" }));
+  sockets[0].send(chat("999", "notshared", "Local", "7006", "just us", { source_broadcaster_user_id: "999", source_broadcaster_user_name: "Yappa" }));
   await page.waitForSelector('li[data-id="notshared"]');
   check("messages from this channel itself get no label", !(await page.$('li[data-id="notshared"] .shared-pill')));
 
@@ -776,7 +776,7 @@ await page.evaluate(() => composer.setText(""));
   check("a followed channel going live is announced in chat with an Open button", (await page.textContent("li.live-note")).includes("NewStreamer went live") && !!(await page.$("li.live-note button")));
   followingMode = "ok";
   await page.evaluate(() => { settings.liveAlerts = false; saveSettings(); });
-  await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "old title", game_name: "Old Game", viewer_count: 1, started_at: new Date().toISOString() }; });
+  await page.evaluate(() => { tabs.get("yappa").stream = { user_id: "999", title: "old title", game_name: "Old Game", viewer_count: 1, started_at: new Date().toISOString() }; });
   await page.evaluate(async () => { await refreshStreams(); });
   await settle(200);
   const lines = await page.$$eval("li.sys", (l) => l.map((x) => x.textContent));
@@ -799,7 +799,7 @@ await page.evaluate(() => composer.setText(""));
   await page.waitForFunction(() => location.hash === "#topstreamer");
   check("Open opens the channel in a tab", true);
   await page.evaluate(() => closeTab(tabs.get("topstreamer")));
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
   // The channel box also searches Twitch.
   await page.fill("#channel", "");
   await page.type("#channel", "find");
@@ -808,7 +808,7 @@ await page.evaluate(() => composer.setText(""));
   await page.click('#follow-list .fl-row[data-find="findable"]');
   await page.waitForFunction(() => location.hash === "#findable");
   await page.evaluate(() => closeTab(tabs.get("findable")));
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
   await settle(300);
   log.unsubs.length = 0; // (the tabs opened just above)
   // Schedule
@@ -841,8 +841,8 @@ await page.evaluate(() => composer.setText(""));
 await page.click(".tab:nth-child(2) .tab-close");
 await settle(150);
 s = await state();
-check("closing tab unsubscribes it", JSON.stringify(log.unsubs) === '["otherchan-s1","otherchan-s2"]' && s.tabs === "UwoSlab*[MOD]", s.tabs + " " + JSON.stringify(log.unsubs));
-check("tabs persisted", (await page.evaluate(() => localStorage.getItem("tabs"))) === '["uwoslab"]');
+check("closing tab unsubscribes it", JSON.stringify(log.unsubs) === '["otherchan-s1","otherchan-s2"]' && s.tabs === "Yappa*[MOD]", s.tabs + " " + JSON.stringify(log.unsubs));
+check("tabs persisted", (await page.evaluate(() => localStorage.getItem("tabs"))) === '["yappa"]');
 
 // session migration then hard drop
 sockets[0].send(msg("session_reconnect", { session: { reconnect_url: "wss://eventsub.wss.twitch.tv/ws?r=1" } }));
@@ -850,8 +850,8 @@ await settle(300);
 const subsBefore = log.subs.length;
 check("migration does not resubscribe", log.subs.length === subsBefore);
 sockets[1].close();
-await page.waitForFunction(() => document.body.innerText.match(/Reconnected to #UwoSlab/g)?.length >= 1, null, { timeout: 5000 });
-check("hard drop → reconnect + resubscribe", log.subs.at(-1) === "uwoslab@sess3", JSON.stringify(log.subs));
+await page.waitForFunction(() => document.body.innerText.match(/Reconnected to #Yappa/g)?.length >= 1, null, { timeout: 5000 });
+check("hard drop → reconnect + resubscribe", log.subs.at(-1) === "yappa@sess3", JSON.stringify(log.subs));
 
 // reload restores tabs
 await page.fill("#channel", "otherchan"); await page.press("#channel", "Enter");
@@ -859,7 +859,7 @@ await page.waitForFunction(() => document.querySelectorAll(".tab").length === 2)
 await page.reload();
 await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length === 2, null, { timeout: 5000 });
 s = await state();
-check("reload restores tabs", s.tabs.replace("*", "") === "UwoSlab[MOD] | OtherChan", s.tabs);
+check("reload restores tabs", s.tabs.replace("*", "") === "Yappa[MOD] | OtherChan", s.tabs);
 
 // ---- color cycling: per message ----
 const hdr = await page.evaluate(() => { const h = document.querySelector("header"); const open = h.querySelector("form button").getBoundingClientRect(), gear = document.getElementById("profile-btn").getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), sameRow: Math.abs(open.top - gear.top) < 8 && gear.left > open.right, swatchInHeader: !!h.querySelector(".swatch") }; });
@@ -887,19 +887,19 @@ await page.click("#sheet-close");
 await page.click(".tab:first-child .tab-name");
 await page.waitForSelector(".messages:not([hidden]) li.historical", { timeout: 3000 }).catch(() => {});
 s = await state();
-check("history loaded above join line", s.visibleMsgs.length && (await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent)).then((t) => t.findIndex((x) => x.includes(" from history")) < t.findIndex((x) => x.includes("Joined #UwoSlab")) && t.findIndex((x) => x.includes(" from history")) > t.findIndex((x) => x.includes("start of chat history")))));
+check("history loaded above join line", s.visibleMsgs.length && (await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent)).then((t) => t.findIndex((x) => x.includes(" from history")) < t.findIndex((x) => x.includes("Joined #Yappa")) && t.findIndex((x) => x.includes(" from history")) > t.findIndex((x) => x.includes("start of chat history")))));
 check("history emote parsed from IRC tags", await page.$eval('li[data-id="h1"]', (l) => !!l.querySelector('img[alt="Kappa"]')));
 check("first-time flag from history", await page.$eval('li[data-id="h2"]', (l) => l.classList.contains("first") && l.textContent.includes("First-time chatter")));
-check("anon IRC joined channels", ircSockets.length >= 1 && /JOIN #uwoslab/.test(ircSockets.at(-1).joined) && /NICK justinfan/.test(ircSockets.at(-1).joined), ircSockets.at(-1)?.joined);
+check("anon IRC joined channels", ircSockets.length >= 1 && /JOIN #yappa/.test(ircSockets.at(-1).joined) && /NICK justinfan/.test(ircSockets.at(-1).joined), ircSockets.at(-1)?.joined);
 const cur = () => sockets.at(-1);
 // live message, IRC says it's a first message (IRC arrives after EventSub)
 cur().send(chat("999", "live-first", "FreshFace", "601", "hello!!"));
 await settle(100);
-ircSockets.at(-1).send("@badges=;first-msg=1;id=live-first;room-id=999 :freshface!freshface@x PRIVMSG #uwoslab :hello!!\r\n");
+ircSockets.at(-1).send("@badges=;first-msg=1;id=live-first;room-id=999 :freshface!freshface@x PRIVMSG #yappa :hello!!\r\n");
 await settle(100);
 check("first-time flag from IRC (arriving after EventSub)", await page.$eval('li[data-id="live-first"]', (l) => l.classList.contains("first")));
 // IRC first, then EventSub
-ircSockets.at(-1).send("@first-msg=1;id=live-first2 :a!a@x PRIVMSG #uwoslab :yo\r\n");
+ircSockets.at(-1).send("@first-msg=1;id=live-first2 :a!a@x PRIVMSG #yappa :yo\r\n");
 await settle(50);
 cur().send(chat("999", "live-first2", "Another", "602", "yo"));
 await settle(100);
@@ -942,7 +942,7 @@ const iG1 = gap.findIndex((t) => t.includes("you missed this one")), iRe = gap.f
 check("missed messages backfilled above the reconnect line", iG1 >= 0 && iG1 < iRe, gap.slice(-5).join(" ‖ "));
 check("reconnect line reports catch-up", gap[iRe] && gap[iRe].includes("Caught up on 2 missed messages"), gap[iRe]);
 check("backfilled @mention highlighted", await page.$eval('li[data-id="g2"]', (l) => l.classList.contains("mentioned")));
-check("reconnect asks only for the gap; first join asks for 100", log.history.some((h) => h === "uwoslab?limit=100") && log.history.slice(-2).some((h) => /^uwoslab\?limit=100&after=\d+$/.test(h)), JSON.stringify(log.history.slice(-3)));
+check("reconnect asks only for the gap; first join asks for 100", log.history.some((h) => h === "yappa?limit=100") && log.history.slice(-2).some((h) => /^yappa\?limit=100&after=\d+$/.test(h)), JSON.stringify(log.history.slice(-3)));
 check("no duplicate history after reconnect", (await page.$$('.messages:not([hidden]) li[data-id="h1"]')).length === 1);
 await page.evaluate(() => { keepaliveMs = 30000; });
 
@@ -1072,7 +1072,7 @@ check("own messages show no hex code", await page.$eval('li[data-id="own-nohex"]
 await page.click(".tab:first-child .tab-name");
 await page.waitForSelector("#video:not([hidden]) iframe", { timeout: 5000 });
 const src = await page.getAttribute("#video iframe", "src");
-check("player for the live tab, with parent=", src.includes("channel=uwoslab") && src.includes("parent=yappa.test"), src);
+check("player for the live tab, with parent=", src.includes("channel=yappa") && src.includes("parent=yappa.test"), src);
 await page.screenshot({ path: dir + "/t11-video-phone.png" });
 await shot("video");
 const vbox = await page.$eval("#video", (v) => { const r = v.getBoundingClientRect(); return { w: r.width, h: r.height }; });
@@ -1094,7 +1094,7 @@ await page.click("#video-btn");
 await page.waitForSelector("#video:not([hidden]) iframe");
 const pc = () => page.evaluate(() => __player.calls);
 let calls = await pc();
-check("one player created with autoplay + parent", calls.filter((c) => c[0] === "new").length === 1 && calls[0][1].autoplay === true && calls[0][1].parent[0] === "yappa.test" && calls[0][1].channel === "uwoslab", JSON.stringify(calls[0]));
+check("one player created with autoplay + parent", calls.filter((c) => c[0] === "new").length === 1 && calls[0][1].autoplay === true && calls[0][1].parent[0] === "yappa.test" && calls[0][1].channel === "yappa", JSON.stringify(calls[0]));
 // Twitch's embed rules: only Twitch's own player UI, never covered by other elements.
 check("player uses Twitch's own controls, nothing drawn over it", calls[0][1].controls === undefined && (await page.$$("#video > :not(.player-host)")).length === 0, JSON.stringify(calls[0][1]));
 check("starts muted only if the page hasn't been interacted with yet", typeof calls[0][1].muted === "boolean", String(calls[0][1].muted));
@@ -1112,7 +1112,7 @@ await page.evaluate(() => { tabs.get("otherchan").stream = null; });
 await page.click(".tab:first-child .tab-name");
 await settle(150);
 calls = await pc();
-check("back to first tab: setChannel back", JSON.stringify(calls.slice(-2)) === '[["setChannel","uwoslab"],["play"]]', JSON.stringify(calls.slice(-2)));
+check("back to first tab: setChannel back", JSON.stringify(calls.slice(-2)) === '[["setChannel","yappa"],["play"]]', JSON.stringify(calls.slice(-2)));
 // ---- picture-in-picture ----
 check("player iframe allows picture-in-picture", /picture-in-picture/.test(await page.getAttribute("#video iframe", "allow")), await page.getAttribute("#video iframe", "allow"));
 check("PiP button shown while video is up", !(await page.$eval("#pip-btn", (b) => b.hidden)));
@@ -1150,34 +1150,34 @@ await page.screenshot({ path: dir + "/t12-video-wide.png" });
   await page.setViewportSize({ width: 390, height: 760 });
   await settle(200);
   const live = () => ({ user_id: "1", title: "other title", game_name: "g", viewer_count: 5, started_at: new Date().toISOString() });
-  await page.evaluate(() => { settings.video = true; saveSettings(); activate(tabs.get("uwoslab")); });
+  await page.evaluate(() => { settings.video = true; saveSettings(); activate(tabs.get("yappa")); });
   await page.waitForSelector("#video:not([hidden]) iframe");
   const calls = () => page.evaluate(() => __player.calls.filter((c) => c[0] === "setChannel").map((c) => c[1]));
   const before = (await calls()).length;
   check("pin button is offered while a stream shows, and starts unpinned", await page.$eval("#pin-btn", (b) => !b.hidden && b.getAttribute("aria-pressed") === "false" && /Pin this stream/.test(b.title)));
   await page.click("#pin-btn");
-  check("pinning marks the button and the tab", await page.$eval("#pin-btn", (b) => b.getAttribute("aria-pressed") === "true") && await page.$eval(".tab:first-child .tab-pin", (p) => !p.hidden) && (await page.evaluate(() => localStorage.getItem("pinnedVideo"))) === "uwoslab");
+  check("pinning marks the button and the tab", await page.$eval("#pin-btn", (b) => b.getAttribute("aria-pressed") === "true") && await page.$eval(".tab:first-child .tab-pin", (p) => !p.hidden) && (await page.evaluate(() => localStorage.getItem("pinnedVideo"))) === "yappa");
   await page.screenshot({ path: dir + "/t62-pinned.png" });
   await shot("pinned-stream");
   // Switch to a channel that isn't live: the pinned stream keeps playing, untouched.
   await page.evaluate(() => { tabs.get("otherchan").stream = null; activate(tabs.get("otherchan")); });
   await settle(200);
   check("switching tabs keeps the pinned video (same player, no channel change, layout unchanged)",
-    (await calls()).length === before && await page.$eval("#video", (v) => !v.hidden && !!v.querySelector("iframe")) && await page.$eval(".app", (a) => a.classList.contains("with-video")) && await page.evaluate(() => playerChannel === "uwoslab"));
+    (await calls()).length === before && await page.$eval("#video", (v) => !v.hidden && !!v.querySelector("iframe")) && await page.$eval(".app", (a) => a.classList.contains("with-video")) && await page.evaluate(() => playerChannel === "yappa"));
   check("the pin button still shows (pressed) on the other tab, offering to unpin", await page.$eval("#pin-btn", (b) => !b.hidden && b.getAttribute("aria-pressed") === "true" && /Tap to unpin/.test(b.title)));
   // Another channel going live doesn't take the video over.
   await page.evaluate((st) => { tabs.get("otherchan").stream = st; renderInfo(); renderVideo(); }, live());
   await settle(200);
-  check("another live channel doesn't take over while pinned", (await calls()).length === before && await page.evaluate(() => playerChannel === "uwoslab"));
+  check("another live channel doesn't take over while pinned", (await calls()).length === before && await page.evaluate(() => playerChannel === "yappa"));
   // Unpin: the video follows the open tab again.
   await page.click("#pin-btn");
   await page.waitForFunction(() => playerChannel === "otherchan");
   check("unpinning makes the video follow the open tab again", await page.$eval("#pin-btn", (b) => b.getAttribute("aria-pressed") === "false") && await page.$eval(".tab:first-child .tab-pin", (p) => p.hidden) && (await page.evaluate(() => localStorage.getItem("pinnedVideo"))) === null);
   // Pinned stream goes offline: fall back to the open tab's stream, and keep the pin for when it's back.
-  await page.evaluate((st) => { tabs.get("otherchan").stream = st; activate(tabs.get("uwoslab")); setPinned("otherchan"); }, live());
+  await page.evaluate((st) => { tabs.get("otherchan").stream = st; activate(tabs.get("yappa")); setPinned("otherchan"); }, live());
   await page.waitForFunction(() => playerChannel === "otherchan");
-  await page.evaluate(() => { tabs.get("otherchan").stream = null; activate(tabs.get("uwoslab")); renderVideo(); });
-  await page.waitForFunction(() => playerChannel === "uwoslab");
+  await page.evaluate(() => { tabs.get("otherchan").stream = null; activate(tabs.get("yappa")); renderVideo(); });
+  await page.waitForFunction(() => playerChannel === "yappa");
   check("a pinned channel that went offline falls back to the open tab's stream (pin kept)", await page.evaluate(() => pinnedLogin === "otherchan") && await page.$eval("#pin-btn", (b) => /offline right now/.test(b.title)));
   // Closing the pinned tab unpins.
   await page.evaluate((st) => { tabs.get("otherchan").stream = st; }, live());
@@ -1185,7 +1185,7 @@ await page.screenshot({ path: dir + "/t12-video-wide.png" });
   check("closing the pinned tab unpins", await page.evaluate(() => pinnedLogin === null && localStorage.getItem("pinnedVideo") === null));
   await page.evaluate(() => openTab("otherchan"));
   await page.waitForFunction(() => tabs.get("otherchan") && tabs.get("otherchan").broadcaster);
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
 }
 
 // A phone turned sideways: video on the left, chat on the right (not stacked).
@@ -1227,9 +1227,9 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   });
   const su = new URL(nat.src);
   check("Native: a <video> (inline, browser controls; muted until the page has been tapped) replaces the embed", nat.video && !nat.iframe && nat.mutedOk && nat.inline && nat.controls, JSON.stringify(nat));
-  check("Native: playback token from Twitch's GQL in the browser, as Twitch's web client", log.gql.at(-1).login === "uwoslab" && log.gql.at(-1).clientId === "kimne78kx3ncx6brgo4mv6wki5h1ko", JSON.stringify(log.gql.at(-1)));
+  check("Native: playback token from Twitch's GQL in the browser, as Twitch's web client", log.gql.at(-1).login === "yappa" && log.gql.at(-1).clientId === "kimne78kx3ncx6brgo4mv6wki5h1ko", JSON.stringify(log.gql.at(-1)));
   check("Native: hls.js loads the usher playlist with the token (no web worker: CSP)",
-    su.host === "usher.ttvnw.net" && su.pathname === "/api/channel/hls/uwoslab.m3u8" && su.searchParams.get("sig") === "sig-uwoslab" && JSON.parse(su.searchParams.get("token")).channel === "uwoslab" &&
+    su.host === "usher.ttvnw.net" && su.pathname === "/api/channel/hls/yappa.m3u8" && su.searchParams.get("sig") === "sig-yappa" && JSON.parse(su.searchParams.get("token")).channel === "yappa" &&
     nat.attach[1] === "VIDEO" && nat.worker === false, nat.src);
   check("Native: saved", JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))).player === "native");
   const nativeH = await page.$eval("#video", (v) => Math.round(v.getBoundingClientRect().height));
@@ -1258,7 +1258,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("error")));
   await page.waitForFunction((n) => __hls.instances.length === n + 1 && __hls.instances.at(-1).calls.length >= 2, hlsBefore, { timeout: 5000 });
   check("built-in failure → hls.js tries as the last resort", true);
-  await page.evaluate(() => __hls.instances.at(-1).fire("hlsError", { fatal: true, type: "networkError", details: "manifestLoadError", response: { code: 0 }, url: "https://usher.ttvnw.net/api/channel/hls/uwoslab.m3u8" }));
+  await page.evaluate(() => __hls.instances.at(-1).fire("hlsError", { fatal: true, type: "networkError", details: "manifestLoadError", response: { code: 0 }, url: "https://usher.ttvnw.net/api/channel/hls/yappa.m3u8" }));
   await page.waitForSelector("#video iframe", { timeout: 5000 });
   const both = await page.evaluate(() => [...active.list.querySelectorAll(".sys.err")].at(-1).textContent);
   check("all attempts failed → embed, message names each reason", both.includes("built-in: unknown error") && both.includes("hls.js: manifestLoadError (blocked by the browser, likely CORS) loading usher.ttvnw.net"), both);
@@ -1306,26 +1306,26 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   });
   // Phone: the app first, then the website if this page is still in front.
   await page.tap("#twitch-btn");
-  check("phone: tries the Twitch app first", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]');
+  check("phone: tries the Twitch app first", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/yappa"]]');
   await settle(400);
-  check("phone: app didn't take over → opens twitch.tv", JSON.stringify((await page.evaluate(() => __calls)).slice(1)) === '[["window","https://www.twitch.tv/uwoslab","_blank",""]]', JSON.stringify(await page.evaluate(() => __calls)));
+  check("phone: app didn't take over → opens twitch.tv", JSON.stringify((await page.evaluate(() => __calls)).slice(1)) === '[["window","https://www.twitch.tv/yappa","_blank",""]]', JSON.stringify(await page.evaluate(() => __calls)));
   // The app opening (page loses focus) cancels the website fallback.
   await page.evaluate(() => { __calls.length = 0; });
   await page.tap("#twitch-btn");
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   await settle(400);
-  check("phone: app opened (page blurred) → no website fallback", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]');
+  check("phone: app opened (page blurred) → no website fallback", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/yappa"]]');
   // A blocked fallback leaves a link in chat instead.
   await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = true; });
   await page.tap("#twitch-btn");
   await sleep(400);
   const linkLine = await page.evaluate(() => { const a = [...active.list.querySelectorAll(".sys a.link")].at(-1); return a && a.href; });
-  check("blocked fallback → tappable link in chat", linkLine === "https://www.twitch.tv/uwoslab", String(linkLine));
+  check("blocked fallback → tappable link in chat", linkLine === "https://www.twitch.tv/yappa", String(linkLine));
   // Desktop: the pop-out chat window (or a tab if the popup is blocked).
   await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = false; openOnTwitch(active, false); });
-  check("desktop: pop-out chat window", JSON.stringify(await page.evaluate(() => __calls)) === '[["window","https://www.twitch.tv/popout/uwoslab/chat?popout=","twitch-popout","popup,width=420,height=720"]]', JSON.stringify(await page.evaluate(() => __calls)));
+  check("desktop: pop-out chat window", JSON.stringify(await page.evaluate(() => __calls)) === '[["window","https://www.twitch.tv/popout/yappa/chat?popout=","twitch-popout","popup,width=420,height=720"]]', JSON.stringify(await page.evaluate(() => __calls)));
   await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = true; openOnTwitch(active, false); });
-  check("desktop, popup blocked → opens a tab instead", (await page.evaluate(() => __calls)).length === 2 && (await page.evaluate(() => __calls[1][1])) === "https://www.twitch.tv/uwoslab");
+  check("desktop, popup blocked → opens a tab instead", (await page.evaluate(() => __calls)).length === 2 && (await page.evaluate(() => __calls[1][1])) === "https://www.twitch.tv/yappa");
   await page.evaluate(() => { window.__popupBlocked = false; });
 }
 
@@ -1347,10 +1347,10 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   await page.tap("#twitch-btn");
   await page.waitForSelector("#embed-modal:not([hidden]) .chat-embed:not([hidden])");
   const emb = await page.evaluate(() => { const f = document.querySelector("#embed-modal .chat-embed:not([hidden])"); const r = f.getBoundingClientRect(); return { src: f.src, h: Math.round(r.height), w: Math.round(r.width), title: document.getElementById("embed-title").textContent }; });
-  check("embed window: Twitch's official chat embed, parent= this site, dark", emb.src === "https://www.twitch.tv/embed/uwoslab/chat?parent=yappa.test&darkpopout" && emb.title === "Twitch chat: UwoSlab", JSON.stringify(emb));
+  check("embed window: Twitch's official chat embed, parent= this site, dark", emb.src === "https://www.twitch.tv/embed/yappa/chat?parent=yappa.test&darkpopout" && emb.title === "Twitch chat: Yappa", JSON.stringify(emb));
   check("embed window is big enough to use on a phone", emb.h >= 300 && emb.w >= 330, JSON.stringify(emb));
   await settle(300);
-  check("the embed page actually loaded", log.chatEmbeds.includes("/embed/uwoslab/chat?parent=yappa.test&darkpopout"), JSON.stringify(log.chatEmbeds));
+  check("the embed page actually loaded", log.chatEmbeds.includes("/embed/yappa/chat?parent=yappa.test&darkpopout"), JSON.stringify(log.chatEmbeds));
   await page.screenshot({ path: dir + "/t27-chat-embed.png" });
   check("light theme: no darkpopout", await page.evaluate(() => { document.documentElement.dataset.theme = "light"; const u = chatEmbedUrl("x"); document.documentElement.dataset.theme = "dark"; return u === "https://www.twitch.tv/embed/x/chat?parent=yappa.test"; }));
 
@@ -1370,14 +1370,14 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   await page.tap("#twitch-btn");
   await page.waitForSelector("#embed-modal:not([hidden])");
   const two = await page.evaluate(() => [...document.querySelectorAll("#embed-frames iframe")].map((f) => f.src.split("/embed/")[1].split("/")[0] + (f.hidden ? ":hidden" : ":shown")));
-  check("each channel keeps its own frame; only the current one is shown", JSON.stringify(two) === '["uwoslab:hidden","otherchan:shown"]', JSON.stringify(two));
+  check("each channel keeps its own frame; only the current one is shown", JSON.stringify(two) === '["yappa:hidden","otherchan:shown"]', JSON.stringify(two));
   await page.click("#embed-close");
   // Only the last few stay loaded.
   await page.evaluate(() => { for (const l of ["fakea", "fakeb", "fakec"]) openChatEmbed({ login: l }); hideChatEmbed(); });
   const kept = await page.evaluate(() => [...embedFrames.keys()].join(","));
   check("at most 3 chats stay loaded (oldest dropped)", kept === "fakea,fakeb,fakec" && (await page.$$("#embed-frames iframe")).length === 3, kept);
   // Closing a channel's tab drops its chat; Reload recreates the current one.
-  await page.evaluate(() => { dropChatEmbed("fakea"); dropChatEmbed("fakeb"); dropChatEmbed("fakec"); openChatEmbed({ login: "uwoslab" }); });
+  await page.evaluate(() => { dropChatEmbed("fakea"); dropChatEmbed("fakeb"); dropChatEmbed("fakec"); openChatEmbed({ login: "yappa" }); });
   await page.evaluate(() => { document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker = "old"; });
   await page.click("#embed-reload");
   await settle(200);
@@ -1395,7 +1395,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   check("Settings shows the tracking-protection tip on Firefox only", (await tipFor("Mozilla/5.0 (Android 16; Mobile; rv:157.0) Gecko/157.0 Firefox/157.0")) && !(await tipFor("Mozilla/5.0 Chrome/126 Mobile Safari/537.36")));
   // The escape hatch to the real thing.
   await page.tap("#embed-go");
-  check("'Open the app' minimizes and hands off to Twitch", await page.$eval("#embed-modal", (m) => m.hidden) && JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]', JSON.stringify(await page.evaluate(() => __calls)));
+  check("'Open the app' minimizes and hands off to Twitch", await page.$eval("#embed-modal", (m) => m.hidden) && JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/yappa"]]', JSON.stringify(await page.evaluate(() => __calls)));
   await settle(400); // the pending website-fallback timer
   await page.evaluate(() => { for (const l of [...embedFrames.keys()]) dropChatEmbed(l); settings.bitsButton = "twitch"; saveSettings(); __calls.length = 0; });
 }
@@ -1529,7 +1529,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   const startSrc = await page.evaluate(() => document.querySelector("#video video").getAttribute("src"));
   check("Auto starts right away on the usher master playlist", startSrc.includes("usher.ttvnw.net") && !startSrc.includes("allow_audio_only"), startSrc);
   const lastMaster = log.master.at(-1);
-  check("the page asked the Worker for the quality list, with the playback token", lastMaster.login === "uwoslab" && lastMaster.sig === "sig-uwoslab" && JSON.parse(lastMaster.token).channel === "uwoslab", JSON.stringify(lastMaster).slice(0, 120));
+  check("the page asked the Worker for the quality list, with the playback token", lastMaster.login === "yappa" && lastMaster.sig === "sig-yappa" && JSON.parse(lastMaster.token).channel === "yappa", JSON.stringify(lastMaster).slice(0, 120));
   check("quality button appears, showing Auto", await page.$eval("#quality-btn", (b) => !b.hidden && b.textContent === "Auto"));
   await page.click("#quality-btn");
   const menu = await page.$$eval("#quality-menu button", (bs) => bs.map((b) => b.textContent + (b.classList.contains("on") ? "*" : "")));
@@ -1639,8 +1639,8 @@ await page.keyboard.press("Enter");
 await settle(200);
 check("sends plain text with emote names", log.sent.at(-1) === "so hi Kappa catJAM OMEGALUL and more" && log.sent.length === sentBefore + 1 && (await page.evaluate(() => composer.getText())) === "", log.sent.at(-1));
 await page.click("#emote-btn");
-await page.click('#picker-list button[data-name="uwoHype"]');
-check("picker inserts an image", await page.evaluate(() => !!document.querySelector('#message .ce-emote[data-name="uwoHype"]') && composer.getText() === "uwoHype "));
+await page.click('#picker-list button[data-name="yappaHype"]');
+check("picker inserts an image", await page.evaluate(() => !!document.querySelector('#message .ce-emote[data-name="yappaHype"]') && composer.getText() === "yappaHype "));
 await page.keyboard.press("Escape");
 await page.evaluate(() => composer.setText(""));
 
@@ -1660,14 +1660,14 @@ const selectedAfterLinkClick = await page.evaluate(() => {
   return a.closest(".msg").classList.contains("selected");
 });
 check("clicking a link doesn't select the message", !selectedAfterLinkClick);
-cur().send(chat("999", "clip1", "Clipper", "802", "lol https://clips.twitch.tv/FunnyClipSlug-AbC123 and https://www.twitch.tv/uwoslab/clip/SecondSlug?filter=clips"));
+cur().send(chat("999", "clip1", "Clipper", "802", "lol https://clips.twitch.tv/FunnyClipSlug-AbC123 and https://www.twitch.tv/yappa/clip/SecondSlug?filter=clips"));
 cur().send(chat("999", "clip2", "Again", "803", "reposting clips.twitch.tv/FunnyClipSlug-AbC123"));
 cur().send(chat("999", "clip3", "Nope", "804", "https://clips.twitch.tv/MissingClip"));
 await page.waitForFunction(() => document.querySelectorAll('li[data-id="clip1"] .clip-card').length === 2, null, { timeout: 3000 });
 const cards = await page.$$eval('li[data-id="clip1"] .clip-card', (cs) => cs.map((c) => ({ href: c.href, target: c.target, text: c.textContent, img: c.querySelector("img").src })));
 check("clip cards: both URL styles, thumbnail + duration + metadata",
   cards[0].href === "https://clips.twitch.tv/FunnyClipSlug-AbC123" && cards[0].target === "_blank" && cards[0].img.endsWith("clip-FunnyClipSlug-AbC123.jpg") &&
-  cards[0].text.includes("0:27") && cards[0].text.includes("UwoSlab · Just Chatting") && cards[0].text.includes("Clipped by Clipper · 12.3k views · 3d ago") &&
+  cards[0].text.includes("0:27") && cards[0].text.includes("Yappa · Just Chatting") && cards[0].text.includes("Clipped by Clipper · 12.3k views · 3d ago") &&
   cards[1].text.includes("Second clip"), JSON.stringify(cards));
 await settle(200);
 check("repeated clip fetched once; missing clip shows no card",
@@ -1678,7 +1678,7 @@ await page.screenshot({ path: dir + "/t16-clips.png" });
 await shot("clip-cards");
 // A clip link in chat history gets its card too (merged in by time, like scrolled-back history).
 await page.evaluate(() => {
-  const ev = ircToEvent("@id=hist-clip;tmi-sent-ts=" + (Date.now() - 90000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #uwoslab :earlier https://clips.twitch.tv/SecondSlug");
+  const ev = ircToEvent("@id=hist-clip;tmi-sent-ts=" + (Date.now() - 90000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #yappa :earlier https://clips.twitch.tv/SecondSlug");
   renderMessage(active, ev, { merge: true, historical: true });
 });
 await page.waitForSelector('li[data-id="hist-clip"] .clip-card', { timeout: 3000 }).catch(() => {});
@@ -1691,7 +1691,7 @@ await page.evaluate(() => {
 await settle(300);
 check("clip card also appears in a background tab's history", (await page.$$('li[data-id="hist-clip2"] .clip-card')).length === 1);
 await page.evaluate(() => {
-  const ev = ircToEvent("@id=hist-flaky;tmi-sent-ts=" + (Date.now() - 70000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #uwoslab :try https://clips.twitch.tv/FlakySlug");
+  const ev = ircToEvent("@id=hist-flaky;tmi-sent-ts=" + (Date.now() - 70000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #yappa :try https://clips.twitch.tv/FlakySlug");
   renderMessage(active, ev, { merge: true, historical: true });
 });
 await page.waitForSelector('li[data-id="hist-flaky"] .clip-card', { timeout: 6000 }).catch(() => {});
@@ -1700,32 +1700,32 @@ check("a clip lookup that fails once is retried and the card appears", (await pa
 // =============== raids ===============
 const raid = (fromId, fromName, to, viewers) => msg("notification", { subscription: { type: "channel.raid" }, event: { from_broadcaster_user_id: fromId, from_broadcaster_user_login: fromName.toLowerCase(), from_broadcaster_user_name: fromName, to_broadcaster_user_id: ids[to] || "1", to_broadcaster_user_login: to, to_broadcaster_user_name: to === "targetchan" ? "TargetChan" : to, viewers } });
 await page.click(".tab:first-child .tab-name");
-cur().send(raid("999", "UwoSlab", "targetchan", 1234));
+cur().send(raid("999", "Yappa", "targetchan", 1234));
 await page.waitForSelector(".messages:not([hidden]) .notice.raid");
 const raidText = await page.textContent(".messages:not([hidden]) .notice.raid");
-check("raid notice + countdown on watched tab", raidText.includes("UwoSlab raided TargetChan with 1,234 viewers.") && raidText.includes("Following in 5s"), raidText);
+check("raid notice + countdown on watched tab", raidText.includes("Yappa raided TargetChan with 1,234 viewers.") && raidText.includes("Following in 5s"), raidText);
 await page.screenshot({ path: dir + "/t13-raid.png" });
 await shot("raid");
 await page.waitForFunction(() => location.hash === "#targetchan", null, { timeout: 8000 });
 await page.waitForFunction(() => document.body.innerText.includes("Joined #TargetChan"), null, { timeout: 5000 });
 check("followed the raid: new tab opened, active, joined", (await state()).tabs.includes("TargetChan*") && log.subs.some((x) => x.startsWith("targetchan@")), (await state()).tabs);
-check("original tab kept, notice says followed", (await page.$eval(".tab:first-child .tab-name", (n) => n.textContent)) === "UwoSlab");
+check("original tab kept, notice says followed", (await page.$eval(".tab:first-child .tab-name", (n) => n.textContent)) === "Yappa");
 // Stay here
 await page.click(".tab:first-child .tab-name");
-cur().send(raid("999", "UwoSlab", "targetchan", 50));
+cur().send(raid("999", "Yappa", "targetchan", 50));
 await page.waitForSelector('.messages:not([hidden]) .notice.raid:last-of-type button:has-text("Stay here")');
 await page.click('.messages:not([hidden]) .notice.raid:last-of-type button:has-text("Stay here")');
 await sleep(500);
-check("Stay here cancels following", (await page.evaluate(() => location.hash)) === "#uwoslab");
+check("Stay here cancels following", (await page.evaluate(() => location.hash)) === "#yappa");
 // background tab raids: no switch, red badge
 cur().send(raid("888", "OtherChan", "targetchan", 3));
 await settle(200);
-check("background tab raid: no switch, badge flagged", (await page.evaluate(() => location.hash)) === "#uwoslab" && (await page.$eval(".tab:nth-child(2)", (t) => t.classList.contains("mentioned"))));
+check("background tab raid: no switch, badge flagged", (await page.evaluate(() => location.hash)) === "#yappa" && (await page.$eval(".tab:nth-child(2)", (t) => t.classList.contains("mentioned"))));
 // setting off
 await page.evaluate(() => { settings.followRaids = false; });
-cur().send(raid("999", "UwoSlab", "targetchan", 9));
+cur().send(raid("999", "Yappa", "targetchan", 9));
 await sleep(500);
-check("follow-raids off: notice only", (await page.evaluate(() => location.hash)) === "#uwoslab" && !(await page.textContent(".messages:not([hidden]) .notice.raid:last-of-type")).includes("Following"));
+check("follow-raids off: notice only", (await page.evaluate(() => location.hash)) === "#yappa" && !(await page.textContent(".messages:not([hidden]) .notice.raid:last-of-type")).includes("Following"));
 await page.evaluate(() => { settings.followRaids = true; });
 
 // =============== review fixes ===============
@@ -1774,7 +1774,7 @@ const followFetches = log.following || 0;
 await page.tap("#channel");
 await page.waitForSelector("#follow-list .fl-row");
 const fl = await page.$$eval("#follow-list > *", (ns) => ns.map((n) => n.textContent));
-check("focusing the channel box lists followed channels: live first by viewers, then A–Z", JSON.stringify(fl) === JSON.stringify(["Live now", "TargetChanCeleste · speedrun attempts4.3kopen", "UwoSlabSoftware and Game Development · Building a chat app1.2kopen", "Offline", "AlphaChan", "ZetaChan"]), JSON.stringify(fl));
+check("focusing the channel box lists followed channels: live first by viewers, then A–Z", JSON.stringify(fl) === JSON.stringify(["Live now", "TargetChanCeleste · speedrun attempts4.3kopen", "YappaSoftware and Game Development · Building a chat app1.2kopen", "Offline", "AlphaChan", "ZetaChan"]), JSON.stringify(fl));
 const flBox = await page.$eval("#follow-list", (b) => { const r = b.getBoundingClientRect(), h = document.querySelector("header").getBoundingClientRect(); return { top: Math.round(r.top - h.bottom), w: Math.round(r.width) }; });
 check("dropdown sits under the header, full width on phones", flBox.top <= 0 && flBox.w >= 360, JSON.stringify(flBox));
 await page.screenshot({ path: dir + "/t20-following.png" });
@@ -1791,7 +1791,7 @@ await page.waitForSelector("#follow-list .fl-row");
 await page.keyboard.press("ArrowDown");
 await page.keyboard.press("ArrowDown");
 await page.keyboard.press("Enter");
-await page.waitForFunction(() => location.hash === "#uwoslab");
+await page.waitForFunction(() => location.hash === "#yappa");
 check("arrow keys + Enter pick a channel", await page.$eval("#follow-list", (b) => b.hidden));
 check("list is cached briefly (one fetch for two opens)", log.following - followFetches === 1, String(log.following - followFetches));
 await page.evaluate(() => closeTab(tabs.get("alphachan")));
@@ -1807,8 +1807,8 @@ followingMode = "ok";
 // =============== follow button ===============
 {
   await page.evaluate(() => { following = null; });
-  await page.evaluate(() => openTab("uwoslab"));
-  await page.waitForFunction(() => active && active.login === "uwoslab" && active.broadcaster);
+  await page.evaluate(() => openTab("yappa"));
+  await page.waitForFunction(() => active && active.login === "yappa" && active.broadcaster);
   await page.waitForSelector("#follow-btn:not([hidden])");
   check("follow button shows 'following' for a followed channel", await page.$eval("#follow-btn", (b) => b.classList.contains("on") && b.getAttribute("aria-pressed") === "true" && /unfollow/i.test(b.title)));
   await page.screenshot({ path: dir + "/t60-follow-on.png" });
@@ -1825,7 +1825,7 @@ followingMode = "ok";
   await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); document.dispatchEvent(new Event("visibilitychange")); });
   await page.waitForFunction(() => document.getElementById("follow-btn").classList.contains("on"));
   check("coming back refreshes it (fresh fetch)", log.following === fb + 1 && log.followingFresh === 1, String(log.followingFresh));
-  await page.evaluate(() => openTab("uwoslab"));
+  await page.evaluate(() => openTab("yappa"));
   followedExtra = false;
 }
 
@@ -1954,20 +1954,20 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("banner clears once requests work again", await page.$eval("#expired", (b) => b.hidden));
 
   // A failed live-status lookup must not mark everyone offline (and pause the video).
-  await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "t", game_name: "g", viewer_count: 1, started_at: new Date().toISOString() }; });
+  await page.evaluate(() => { tabs.get("yappa").stream = { user_id: "999", title: "t", game_name: "g", viewer_count: 1, started_at: new Date().toISOString() }; });
   streamsFail = true;
   await page.evaluate(() => refreshStreams());
   await settle(200);
-  check("failed live-status lookup keeps the previous state", await page.evaluate(() => !!tabs.get("uwoslab").stream));
+  check("failed live-status lookup keeps the previous state", await page.evaluate(() => !!tabs.get("yappa").stream));
   streamsFail = false;
 
   // A failed badge/cheermote lookup is retried at the next join, not forgotten all session.
   extrasFail = true;
-  await page.evaluate(() => { const t = tabs.get("uwoslab"); t.loadedExtras = true; return loadTabExtras(t); });
-  check("failed badges/cheermotes lookup → empty for now, retried next join", await page.evaluate(() => tabs.get("uwoslab").loadedExtras === false && Object.keys(tabs.get("uwoslab").badges).length === 0));
+  await page.evaluate(() => { const t = tabs.get("yappa"); t.loadedExtras = true; return loadTabExtras(t); });
+  check("failed badges/cheermotes lookup → empty for now, retried next join", await page.evaluate(() => tabs.get("yappa").loadedExtras === false && Object.keys(tabs.get("yappa").badges).length === 0));
   extrasFail = false;
-  await page.evaluate(() => { const t = tabs.get("uwoslab"); return loadTabExtras(t).then(() => { t.loadedExtras = true; }); });
-  check("…and a later success sticks", await page.evaluate(() => tabs.get("uwoslab").loadedExtras === true));
+  await page.evaluate(() => { const t = tabs.get("yappa"); return loadTabExtras(t).then(() => { t.loadedExtras = true; }); });
+  check("…and a later success sticks", await page.evaluate(() => tabs.get("yappa").loadedExtras === true));
 
   // Joining: transient failures retry, permanent ones don't.
   await page.evaluate(() => { joinRetryMs = 100; });
@@ -2015,9 +2015,9 @@ check("history marks messages deleted before they were loaded", await page.evalu
   // Emote picker: Enter picks from what was just typed (the grid is debounced).
   await page.evaluate(() => composer.setText(""));
   await page.click("#emote-btn");
-  await page.fill("#emote-search", "uwoH");
+  await page.fill("#emote-search", "yappaH");
   await page.press("#emote-search", "Enter");
-  check("emote picker: Enter right after typing picks the matching emote", (await page.evaluate(() => composer.getText())).startsWith("uwoHype"), await page.evaluate(() => composer.getText()));
+  check("emote picker: Enter right after typing picks the matching emote", (await page.evaluate(() => composer.getText())).startsWith("yappaHype"), await page.evaluate(() => composer.getText()));
   await page.evaluate(() => { composer.setText(""); closePicker(); });
 }
 
@@ -2094,7 +2094,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   f = await irc("id=e", "plain text");
   check("history: messages without the tag are unchanged", f.length === 1 && f[0].type === "text");
   // ...and a loaded history message actually renders the image.
-  await page.evaluate(([url]) => { const ev = ircToEvent("@id=hist-gif;gifs=0-9|g9|" + url + ";tmi-sent-ts=" + (Date.now() - 5000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #uwoslab :[Old GIF!]"); renderMessage(active, ev, { merge: true, historical: true }); }, [gifUrl]);
+  await page.evaluate(([url]) => { const ev = ircToEvent("@id=hist-gif;gifs=0-9|g9|" + url + ";tmi-sent-ts=" + (Date.now() - 5000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #yappa :[Old GIF!]"); renderMessage(active, ev, { merge: true, historical: true }); }, [gifUrl]);
   check("a history GIF message renders the image", await page.$eval('li[data-id="hist-gif"]', (li) => !!li.querySelector("img.chat-gif")));
 }
 
@@ -2119,7 +2119,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await shot("giant-emotes");
   // History: the raw IRC line carries msg-id=gigantified-emote-message (shape taken from real chat).
   const hist = await page.evaluate(() => {
-    const ev = ircToEvent("@badge-info=;badges=;color=#FF7F50;display-name=Spender;emotes=25:0-4;id=giga-hist;msg-id=gigantified-emote-message;tmi-sent-ts=" + (Date.now() - 9000) + ";user-id=951 :spender!spender@spender.tmi.twitch.tv PRIVMSG #uwoslab :Kappa");
+    const ev = ircToEvent("@badge-info=;badges=;color=#FF7F50;display-name=Spender;emotes=25:0-4;id=giga-hist;msg-id=gigantified-emote-message;tmi-sent-ts=" + (Date.now() - 9000) + ";user-id=951 :spender!spender@spender.tmi.twitch.tv PRIVMSG #yappa :Kappa");
     renderMessage(active, ev, { merge: true, historical: true });
     const img = document.querySelector('li[data-id="giga-hist"] .body img');
     return { type: ev.message_type, giant: !!img && img.classList.contains("giant"), src: img && img.src };
@@ -2131,13 +2131,13 @@ check("history marks messages deleted before they were loaded", await page.evalu
 // =============== clips and VODs: browsing and creating clips ===============
 {
   // The window.
-  await page.evaluate(() => { clipPollMs = 100; tabs.get("uwoslab").stream = null; });
+  await page.evaluate(() => { clipPollMs = 100; tabs.get("yappa").stream = null; });
   await page.click(".tab:first-child .tab-name");
   check("the Clips & VODs button is in the info bar", await page.$eval("#clips-btn", (b) => !b.hidden && b.getAttribute("aria-label") === "Clips and VODs"));
   const before = (log.browse || []).length;
   await page.click("#clips-btn");
   await page.waitForSelector("#browse-modal:not([hidden]) .bcard");
-  check("opens on the channel's most-viewed clips (all time)", (await page.textContent("#browse-title")) === "Clips & VODs: UwoSlab" && log.browse[before] === "/api/channel/clips?broadcaster_id=999&period=all", log.browse[before]);
+  check("opens on the channel's most-viewed clips (all time)", (await page.textContent("#browse-title")) === "Clips & VODs: Yappa" && log.browse[before] === "/api/channel/clips?broadcaster_id=999&period=all", log.browse[before]);
   const cards = await page.$$eval("#browse-body .bcard", (cs) => cs.map((c) => ({ t: c.querySelector(".bt").textContent, s: c.querySelector(".bs").textContent, d: c.querySelector(".dur").textContent, img: c.querySelector("img").getAttribute("src") })));
   check("cards show thumbnail, length, title, views, age, category and clipper", cards.length === 3 && cards[0].d === "0:27" && cards[0].s === "12.3k views · 2d ago · Just Chatting · by ClipperT1".replace("T1", "1") && cards[0].img === "https://img.test/clip-TopClip1.jpg", JSON.stringify(cards[0]));
   await page.screenshot({ path: dir + "/t32-browse.png" });
@@ -2200,10 +2200,10 @@ check("history marks messages deleted before they were loaded", await page.evalu
   // Creating clips.
   await page.click("#clips-btn");
   await page.waitForSelector("#browse-body .clipper");
-  check("offline: clipping says it needs a live stream, no buttons", (await page.textContent("#browse-body .clipper")).includes("while #UwoSlab is live") && !(await page.$("#browse-body .clipper button")));
+  check("offline: clipping says it needs a live stream, no buttons", (await page.textContent("#browse-body .clipper")).includes("while #Yappa is live") && !(await page.$("#browse-body .clipper button")));
   await page.keyboard.press("Escape");
   noClipsScope = true;
-  await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "t", game_name: "g", viewer_count: 9, started_at: new Date().toISOString() }; return refreshStatus(); });
+  await page.evaluate(() => { tabs.get("yappa").stream = { user_id: "999", title: "t", game_name: "g", viewer_count: 9, started_at: new Date().toISOString() }; return refreshStatus(); });
   await page.click("#clips-btn");
   await page.waitForSelector("#browse-body .clipper");
   check("live but without the permission: a Reconnect link, no buttons", (await page.$eval("#browse-body .clipper a", (a) => a.getAttribute("href"))) === "/auth/login" && !(await page.$("#browse-body .clipper button")));
@@ -2284,7 +2284,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("a failed post says why, still shows the clip card and its buttons", (log.sendTries || []).length === tries0 + 1 && failed.cls.includes("err") && failed.state === "Clip created, but its link wasn't posted: Your message was not sent: slow mode is on." && failed.err.includes("slow mode") && failed.card, JSON.stringify(failed));
   sendFailure = null;
   await page.keyboard.press("Escape");
-  await page.evaluate(() => { tabs.get("uwoslab").stream = null; });
+  await page.evaluate(() => { tabs.get("yappa").stream = null; });
 }
 
 // =============== account menu (profile picture), your clips, and sharing ===============
@@ -2297,7 +2297,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#profile-btn");
   const menu = await page.evaluate(() => ({ expanded: document.getElementById("profile-btn").getAttribute("aria-expanded"), name: document.querySelector("#account-menu .dn").textContent, login: document.querySelector("#account-menu .ln").textContent, items: [...document.querySelectorAll("#account-menu button")].map((b) => b.textContent), h: Math.round(document.querySelector("#account-menu button").getBoundingClientRect().height), pic: !!document.querySelector("#account-menu .who img") }));
   check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
-    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Settings for #UwoSlab","Whispers","Bookmarks","Mentions","All chats in one feed","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
+    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Settings for #Yappa","Whispers","Bookmarks","Mentions","All chats in one feed","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
   await page.screenshot({ path: dir + "/t35-account-menu.png" });
   await shot("account-menu");
   await page.keyboard.press("Escape");
@@ -2485,7 +2485,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const tabCount = await page.evaluate(() => tabs.size);
   if (tabCount < 2) { await page.evaluate(() => openTab("alphachan", false)); await page.waitForFunction(() => tabs.get("alphachan") && tabs.get("alphachan").joined); }
   const names = await page.evaluate(() => [...tabs.keys()]);
-  const other = names.find((n) => n !== "uwoslab") || names[0];
+  const other = names.find((n) => n !== "yappa") || names[0];
   const otherId = await page.evaluate((n) => tabs.get(n).broadcaster.id, other);
   cur().send(chat(otherId, "cmb0", "Early", "9301", "before opening the feed"));
   await page.waitForFunction(() => document.querySelector('li[data-id="cmb0"]'));
@@ -2503,7 +2503,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("tapping a line opens that channel", (await page.evaluate(() => active.login)) === other && await page.$eval("#sheet", (s) => s.hidden));
 
   // ---- stream stats ----
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
   await page.evaluate(() => refreshStreams());
   await settle(150);
   await page.evaluate(() => refreshStreams());
@@ -2523,18 +2523,18 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#send");
   await page.waitForFunction(() => !document.getElementById("slow-note").hidden);
   check("after sending in a slow-mode channel a countdown shows", /Slow mode: you can chat again in (9|10)s/.test(await page.textContent("#slow-note")), await page.textContent("#slow-note"));
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
   check("the countdown belongs to its channel", await page.$eval("#slow-note", (n) => n.hidden));
   await page.evaluate((n) => { tabs.get(n).slowUntil = Date.now() + 1200; activate(tabs.get(n)); }, other);
   await page.waitForFunction(() => document.getElementById("slow-note").hidden, null, { timeout: 4000 });
   check("and it clears itself when the time is up", true);
-  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
 
   // ---- export ----
   await page.click("#profile-btn");
   const [dl] = await Promise.all([page.waitForEvent("download"), page.click('#account-menu button:has-text("Save this chat (text)")')]);
   const dlText = readFileSync(await dl.path(), "utf8");
-  check("Save this chat (text) downloads the visible messages", /^uwoslab-chat-.*\.txt$/i.test(dl.suggestedFilename()) && /SomeoneElse: a perfectly fine message/.test(dlText) && !/Nightbot/.test(dlText), dl.suggestedFilename() + " " + dlText.slice(0, 120));
+  check("Save this chat (text) downloads the visible messages", /^yappa-chat-.*\.txt$/i.test(dl.suggestedFilename()) && /SomeoneElse: a perfectly fine message/.test(dlText) && !/Nightbot/.test(dlText), dl.suggestedFilename() + " " + dlText.slice(0, 120));
   await page.click("#profile-btn");
   const [dl2] = await Promise.all([page.waitForEvent("download"), page.click('#account-menu button:has-text("Save this chat (JSON)")')]);
   const parsed = JSON.parse(readFileSync(await dl2.path(), "utf8"));
@@ -2752,15 +2752,17 @@ check("history marks messages deleted before they were loaded", await page.evalu
 
   // ---- a second stream (wide windows) ----
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.evaluate(() => { settings.video = true; saveSettings(); activate(tabs.get("uwoslab")); });
+  await page.evaluate(() => { settings.video = true; saveSettings(); activate(tabs.get("yappa")); });
   await page.waitForSelector("#video:not([hidden])");
-  const other2 = await page.evaluate(() => [...tabs.keys()].find((n) => n !== "uwoslab"));
+  const other2 = await page.evaluate(() => [...tabs.keys()].find((n) => n !== "yappa"));
   await page.click(`.tab:has(.tab-name:text-is("${other2}")), .tab >> nth=1`, { button: "right" });
   await page.click('.tab-menu button:has-text("Watch alongside")');
   await page.waitForSelector("#video2:not([hidden]) iframe");
   const two = await page.evaluate(() => ({ src: document.querySelector("#v2-frame iframe").src, dual: document.querySelector(".app").classList.contains("dual"), w1: document.getElementById("video").getBoundingClientRect().width, w2: document.getElementById("video2").getBoundingClientRect().width, saved: localStorage.getItem("secondVideo") }));
   check("Watch alongside shows a second player next to the first", /player\.twitch\.tv\/\?channel=\w+&parent=yappa\.test&muted=true/.test(two.src) && two.dual && two.w1 > 300 && two.w2 > 300 && !!two.saved, JSON.stringify(two));
   await shot("watch-alongside");
+  await page.setViewportSize({ width: 1280, height: 800 }); // (shot() leaves the phone size behind)
+  await settle(350);
   await page.click("#v2-close");
   check("Close puts the layout back", await page.evaluate(() => document.getElementById("video2").hidden && !document.querySelector(".app").classList.contains("dual") && !localStorage.getItem("secondVideo")));
   await page.setViewportSize({ width: 390, height: 760 });
@@ -2803,13 +2805,13 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const p2 = await ctx.newPage();
   p2.on("pageerror", (e) => errors.push("p2: " + e.message));
   await p2.goto("https://old.test/seed");
-  await p2.evaluate((st) => { localStorage.setItem("settings", st); localStorage.setItem("tabs", '["otherchan","uwoslab"]'); localStorage.setItem("lastChannel", "otherchan"); }, oldSettings);
+  await p2.evaluate((st) => { localStorage.setItem("settings", st); localStorage.setItem("tabs", '["otherchan","yappa"]'); localStorage.setItem("lastChannel", "otherchan"); }, oldSettings);
   await page.evaluate(() => localStorage.clear()); // the new address starts empty
   await p2.goto("https://old.test/");
   await p2.waitForURL("https://yappa.test/**");
   await p2.waitForFunction(() => document.querySelectorAll(".tab").length === 2, null, { timeout: 5000 });
   const moved = await p2.evaluate(() => ({ hash: location.hash, rules: settings.rules, tabs: localStorage.getItem("tabs"), active: active && active.login }));
-  check("old address carries tabs and settings to the new one", moved.hash === "#otherchan" && moved.rules[0].phrase === "moved" && moved.tabs === '["otherchan","uwoslab"]' && moved.active === "otherchan", JSON.stringify(moved));
+  check("old address carries tabs and settings to the new one", moved.hash === "#otherchan" && moved.rules[0].phrase === "moved" && moved.tabs === '["otherchan","yappa"]' && moved.active === "otherchan", JSON.stringify(moved));
   // A sign-in error that lands on the old address survives the hop to the new one.
   await p2.goto("https://old.test/?error=state");
   await p2.waitForURL("https://yappa.test/**");
@@ -2827,27 +2829,27 @@ check("history marks messages deleted before they were loaded", await page.evalu
 {
   syncMockOff = true;
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("tabs") || "[]"));
-  await page.evaluate(() => localStorage.setItem("tabs", '["otherchan","uwoslab"]'));
-  await page.evaluate(() => localStorage.setItem("lastChannel", "uwoslab"));
-  await page.evaluate(() => localStorage.setItem("chanIds", '{"uwoslab":{"id":"999"},"otherchan":{"id":"888"}}')); // remembered from an earlier visit
+  await page.evaluate(() => localStorage.setItem("tabs", '["otherchan","yappa"]'));
+  await page.evaluate(() => localStorage.setItem("lastChannel", "yappa"));
+  await page.evaluate(() => localStorage.setItem("chanIds", '{"yappa":{"id":"999"},"otherchan":{"id":"888"}}')); // remembered from an earlier visit
   await page.evaluate(() => { settings.history = true; saveSettings(); });
   log.emotes = [];
   const histBefore = log.history.length, subsBefore = log.subs.length;
   const statusUrls = [], apiOrder = [];
   const onReq = (r) => { if (r.url().includes("/api/status")) statusUrls.push(r.url()); if (r.url().includes("/api/chat/")) apiOrder.push(new URL(r.url()).pathname + new URL(r.url()).search); };
   page.on("request", onReq);
-  await page.goto("https://yappa.test/?cold=1#uwoslab");
+  await page.goto("https://yappa.test/?cold=1#yappa");
   await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length >= 2, null, { timeout: 8000 });
   await settle(500);
   page.off("request", onReq);
   const subs = log.subs.slice(subsBefore).map((x) => x.split("@")[0]);
-  check("the tab you're looking at is joined first", subs[0] === "uwoslab", JSON.stringify(subs));
+  check("the tab you're looking at is joined first", subs[0] === "yappa", JSON.stringify(subs));
   check("the first status call also fetches the synced settings, and is made only once (started early by theme.js)", statusUrls.length === 1 && statusUrls[0].includes("sync=1") && (await page.evaluate(() => window.earlyStatus === null)), JSON.stringify(statusUrls));
   const iBadges = apiOrder.indexOf("/api/chat/badges?broadcaster_id=999"), iSub = apiOrder.indexOf("/api/chat/subscribe");
   check("the open channel's badges are requested from the remembered id, before the join, and only once", iBadges >= 0 && iSub >= 0 && iBadges < iSub && apiOrder.filter((x) => x === "/api/chat/badges?broadcaster_id=999").length === 1, JSON.stringify(apiOrder));
   check("Twitch emotes are fetched for the open tab only at first", JSON.stringify(log.emotes) === '["999"]', JSON.stringify(log.emotes));
   const h = log.history.slice(histBefore);
-  check("...and so is the history: asked for early, then just the gap up to the join", h.length === 2 && h[0] === "uwoslab?limit=100" && /^uwoslab\?limit=100&after=\d+$/.test(h[1]), JSON.stringify(h));
+  check("...and so is the history: asked for early, then just the gap up to the join", h.length === 2 && h[0] === "yappa?limit=100" && /^yappa\?limit=100&after=\d+$/.test(h[1]), JSON.stringify(h));
   check("the early history shows once, without duplicates", await page.evaluate(() => { const ids = [...document.querySelectorAll(".messages:not([hidden]) li.msg")].map((l) => l.dataset.id).filter(Boolean); return ids.length > 0 && new Set(ids).size === ids.length; }));
   const marks = await page.evaluate(() => startup);
   check("startup timings are recorded in order", marks.status > 0 && marks.socket >= 0 && marks.firstJoin >= marks.socket && marks.allJoined >= marks.firstJoin, JSON.stringify(marks));

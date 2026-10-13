@@ -178,12 +178,18 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .tab .live-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #eb0400; }
 
 /* Info bar: live status, chat modes, search, mod controls */
-.infobar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); min-width: 0; flex-wrap: wrap; row-gap: 2px; }
-.infobar .live { flex: 1 1 110px; min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
+.infobar { flex: none; display: flex; align-items: center; gap: 2px; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); min-width: 0; flex-wrap: wrap; row-gap: 2px; }
+.infobar .live { flex: 1 1 110px; min-width: 0; margin-right: 6px; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
 .infobar .live.on .dot { width: 8px; height: 8px; border-radius: 50%; background: #eb0400; flex: none; box-shadow: 0 0 6px #eb0400; }
 .infobar .live.on b { color: var(--live-text); }
-.infobar .live .title { overflow: hidden; text-overflow: ellipsis; }
-.infobar .modes { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.infobar .live .title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.infobar .live .title-text { display: inline-block; white-space: nowrap; }
+/* A title too long for its space slides to its end and back (see fitTitle). */
+.infobar .live .title.scrolls { text-overflow: clip; }
+.infobar .live .title.scrolls .title-text { animation: title-scroll var(--dur, 8s) ease-in-out 1.5s infinite alternate; }
+@keyframes title-scroll { to { transform: translateX(var(--shift, 0)); } }
+@media (prefers-reduced-motion: reduce) { .infobar .live .title.scrolls .title-text { animation: none; } .infobar .live .title.scrolls { text-overflow: ellipsis; } }
+.infobar .modes { display: flex; gap: 4px; margin-right: 4px; flex-wrap: nowrap; overflow: hidden; }
 .chip { padding: 1px 7px; border-radius: 10px; background: var(--ghost); color: var(--text); font-size: 11px; white-space: nowrap; }
 .searchbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
 .searchbar input { flex: 1; padding: 5px 9px; }
@@ -432,3 +438,9 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .tool-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .tool-msg { margin: 0 0 8px; font-size: 13px; color: var(--ok-text); }
 .tool-msg.err { color: var(--err-text); }
+
+.infobar .icon-btn { padding: 4px 3px; }
+#modtools-btn { position: relative; }
+#modtools-btn .count { position: absolute; top: -2px; right: -3px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: #eb0400; color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+.modes-grid { display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; align-items: center; font-size: 14px; }
+.modes-grid select { font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }

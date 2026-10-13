@@ -69,7 +69,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
 - "Gigantify an Emote" (Bits Power-up) messages show the emote enlarged.
 - Follow button: a heart in the info bar shows whether you follow the channel. Twitch removed its follow API, so tapping it opens the channel on Twitch to follow or unfollow, and Yappa refreshes the status when you come back.
-- Moderator tools (Mod tools button in channels you moderate): send announcements and shoutouts, manage blocked terms, turn Shield Mode on or off, answer unban requests, see who's in chat; on a user card, Warn and mark someone as monitored or restricted. Messages from users Twitch flags as suspicious are marked in chat, and Settings can add a line for other moderators' actions.
+- Moderator tools (the shield icon in the info bar, in channels you moderate): chat modes (slow, followers-only, subscribers-only, emote-only, unique chat), send announcements and shoutouts, manage blocked terms, turn Shield Mode on or off, answer unban requests, see who's in chat; on a user card, Warn and mark someone as monitored or restricted. Messages from users Twitch flags as suspicious are marked in chat, and Settings can add a line for other moderators' actions.
 - Whispers (account menu), your Twitch block list (hides blocked users' messages; Block/Unblock on the user card), a chip showing your subscription to the open channel, and labels on messages that come from another channel in a shared chat.
 - Alerts: optional notifications when followed channels go live (only while Yappa is open), and a line in chat when a channel changes its title or category.
 - Discover streams (account menu): top live streams, category browsing and channel search; typing in the channel box also searches all of Twitch. The Clips & VODs window has a Schedule tab.
@@ -265,7 +265,7 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/mod-actions-mobile.png" width="240" alt="Message actions (phone)"> | <img src="docs/screenshots/mod-actions-desktop.png" width="520" alt="Message actions (desktop)"> |
 
-**Chat modes**
+**Chat modes (the first tab of Mod tools)**
 
 | Phone | Desktop |
 |---|---|

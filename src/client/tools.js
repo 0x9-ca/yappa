@@ -44,8 +44,11 @@ const say = (text, kind) => { if (active) sysLine(active, text, kind); };
 // ---------- moderator tools (sheet) ----------
 
 const COLORS = [["primary", "Channel color"], ["blue", "Blue"], ["green", "Green"], ["orange", "Orange"], ["purple", "Purple"]];
+const SLOW_OPTIONS = [0, 3, 5, 10, 20, 30, 60, 120];
+const FOLLOW_OPTIONS = [[-1, "Off"], [0, "Any follower"], [10, "10 min"], [30, "30 min"], [60, "1 hour"], [1440, "1 day"], [10080, "1 week"], [43200, "1 month"], [129600, "3 months"]];
+
 const mt = {
-  channel: null, tab: "announce", err: "", note: "", busy: false, needsScope: false, filter: "",
+  channel: null, tab: "modes", err: "", note: "", busy: false, needs: {}, filter: "",
   terms: null, shield: null, unbans: null, chatters: null,
   form: { announce: "", color: "primary", shout: "", term: "", unbanNote: "" },
 };
@@ -55,7 +58,7 @@ function openMod() {
   if (!tab || !tab.isMod || !tab.broadcaster) return;
   mt.channel = tab;
   mt.err = mt.note = "";
-  mt.needsScope = false;
+  mt.needs = {};
   mt.terms = mt.shield = mt.unbans = mt.chatters = null;
   renderMod();
   loadMod(mt.tab);
@@ -65,7 +68,7 @@ async function loadMod(which) {
   const path = { terms: "/api/mod/terms", shield: "/api/mod/shield", unbans: "/api/mod/unbans", chatters: "/api/mod/chatters" }[which];
   if (!path || !mt.channel) return;
   const r = await api(path + "?broadcaster_id=" + encodeURIComponent(mt.channel.broadcaster.id));
-  if (r.needsScope) mt.needsScope = true;
+  if (r.needsScope) mt.needs[which === "unbans" || which === "terms" || which === "shield" || which === "chatters" ? mt.tab : which] = true;
   else if (!r.ok) mt.err = r.error;
   else if (which === "terms") mt.terms = r.terms;
   else if (which === "shield") mt.shield = r.active;
@@ -82,15 +85,50 @@ async function modDo(path, body, after) {
   renderMod();
   const r = await api(path, body);
   mt.busy = false;
-  if (r.needsScope) mt.needsScope = true;
+  if (r.needsScope) mt.needs[mt.tab] = true;
   else if (!r.ok) mt.err = r.error;
   else after(r);
   if (sheetShows("modtools")) renderMod();
 }
 
+/** Chat modes: the same switches as Twitch's own chat settings. */
+function modesPanel(body) {
+  const tab = mt.channel, st = tab.settings || {};
+  const select = (options, value, onChange) => dropdown(options, value, (v) => onChange(Number(v)));
+  const toggle = (checked, onChange) => {
+    const c = document.createElement("input");
+    c.type = "checkbox";
+    c.checked = !!checked;
+    c.addEventListener("change", () => onChange(c.checked));
+    return c;
+  };
+  const update = async (patch) => {
+    const r = await api("/api/chat/settings", { broadcaster_id: tab.broadcaster.id, ...patch });
+    if (r.ok) { if (r.settings) tab.settings = r.settings; mt.err = ""; }
+    else mt.err = "Couldn't change chat modes: " + r.error;
+    if (tab === active) renderInfo();
+    if (sheetShows("modtools")) renderMod();
+  };
+  const grid = el("div", "modes-grid");
+  grid.append(
+    el("span", null, "Slow mode"),
+    select(SLOW_OPTIONS.map((v) => [v, v ? v + "s" : "Off"]), st.slow_mode ? st.slow_mode_wait_time || 30 : 0, (v) => update(v ? { slow_mode: true, slow_mode_wait_time: v } : { slow_mode: false })),
+    el("span", null, "Followers-only"),
+    select(FOLLOW_OPTIONS, st.follower_mode ? st.follower_mode_duration || 0 : -1, (v) => update(v < 0 ? { follower_mode: false } : { follower_mode: true, follower_mode_duration: v })),
+    el("span", null, "Subscribers-only"), toggle(st.subscriber_mode, (on) => update({ subscriber_mode: on })),
+    el("span", null, "Emote-only"), toggle(st.emote_mode, (on) => update({ emote_mode: on })),
+    el("span", null, "Unique chat (no repeats)"), toggle(st.unique_chat_mode, (on) => update({ unique_chat_mode: on })),
+  );
+  body.appendChild(grid);
+}
+
+window.toolsModesChanged = (tab) => { if (tab === mt.channel && mt.tab === "modes" && sheetShows("modtools")) renderMod(); };
+
 function modPanel(body) {
   const id = mt.channel.broadcaster.id, f = mt.form;
-  if (mt.tab === "announce") {
+  if (mt.tab === "modes") {
+    modesPanel(body);
+  } else if (mt.tab === "announce") {
     body.append(
       el("p", "hint", "Highlighted in chat for everyone, in the color you pick."),
       textBox(f.announce, 500, "Announcement", (t) => { f.announce = t; }),
@@ -171,22 +209,17 @@ function renderMod() {
   const root = el("div", "tools modtools");
   root.dataset.modtools = "1";
   root.appendChild(el("h2", null, "Mod tools: #" + mt.channel.broadcaster.name));
-  if (mt.needsScope) {
-    root.appendChild(reconnectNote("these moderator tools"));
-    $("sheet-body").replaceChildren(root);
-    show("sheet", true);
-    return;
-  }
   const tabs = el("div", "browse-tabs");
   const unbanN = mt.channel.unbanCount || 0;
-  for (const [id, label] of [["announce", "Announce"], ["shout", "Shoutout"], ["terms", "Blocked terms"], ["shield", "Shield Mode"], ["unbans", "Unbans" + (unbanN ? " (" + unbanN + ")" : "")], ["chatters", "Chatters"]]) {
+  for (const [id, label] of [["modes", "Chat modes"], ["announce", "Announce"], ["shout", "Shoutout"], ["terms", "Blocked terms"], ["shield", "Shield Mode"], ["unbans", "Unbans" + (unbanN ? " (" + unbanN + ")" : "")], ["chatters", "Chatters"]]) {
     tabs.appendChild(btn(label, () => { mt.tab = id; mt.err = mt.note = ""; renderMod(); loadMod(id); }, mt.tab === id ? "on" : ""));
   }
   root.appendChild(tabs);
   if (mt.err) root.appendChild(el("div", "tool-msg err", mt.err));
   else if (mt.note) root.appendChild(el("div", "tool-msg", mt.note));
   const body = el("div", "tool-body");
-  modPanel(body);
+  if (mt.needs[mt.tab]) body.appendChild(reconnectNote("this moderator tool"));
+  else modPanel(body);
   if (mt.busy) body.querySelectorAll("button").forEach((b) => { b.disabled = true; });
   root.appendChild(body);
   $("sheet-body").replaceChildren(root);
@@ -462,10 +495,12 @@ async function refreshSub(tab) {
 }
 
 window.toolsRenderInfo = (tab) => {
-  const b = $("modtools-btn");
-  const mod = !!(tab && tab.isMod && tab.broadcaster && hasScope("moderator:manage:announcements"));
+  const b = $("modtools-btn"), count = $("modtools-count");
+  const mod = !!(tab && tab.isMod && tab.broadcaster);
   b.hidden = !mod;
-  if (mod) b.textContent = "Mod tools" + (tab.unbanCount ? " (" + tab.unbanCount + ")" : "");
+  count.hidden = !(mod && tab.unbanCount);
+  count.textContent = mod && tab.unbanCount ? String(Math.min(tab.unbanCount, 99)) : "";
+  b.title = b.ariaLabel = "Mod tools" + (mod && tab.unbanCount ? ": " + tab.unbanCount + " unban request" + (tab.unbanCount === 1 ? "" : "s") : "");
   renderSub(tab);
   if (tab) refreshSub(tab);
 };

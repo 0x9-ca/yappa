@@ -568,6 +568,16 @@ await page.evaluate(() => composer.setText(""));
   check("no chip where you're not subscribed", await page.$eval("#sub-chip", (c) => c.hidden));
   await page.evaluate(() => activate(tabs.get("uwoslab")));
 
+  // Info bar: tight icon spacing, and a long stream title scrolls instead of being cut off.
+  const gaps = await page.evaluate(() => { const ids = ["video-btn", "pin-btn", "pip-btn", "follow-btn", "modtools-btn"].map((i) => document.getElementById(i)).filter((b) => b && !b.hidden); const r = ids.map((b) => b.getBoundingClientRect()); return r.slice(1).map((x, i) => Math.round(x.left - r[i].right)).filter((g) => g > -50 && g < 50); });
+  check("info bar icon buttons sit close together", gaps.length >= 2 && gaps.every((g) => g <= 4), JSON.stringify(gaps));
+  await page.evaluate(() => { tabs.get("uwoslab").stream.title = "A very long stream title that cannot possibly fit in the space the info bar gives it on a phone screen, so it has to scroll"; renderInfo(); });
+  const scroll = await page.evaluate(() => { const t = document.querySelector("#live .title"); return { scrolls: t.classList.contains("scrolls"), shift: parseFloat(t.style.getPropertyValue("--shift")), anim: getComputedStyle(t.firstElementChild).animationName }; });
+  check("a stream title too long for its space scrolls (slides left to its end)", scroll.scrolls && scroll.shift < -20 && scroll.anim === "title-scroll", JSON.stringify(scroll));
+  await page.evaluate(() => { const st = tabs.get("uwoslab").stream; st.title = "Hi"; st.game_name = ""; renderInfo(); });
+  check("a short title stays put", await page.evaluate(() => !document.querySelector("#live .title").classList.contains("scrolls")));
+  await page.evaluate(() => { const st = tabs.get("uwoslab").stream; st.title = "Building a chat app"; st.game_name = "Software and Game Development"; renderInfo(); });
+
   // Mod tools button: only where you moderate
   check("Mod tools button shows in a channel you moderate", await page.$eval("#modtools-btn", (b) => !b.hidden));
   await page.evaluate(() => activate(tabs.get("otherchan")));
@@ -575,8 +585,10 @@ await page.evaluate(() => composer.setText(""));
   await page.evaluate(() => activate(tabs.get("uwoslab")));
 
   await page.click("#modtools-btn");
-  await page.waitForSelector(".modtools .tool-body input");
-  check("mod tools has Announce, Shoutout, Blocked terms, Shield Mode, Unbans, Chatters", JSON.stringify(await page.$$eval(".modtools .browse-tabs button", (b) => b.map((x) => x.textContent))) === '["Announce","Shoutout","Blocked terms","Shield Mode","Unbans","Chatters"]');
+  await page.waitForSelector(".modtools .modes-grid");
+  check("mod tools has Chat modes, Announce, Shoutout, Blocked terms, Shield Mode, Unbans, Chatters", JSON.stringify(await page.$$eval(".modtools .browse-tabs button", (b) => b.map((x) => x.textContent))) === '["Chat modes","Announce","Shoutout","Blocked terms","Shield Mode","Unbans","Chatters"]');
+  await page.click('.modtools .browse-tabs button:has-text("Announce")');
+  await page.waitForSelector(".modtools .tool-body input[type=text]");
   await page.fill(".modtools .tool-body input", "Giveaway at the top of the hour");
   await page.selectOption(".modtools .tool-body select", "purple");
   await page.screenshot({ path: dir + "/t69-modtools.png" });
@@ -682,8 +694,8 @@ await page.evaluate(() => composer.setText(""));
   check("with the log on, bans, timeouts, deletions and chat modes appear as lines", ["ModBot banned Troll: spam", "ModBot timed out Mouthy for 10m: rude", "ModBot deleted a message from Mouthy: \u201cbad words\u201d", "ModBot turned on slow mode (30s)"].every((t) => logLines.includes(t)), JSON.stringify(logLines.slice(-5)));
   await page.evaluate(() => { settings.modLog = false; saveSettings(); });
   sockets[0].send(msg("notification", { subscription: { type: "channel.unban_request.create" }, event: { id: "r2", broadcaster_user_id: "999", user_id: "7004", user_login: "banned1", user_name: "Banned1", text: "I'm sorry", created_at: new Date().toISOString() } }));
-  await page.waitForFunction(() => /Mod tools \(1\)/.test(document.getElementById("modtools-btn").textContent));
-  check("a new unban request says so in chat and on the Mod tools button", (await page.$$eval("li.modlog", (l) => l.some((x) => /Banned1 asked to be unbanned: \u201cI'm sorry\u201d/.test(x.textContent)))));
+  await page.waitForFunction(() => document.getElementById("modtools-count").textContent === "1" && !document.getElementById("modtools-count").hidden);
+  check("a new unban request says so in chat and puts a count on the Mod tools icon", (await page.$$eval("li.modlog", (l) => l.some((x) => /Banned1 asked to be unbanned: \u201cI'm sorry\u201d/.test(x.textContent)))));
   await page.evaluate(() => { tabs.get("uwoslab").unbanCount = 0; renderInfo(); });
   // Shared chat
   sockets[0].send(chat("999", "shared1", "Visitor", "7005", "hi from another chat", { source_broadcaster_user_id: "888", source_broadcaster_user_name: "OtherChan" }));
@@ -774,11 +786,17 @@ await page.evaluate(() => composer.setText(""));
   // Without the new permissions: nothing offered, reconnect inside the panels.
   toolsScope = false;
   await page.evaluate(() => { status.twitch.missingOptionalScopes = ["moderator:manage:announcements", "user:manage:whispers", "user:read:subscriptions"]; renderInfo(); });
-  check("without the new permissions the Mod tools button is hidden", await page.$eval("#modtools-btn", (b) => b.hidden));
+  check("the Mod tools icon stays (chat modes need no new permission)", await page.$eval("#modtools-btn", (b) => !b.hidden));
   await page.evaluate(() => { status.twitch.missingOptionalScopes = []; renderInfo(); });
   await page.click("#modtools-btn");
+  await page.click('.modtools .browse-tabs button:has-text("Announce")');
+  await page.fill(".modtools .tool-body input[type=text]", "hello");
+  await page.click('.modtools button:has-text("Send announcement")');
   await page.waitForSelector('.modtools a[href="/auth/login"]');
-  check("a 403 needsScope answer shows a reconnect link instead", (await page.textContent(".modtools")).includes("Reconnect Twitch"));
+  check("a tool whose permission is missing shows a reconnect link, and the other tabs still work", (await page.textContent(".modtools")).includes("Reconnect Twitch") && (await page.$$(".modtools .browse-tabs button")).length === 7);
+  await page.click('.modtools .browse-tabs button:has-text("Chat modes")');
+  await page.waitForSelector(".modtools .modes-grid");
+  check("chat modes still work then", true);
   toolsScope = true;
   await page.keyboard.press("Escape");
 }
@@ -900,16 +918,18 @@ check("tab shows live viewer count", (await page.textContent(".tab:first-child .
 check("info bar: live + title + mode chips", await page.$eval("#infobar", (b) => !b.hidden && b.textContent.includes("1.2k") && b.textContent.includes("Building a chat app") && b.textContent.includes("Slow 10s")), await page.textContent("#infobar"));
 check("other (offline, non-mod) tab has no live pill", await page.$eval(".tab:nth-child(2) .live-pill", (p) => p.hidden));
 // Modes panel
-await page.click("#modes-btn");
-await page.selectOption("#modes-panel select >> nth=0", "30");
+await page.click("#modtools-btn");
+await page.waitForSelector(".modtools .modes-grid");
+check("Chat modes is the first tab of Mod tools, and the old Modes button is gone", (await page.$$eval(".modtools .browse-tabs button", (b) => b[0].textContent + (b[0].classList.contains("on") ? "*" : ""))) === "Chat modes*" && !(await page.$("#modes-btn")));
+await page.selectOption(".modtools .modes-grid select >> nth=0", "30");
 await page.waitForFunction(() => document.getElementById("modes").textContent.includes("Slow 30s"), null, { timeout: 3000 });
 check("modes panel → slow 30s", JSON.stringify(log.settings.at(-1)) === '{"broadcaster_id":"999","slow_mode":true,"slow_mode_wait_time":30}', JSON.stringify(log.settings.at(-1)));
-await page.click("#modes-panel input[type=checkbox] >> nth=1"); // emote-only
+await page.click(".modtools .modes-grid input[type=checkbox] >> nth=1"); // emote-only
 await page.waitForFunction(() => document.getElementById("modes").textContent.includes("Emote-only"), null, { timeout: 3000 });
 check("modes panel → emote-only toggle", log.settings.at(-1).emote_mode === true);
 await page.screenshot({ path: dir + "/t7-modes.png" });
 await shot("chat-modes");
-await page.click("#modes-panel .panel-title button");
+await page.keyboard.press("Escape");
 // live settings event
 cur().send(msg("notification", { subscription: { type: "channel.chat_settings.update" }, event: { broadcaster_user_id: "999", emote_mode: false, follower_mode: true, follower_mode_duration_minutes: 10, slow_mode: false, slow_mode_wait_time_seconds: null, subscriber_mode: true, unique_chat_mode: false } }));
 await sleep(150);

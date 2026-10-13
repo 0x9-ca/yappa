@@ -125,8 +125,10 @@ export function renderPage(): string {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </button>
       <button class="ghost small" id="quality-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Video quality" hidden>Auto</button>
-      <button class="ghost small" id="modtools-btn" type="button" hidden>Mod tools</button>
-      <button class="ghost small" id="modes-btn" type="button" hidden>Modes</button>
+      <button class="icon-btn" id="modtools-btn" type="button" title="Mod tools" aria-label="Mod tools" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 3.2 8 8 9 4.8-1 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+        <span class="count" id="modtools-count" hidden></span>
+      </button>
     </div>
     <div class="quality-menu" id="quality-menu" role="menu" aria-label="Video quality" hidden></div>
     <div class="searchbar" id="searchbar" hidden>
@@ -134,7 +136,6 @@ export function renderPage(): string {
       <span class="search-count" id="search-count"></span>
       <button class="icon-btn" id="search-close" type="button" aria-label="Close search">×</button>
     </div>
-    <div class="panel" id="modes-panel" hidden></div>
     <div class="empty-chat" id="empty-chat">Open a channel above to start chatting.</div>
     <button class="more" id="more" hidden>More messages below</button>
   </div>

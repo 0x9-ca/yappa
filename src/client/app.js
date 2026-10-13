@@ -323,7 +323,6 @@ function activate(tab) {
   composer.refresh(); // the draft carries over, but only this channel's emotes may show as emotes
   renderInfo();
   renderVideo();
-  show("modes-panel", false);
   applyFilter();
   if (!$("picker").hidden) renderPicker();
 }
@@ -1633,7 +1632,7 @@ function handleEvent(type, ev, ts) {
         follower_mode: ev.follower_mode, follower_mode_duration: ev.follower_mode_duration_minutes,
         subscriber_mode: ev.subscriber_mode, emote_mode: ev.emote_mode, unique_chat_mode: ev.unique_chat_mode,
       };
-      if (tab === active) { renderInfo(); if (!$("modes-panel").hidden) renderModesPanel(); }
+      if (tab === active) { renderInfo(); window.toolsModesChanged?.(tab); }
       return;
     case "automod.message.hold": return renderHeld(tab, ev);
     case "automod.message.update": return resolveHeld(tab, ev);
@@ -3197,16 +3196,33 @@ function fmtMinutes(m) {
   return m + "m";
 }
 
+/** A stream title too long for its space scrolls back and forth (slowly) instead of being cut off. */
+function fitTitle() {
+  const t = document.querySelector("#live .title");
+  if (!t) return;
+  const inner = t.firstElementChild;
+  t.classList.remove("scrolls");
+  const over = inner.scrollWidth - t.clientWidth;
+  if (over > 2) {
+    t.style.setProperty("--shift", -over + "px");
+    t.style.setProperty("--dur", Math.max(4, Math.round(over / 25)) + "s");
+    t.classList.add("scrolls");
+  }
+}
+new ResizeObserver(() => fitTitle()).observe($("live"));
+
 function renderInfo() {
   const tab = active;
-  if (!tab || !tab.broadcaster) { show("infobar", false); show("modes-panel", false); return; }
+  if (!tab || !tab.broadcaster) { show("infobar", false); return; }
   show("infobar", true);
   const live = $("live");
   live.replaceChildren();
   const st = tab.stream;
   if (st) {
     live.className = "live on";
-    live.append(el("span", "dot"), el("b", null, compactCount(st.viewer_count)), el("span", "title", (st.game_name ? st.game_name + " · " : "") + st.title));
+    const title = el("span", "title");
+    title.appendChild(el("span", "title-text", (st.game_name ? st.game_name + " · " : "") + st.title));
+    live.append(el("span", "dot"), el("b", null, compactCount(st.viewer_count)), title);
     live.title = st.title + "\n" + (st.game_name || "No category") + " · " + st.viewer_count.toLocaleString() + " viewers · live for " + since(st.started_at);
   } else {
     live.className = "live";
@@ -3214,7 +3230,7 @@ function renderInfo() {
     live.title = "";
   }
   $("modes").replaceChildren(...modeLabels(tab.settings).map((l) => el("span", "chip", l)));
-  show("modes-btn", !!tab.isMod);
+  fitTitle();
   renderFollowBtn();
   window.toolsRenderInfo?.(tab);
 }
@@ -3248,66 +3264,6 @@ document.addEventListener("visibilitychange", () => {
   followHandoff = false;
   api("/api/following?fresh=1").then((r) => { if (r.ok) { following = r; followingAt = Date.now(); renderFollowBtn(); } });
 });
-
-$("modes-btn").addEventListener("click", () => {
-  const panel = $("modes-panel");
-  panel.hidden = !panel.hidden;
-  if (!panel.hidden) renderModesPanel();
-});
-
-const SLOW_OPTIONS = [0, 3, 5, 10, 20, 30, 60, 120];
-const FOLLOW_OPTIONS = [[-1, "Off"], [0, "Any follower"], [10, "10 min"], [30, "30 min"], [60, "1 hour"], [1440, "1 day"], [10080, "1 week"], [43200, "1 month"], [129600, "3 months"]];
-
-function renderModesPanel() {
-  const tab = active;
-  const panel = $("modes-panel");
-  const st = (tab && tab.settings) || {};
-  const title = el("div", "panel-title");
-  title.append(el("span", null, "Chat modes for #" + tab.broadcaster.name), el("span"));
-  const close = el("button", "icon-btn", "×");
-  close.type = "button";
-  close.addEventListener("click", () => show("modes-panel", false));
-  title.lastChild.replaceWith(close);
-
-  const select = (options, value, onChange) => {
-    const sel = document.createElement("select");
-    for (const [v, label] of options) {
-      const o = document.createElement("option");
-      o.value = String(v);
-      o.textContent = label;
-      if (v === value) o.selected = true;
-      sel.appendChild(o);
-    }
-    sel.addEventListener("change", () => onChange(Number(sel.value)));
-    return sel;
-  };
-  const toggle = (checked, onChange) => {
-    const c = document.createElement("input");
-    c.type = "checkbox";
-    c.checked = !!checked;
-    c.addEventListener("change", () => onChange(c.checked));
-    return c;
-  };
-  const update = async (patch) => {
-    const r = await api("/api/chat/settings", { broadcaster_id: tab.broadcaster.id, ...patch });
-    if (r.ok) { if (r.settings) tab.settings = r.settings; }
-    else sysLine(tab, "Couldn't change chat modes: " + r.error, "err");
-    if (tab === active) { renderInfo(); renderModesPanel(); }
-  };
-
-  panel.replaceChildren(
-    title,
-    el("span", null, "Slow mode"),
-    select(SLOW_OPTIONS.map((v) => [v, v ? v + "s" : "Off"]), st.slow_mode ? st.slow_mode_wait_time || 30 : 0,
-      (v) => update(v ? { slow_mode: true, slow_mode_wait_time: v } : { slow_mode: false })),
-    el("span", null, "Followers-only"),
-    select(FOLLOW_OPTIONS, st.follower_mode ? st.follower_mode_duration || 0 : -1,
-      (v) => update(v < 0 ? { follower_mode: false } : { follower_mode: true, follower_mode_duration: v })),
-    el("span", null, "Subscribers-only"), toggle(st.subscriber_mode, (on) => update({ subscriber_mode: on })),
-    el("span", null, "Emote-only"), toggle(st.emote_mode, (on) => update({ emote_mode: on })),
-    el("span", null, "Unique chat (no repeats)"), toggle(st.unique_chat_mode, (on) => update({ unique_chat_mode: on })),
-  );
-}
 
 // ---------- AutoMod queue (moderators) ----------
 

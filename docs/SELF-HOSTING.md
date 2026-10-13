@@ -101,7 +101,7 @@ Cloudflare creates the DNS record and TLS certificate for your hostname automati
 ## Step 7: Sign in
 
 1. Open `https://YOUR-HOSTNAME/`. You should see a plain **Sign in with Twitch** page.
-2. Click it. Twitch asks you to authorize your app with a list of permissions (read and send chat, your emotes and followed channels, moderation tools, clips). The permissions marked optional only power the matching features.
+2. Click it. Twitch asks you to authorize your app with a list of permissions (read and send chat, your emotes and followed channels, clips, moderation tools such as announcements, shoutouts and Shield Mode, whispers, your block list and your subscriptions). The permissions marked optional only power the matching features.
 3. After you approve, you land in the app. Type a channel name and press **Open**.
 
 If your Twitch login isn't in `ALLOWED_LOGINS`, you'll get "That Twitch account isn't allowed to use this app", and nothing about you is stored.

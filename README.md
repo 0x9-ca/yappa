@@ -57,7 +57,7 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Twitch scopes: `user:manage:chat_color`, `user:read:chat`, `user:write:chat` (required);
   `user:read:emotes`, `user:read:moderated_channels`, `moderator:manage:chat_messages`,
   `moderator:manage:banned_users`, `moderator:read:followers`, `moderator:manage:automod`,
-  `moderator:manage:chat_settings`, `user:read:follows`, `clips:edit` (optional: emote list, followed channels, mod tools and creating clips).
+  `moderator:manage:chat_settings`, `user:read:follows`, `clips:edit`, `moderator:manage:announcements`, `moderator:manage:shoutouts`, `moderator:manage:warnings`, `moderator:manage:blocked_terms`, `moderator:manage:shield_mode`, `moderator:manage:suspicious_users`, `moderator:read:suspicious_users`, `moderator:manage:unban_requests`, `moderator:read:chatters`, `user:read:subscriptions`, `user:read:blocked_users`, `user:manage:blocked_users`, `user:manage:whispers`, `user:read:whispers` (optional: each only powers its feature; if you added any since you last signed in, Yappa offers to reconnect).
 - Chat: channel tabs sharing one EventSub WebSocket, 7TV/BTTV/FFZ emotes, cheermotes, emote picker, autocomplete
   (`:name`, Tab, `@user`), and mod tools (message actions plus `/ban`, `/unban`, `/timeout`,
   `/untimeout`, `/clear`) in channels you moderate, plus the AutoMod
@@ -69,6 +69,10 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Native player (opt-in): pick the video quality from a menu in the info bar, including Source and audio-only; Yappa remembers your choice. (The Worker relays the stream's quality list, a small text file; the video itself never goes through it.)
 - "Gigantify an Emote" (Bits Power-up) messages show the emote enlarged.
 - Follow button: a heart in the info bar shows whether you follow the channel. Twitch removed its follow API, so tapping it opens the channel on Twitch to follow or unfollow, and Yappa refreshes the status when you come back.
+- Moderator tools (Mod tools button in channels you moderate): send announcements and shoutouts, manage blocked terms, turn Shield Mode on or off, answer unban requests, see who's in chat; on a user card, Warn and mark someone as monitored or restricted. Messages from users Twitch flags as suspicious are marked in chat, and Settings can add a line for other moderators' actions.
+- Whispers (account menu), your Twitch block list (hides blocked users' messages; Block/Unblock on the user card), a chip showing your subscription to the open channel, and labels on messages that come from another channel in a shared chat.
+- Alerts: optional notifications when followed channels go live (only while Yappa is open), and a line in chat when a channel changes its title or category.
+- Discover streams (account menu): top live streams, category browsing and channel search; typing in the channel box also searches all of Twitch. The Clips & VODs window has a Schedule tab.
 - Account menu: your Twitch picture in the corner opens a menu with your name, Settings, "Your clips" (the
   clips you made through Yappa) and Log out.
 - Clips & VODs: browse a channel's clips (most viewed by period), past broadcasts, highlights and uploads,
@@ -236,6 +240,24 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | <img src="docs/screenshots/your-clips-mobile.png" width="240" alt="Clips you made through Yappa (phone)"> | <img src="docs/screenshots/your-clips-desktop.png" width="520" alt="Clips you made through Yappa (desktop)"> |
 
 ### Moderation
+
+**Moderator tools**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/mod-tools-mobile.png" width="240" alt="Moderator tools (phone)"> | <img src="docs/screenshots/mod-tools-desktop.png" width="520" alt="Moderator tools (desktop)"> |
+
+**Whispers**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/whispers-mobile.png" width="240" alt="Whispers (phone)"> | <img src="docs/screenshots/whispers-desktop.png" width="520" alt="Whispers (desktop)"> |
+
+**Discover streams**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/discover-mobile.png" width="240" alt="Discover streams (phone)"> | <img src="docs/screenshots/discover-desktop.png" width="520" alt="Discover streams (desktop)"> |
 
 **Message actions**
 

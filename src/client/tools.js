@@ -1,0 +1,608 @@
+// Moderator tools, whispers, your Twitch block list, the subscription chip, go-live alerts and
+// discovery. Loaded after app.js: it shares app.js's globals (el, btn, api, openSheet, tabs,
+// settings, ...) and talks to it through the `window.tools*` hooks at the bottom.
+"use strict";
+
+(() => {
+
+// ---------- shared bits ----------
+
+const sheetShows = (marker) => { const c = $("sheet-body").firstElementChild; return !!(c && c.dataset[marker]) && !$("sheet").hidden; };
+
+function textBox(value, max, placeholder, onInput) {
+  const i = document.createElement("input");
+  i.type = "text";
+  i.value = value;
+  i.maxLength = max;
+  i.placeholder = placeholder;
+  i.autocomplete = "off";
+  i.addEventListener("input", () => onInput(i.value));
+  return i;
+}
+
+function reconnectNote(what) {
+  const p = el("p", "hint");
+  const a = el("a", null, "Reconnect Twitch");
+  a.href = "/auth/login";
+  p.append(a, " to allow " + what + ".");
+  return p;
+}
+
+/** A desktop/phone notification, from the service worker where the browser requires it. */
+function systemNotify(title, body, tag, tabLogin) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const opts = { body, tag, icon: "/icons/icon-192.png", data: tabLogin ? { tab: tabLogin } : undefined };
+  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.ready.then((reg) => reg.showNotification(title, opts)).catch(() => {});
+  } else {
+    try { const n = new Notification(title, opts); n.onclick = () => { window.focus(); if (tabLogin) openTab(tabLogin); }; } catch {}
+  }
+}
+
+const say = (text, kind) => { if (active) sysLine(active, text, kind); };
+
+// ---------- moderator tools (sheet) ----------
+
+const COLORS = [["primary", "Channel color"], ["blue", "Blue"], ["green", "Green"], ["orange", "Orange"], ["purple", "Purple"]];
+const mt = {
+  channel: null, tab: "announce", err: "", note: "", busy: false, needsScope: false, filter: "",
+  terms: null, shield: null, unbans: null, chatters: null,
+  form: { announce: "", color: "primary", shout: "", term: "", unbanNote: "" },
+};
+
+function openMod() {
+  const tab = active;
+  if (!tab || !tab.isMod || !tab.broadcaster) return;
+  mt.channel = tab;
+  mt.err = mt.note = "";
+  mt.needsScope = false;
+  mt.terms = mt.shield = mt.unbans = mt.chatters = null;
+  renderMod();
+  loadMod(mt.tab);
+}
+
+async function loadMod(which) {
+  const path = { terms: "/api/mod/terms", shield: "/api/mod/shield", unbans: "/api/mod/unbans", chatters: "/api/mod/chatters" }[which];
+  if (!path || !mt.channel) return;
+  const r = await api(path + "?broadcaster_id=" + encodeURIComponent(mt.channel.broadcaster.id));
+  if (r.needsScope) mt.needsScope = true;
+  else if (!r.ok) mt.err = r.error;
+  else if (which === "terms") mt.terms = r.terms;
+  else if (which === "shield") mt.shield = r.active;
+  else if (which === "unbans") { mt.unbans = r.requests; mt.channel.unbanCount = r.requests.length; window.toolsRenderInfo(active); }
+  else mt.chatters = { total: r.total, names: r.names };
+  if (sheetShows("modtools")) renderMod();
+}
+
+/** Runs one request, then shows what came of it. */
+async function modDo(path, body, after) {
+  if (mt.busy) return;
+  mt.busy = true;
+  mt.err = mt.note = "";
+  renderMod();
+  const r = await api(path, body);
+  mt.busy = false;
+  if (r.needsScope) mt.needsScope = true;
+  else if (!r.ok) mt.err = r.error;
+  else after(r);
+  if (sheetShows("modtools")) renderMod();
+}
+
+function modPanel(body) {
+  const id = mt.channel.broadcaster.id, f = mt.form;
+  if (mt.tab === "announce") {
+    body.append(
+      el("p", "hint", "Highlighted in chat for everyone, in the color you pick."),
+      textBox(f.announce, 500, "Announcement", (t) => { f.announce = t; }),
+      el("label", "tool-label", "Color "),
+    );
+    body.lastChild.appendChild(dropdown(COLORS, f.color, (v) => { f.color = v; }));
+    body.appendChild(btn("Send announcement", () => modDo("/api/mod/announce", { broadcaster_id: id, message: f.announce, color: f.color }, () => { f.announce = ""; mt.note = "Announcement sent."; }), "small"));
+  } else if (mt.tab === "shout") {
+    body.append(
+      el("p", "hint", "Point chat at another channel. Twitch limits how often shoutouts can be sent."),
+      textBox(f.shout, 50, "Channel to shout out", (t) => { f.shout = t; }),
+      btn("Send shoutout", () => modDo("/api/mod/shoutout", { broadcaster_id: id, to_login: f.shout }, (r) => { f.shout = ""; mt.note = "Shouted out " + r.target + "."; }), "small"),
+    );
+  } else if (mt.tab === "terms") {
+    if (mt.terms === null) { body.appendChild(el("div", "hint", "Loading…")); return; }
+    body.append(
+      el("p", "hint", "Messages containing these words or phrases are held back. " + mt.terms.length + " blocked."),
+      textBox(f.term, 500, "Add a word or phrase", (t) => { f.term = t; }),
+      btn("Block this term", () => modDo("/api/mod/terms", { broadcaster_id: id, text: f.term }, (r) => { mt.terms.unshift(r.term); f.term = ""; mt.note = "Term blocked."; }), "small"),
+    );
+    const list = el("div", "tool-list");
+    for (const t of mt.terms) {
+      const row = el("div", "tool-row");
+      row.append(el("span", null, t.text), btn("Remove", () => modDo("/api/mod/terms/remove", { broadcaster_id: id, id: t.id }, () => { mt.terms = mt.terms.filter((x) => x.id !== t.id); mt.note = "Term removed."; }), "small ghost"));
+      list.appendChild(row);
+    }
+    body.appendChild(list);
+  } else if (mt.tab === "shield") {
+    if (mt.shield === null) { body.appendChild(el("div", "hint", "Loading…")); return; }
+    body.append(
+      el("p", "hint", "Shield Mode applies the channel's pre-set restrictions at once (for raids of trolls and the like)."),
+      el("p", null, "Shield Mode is " + (mt.shield ? "ON" : "off") + "."),
+      btn(mt.shield ? "Turn Shield Mode off" : "Turn Shield Mode on", () => modDo("/api/mod/shield", { broadcaster_id: id, active: !mt.shield }, (r) => { mt.shield = r.active; mt.note = r.active ? "Shield Mode is on." : "Shield Mode is off."; }), mt.shield ? "small" : "small stop"),
+    );
+  } else if (mt.tab === "unbans") {
+    if (mt.unbans === null) { body.appendChild(el("div", "hint", "Loading…")); return; }
+    if (!mt.unbans.length) { body.appendChild(el("div", "hint", "No pending unban requests.")); return; }
+    body.append(textBox(f.unbanNote, 500, "Note to send with your answer (optional)", (t) => { f.unbanNote = t; }));
+    for (const r of mt.unbans) {
+      const card = el("div", "tool-card");
+      card.append(el("b", null, r.name), el("span", "hint", " · " + since(r.createdAt) + " ago"), el("div", null, r.text || "(no message)"));
+      const row = el("div", "tool-actions");
+      for (const [status, label] of [["approved", "Unban"], ["denied", "Deny"]]) {
+        row.appendChild(btn(label, () => modDo("/api/mod/unbans", { broadcaster_id: id, id: r.id, status, text: f.unbanNote }, () => {
+          mt.unbans = mt.unbans.filter((x) => x.id !== r.id);
+          mt.channel.unbanCount = mt.unbans.length;
+          mt.note = status === "approved" ? r.name + " was unbanned." : "Request denied.";
+          window.toolsRenderInfo(active);
+        }), status === "denied" ? "small stop" : "small"));
+      }
+      card.appendChild(row);
+      body.appendChild(card);
+    }
+  } else if (mt.tab === "chatters") {
+    if (mt.chatters === null) { body.appendChild(el("div", "hint", "Loading…")); return; }
+    const q = mt.filter.toLowerCase();
+    const names = mt.chatters.names.filter((n) => !q || n.toLowerCase().includes(q));
+    body.append(
+      el("p", "hint", mt.chatters.total.toLocaleString() + " in chat" + (mt.chatters.total > mt.chatters.names.length ? " (first " + mt.chatters.names.length.toLocaleString() + " shown)" : "") + ". Viewers who aren't signed in don't appear."),
+      textBox(mt.filter, 50, "Find someone", (t) => { mt.filter = t; renderChatterList(); }),
+    );
+    const list = el("div", "tool-chatters");
+    list.id = "tool-chatters";
+    body.appendChild(list);
+    renderChatterList(body);
+  }
+}
+
+function renderChatterList(scope) {
+  const list = (scope || document).querySelector("#tool-chatters");
+  if (!list || !mt.chatters) return;
+  const q = mt.filter.toLowerCase();
+  const names = mt.chatters.names.filter((n) => !q || n.toLowerCase().includes(q)).slice(0, 300);
+  list.replaceChildren(...(names.length ? names.map((n) => el("span", "chatter", n)) : [el("span", "hint", "Nobody matches.")]));
+}
+
+function renderMod() {
+  const root = el("div", "tools modtools");
+  root.dataset.modtools = "1";
+  root.appendChild(el("h2", null, "Mod tools: #" + mt.channel.broadcaster.name));
+  if (mt.needsScope) {
+    root.appendChild(reconnectNote("these moderator tools"));
+    $("sheet-body").replaceChildren(root);
+    show("sheet", true);
+    return;
+  }
+  const tabs = el("div", "browse-tabs");
+  const unbanN = mt.channel.unbanCount || 0;
+  for (const [id, label] of [["announce", "Announce"], ["shout", "Shoutout"], ["terms", "Blocked terms"], ["shield", "Shield Mode"], ["unbans", "Unbans" + (unbanN ? " (" + unbanN + ")" : "")], ["chatters", "Chatters"]]) {
+    tabs.appendChild(btn(label, () => { mt.tab = id; mt.err = mt.note = ""; renderMod(); loadMod(id); }, mt.tab === id ? "on" : ""));
+  }
+  root.appendChild(tabs);
+  if (mt.err) root.appendChild(el("div", "tool-msg err", mt.err));
+  else if (mt.note) root.appendChild(el("div", "tool-msg", mt.note));
+  const body = el("div", "tool-body");
+  modPanel(body);
+  if (mt.busy) body.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  root.appendChild(body);
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+  if (mt.tab === "chatters" && mt.chatters) renderChatterList(root);
+}
+
+$("modtools-btn").addEventListener("click", openMod);
+
+// ---------- user card extras ----------
+
+window.toolsUserCardActions = (tab, u) => {
+  const out = [];
+  const bid = tab.broadcaster && tab.broadcaster.id;
+  const isMe = me && u.id === me.userId;
+  const isBroadcaster = bid && u.id === bid;
+  if (tab.isMod && bid && !isMe && !isBroadcaster) {
+    if (hasScope("moderator:manage:warnings")) {
+      out.push(btn("Warn", async () => {
+        const reason = prompt("Warning for " + u.name + " (they must acknowledge it before they can chat again):");
+        if (!reason || !reason.trim()) return;
+        closeSheet();
+        const r = await api("/api/mod/warn", { broadcaster_id: bid, user_id: u.id, reason });
+        say(r.ok ? "Warned " + u.name + "." : "Couldn't warn " + u.name + ": " + r.error, r.ok ? undefined : "err");
+      }, "small"));
+    }
+    if (hasScope("moderator:manage:suspicious_users")) {
+      for (const [label, status, said] of [["Monitor", "ACTIVE_MONITORING", "is now monitored"], ["Restrict", "RESTRICTED", "is now restricted"], ["Clear mark", "NONE", "is no longer marked"]]) {
+        out.push(btn(label, async () => {
+          closeSheet();
+          const r = await api("/api/mod/suspicious", { broadcaster_id: bid, user_id: u.id, status });
+          say(r.ok ? u.name + " " + said + "." : "Couldn't change " + u.name + "'s status: " + r.error, r.ok ? undefined : "err");
+        }, "small"));
+      }
+    }
+  }
+  if (tab.isMod && bid && u.login && !isMe && hasScope("moderator:manage:shoutouts")) {
+    out.push(btn("Shout out", async () => {
+      closeSheet();
+      const r = await api("/api/mod/shoutout", { broadcaster_id: bid, to_login: u.login });
+      say(r.ok ? "Shouted out " + r.target + "." : "Couldn't send the shoutout: " + r.error, r.ok ? undefined : "err");
+    }, "small"));
+  }
+  if (!isMe && hasScope("user:manage:whispers")) out.push(btn("Whisper", () => { closeSheet(); openWhisper({ id: u.id, login: u.login, name: u.name }); }, "small"));
+  if (!isMe && hasScope("user:manage:blocked_users")) {
+    const blocked = blockedIds.has(u.id);
+    out.push(btn(blocked ? "Unblock" : "Block", async () => {
+      if (!blocked && !confirm("Block " + u.name + " on Twitch? They can't whisper you or interact with you anywhere on Twitch.")) return;
+      closeSheet();
+      const r = await api("/api/blocks", { user_id: u.id, block: !blocked });
+      if (!r.ok) { say("Couldn't " + (blocked ? "unblock " : "block ") + u.name + ": " + r.error, "err"); return; }
+      if (blocked) blockedIds.delete(u.id); else blockedIds.add(u.id);
+      applyBlocked();
+      say((blocked ? "Unblocked " : "Blocked ") + u.name + ".");
+    }, blocked ? "small" : "small stop"));
+  }
+  return out;
+};
+
+// ---------- feeds from EventSub ----------
+
+const fmtSecs = (n) => (n >= 86400 ? Math.round(n / 86400) + "d" : n >= 3600 ? Math.round(n / 3600) + "h" : n >= 60 ? Math.round(n / 60) + "m" : n + "s");
+
+function describeMod(ev) {
+  const who = ev.moderator_user_name || ev.moderator_user_login || "A moderator";
+  const a = ev.action;
+  const o = ev[a] || {};
+  const target = o.user_name || o.user_login || "someone";
+  switch (a) {
+    case "ban": return who + " banned " + target + (o.reason ? ": " + o.reason : "");
+    case "timeout": return who + " timed out " + target + (o.expires_at ? " for " + fmtSecs(Math.max(1, Math.round((Date.parse(o.expires_at) - Date.now()) / 1000))) : "") + (o.reason ? ": " + o.reason : "");
+    case "unban": return who + " unbanned " + target;
+    case "untimeout": return who + " ended " + target + "'s timeout";
+    case "delete": return who + " deleted a message from " + target + (o.message_body ? ": “" + o.message_body.slice(0, 100) + "”" : "");
+    case "clear": return who + " cleared the chat";
+    case "warn": return who + " warned " + target + (o.reason ? ": " + o.reason : "");
+    case "vip": return who + " made " + target + " a VIP";
+    case "unvip": return who + " removed " + target + "'s VIP";
+    case "mod": return who + " made " + target + " a moderator";
+    case "unmod": return who + " removed " + target + " as a moderator";
+    case "raid": return who + " started a raid on " + target;
+    case "unraid": return who + " canceled the raid";
+    case "slow": return who + " turned on slow mode (" + o.wait_time_seconds + "s)";
+    case "slowoff": return who + " turned off slow mode";
+    case "followers": return who + " turned on followers-only" + (o.follow_duration_minutes ? " (" + o.follow_duration_minutes + " min)" : "");
+    case "followersoff": return who + " turned off followers-only";
+    case "subscribers": return who + " turned on subscribers-only";
+    case "subscribersoff": return who + " turned off subscribers-only";
+    case "emoteonly": return who + " turned on emote-only";
+    case "emoteonlyoff": return who + " turned off emote-only";
+    case "uniquechat": return who + " turned on unique chat";
+    case "uniquechatoff": return who + " turned off unique chat";
+    case "approve_unban_request": return who + " approved an unban request" + (o.user_name ? " from " + o.user_name : "");
+    case "deny_unban_request": return who + " denied an unban request" + (o.user_name ? " from " + o.user_name : "");
+    case "add_blocked_term": case "add_permitted_term": case "remove_blocked_term": case "remove_permitted_term": return who + ": " + String(a).replace(/_/g, " ");
+    default: return a ? who + ": " + String(a).replace(/_/g, " ") : "";
+  }
+}
+
+const SUSPICIOUS_WORDS = { active_monitoring: "monitored", restricted: "restricted" };
+
+function suspiciousLabel(ev) {
+  const bits = [];
+  if (SUSPICIOUS_WORDS[ev.low_trust_status]) bits.push(SUSPICIOUS_WORDS[ev.low_trust_status]);
+  if (ev.ban_evasion_evaluation === "likely") bits.push("likely ban evader");
+  else if (ev.ban_evasion_evaluation === "possible") bits.push("possible ban evader");
+  if ((ev.types || []).includes("banned_in_shared_channel")) bits.push("banned in a shared channel");
+  return "Suspicious user" + (bits.length ? " (" + bits.join(", ") + ")" : "");
+}
+
+window.toolsHandleEvent = (type, ev, tab, ts) => {
+  if (type === "channel.suspicious_user.message") {
+    const id = ev.message && ev.message.message_id;
+    if (!id) return;
+    const label = suspiciousLabel(ev);
+    tab.suspicious = tab.suspicious || new Map();
+    tab.suspicious.set(id, label);
+    if (tab.suspicious.size > 200) tab.suspicious.delete(tab.suspicious.keys().next().value);
+    const li = tab.list.querySelector('.msg[data-id="' + CSS.escape(id) + '"]');
+    if (li) addFlag(li, "suspicious", label);
+  } else if (type === "channel.moderate") {
+    if (settings.modLog) { const text = describeMod(ev); if (text) sysLine(tab, text, "modlog"); }
+  } else if (type === "channel.unban_request.create") {
+    tab.unbanCount = (tab.unbanCount || 0) + 1;
+    sysLine(tab, (ev.user_name || ev.user_login) + " asked to be unbanned" + (ev.text ? ": “" + ev.text.slice(0, 200) + "”" : "."), "modlog");
+    if (document.hidden || tab !== active) systemNotify("Unban request in #" + (tab.broadcaster ? tab.broadcaster.name : tab.login), (ev.user_name || ev.user_login) + (ev.text ? ": " + ev.text : ""), "unban-" + ev.id, tab.login);
+    if (tab === active) window.toolsRenderInfo(tab);
+  } else if (type === "user.whisper.message") {
+    incomingWhisper(ev, ts);
+  }
+};
+
+// ---------- whispers ----------
+
+const wh = { threads: new Map(), unread: 0 }; // userId -> { id, login, name, msgs: [{ mine, text, ts }], unread }
+
+function whisperThread(u) {
+  let t = wh.threads.get(u.id);
+  if (!t) { t = { id: u.id, login: u.login, name: u.name, msgs: [], unread: 0 }; wh.threads.set(u.id, t); }
+  return t;
+}
+
+function updateWhisperDot() {
+  $("profile-btn").classList.toggle("has-whisper", wh.unread > 0);
+}
+
+function incomingWhisper(ev, ts) {
+  const t = whisperThread({ id: ev.from_user_id, login: ev.from_user_login, name: ev.from_user_name });
+  t.msgs.push({ mine: false, text: (ev.whisper && ev.whisper.text) || "", ts: ts || Date.now() });
+  if (t.msgs.length > 100) t.msgs.shift();
+  const viewing = sheetShows("whispers") && wh.open === t.id;
+  if (!viewing) { t.unread++; wh.unread++; updateWhisperDot(); }
+  if (viewing) renderWhispers();
+  if (document.hidden || !viewing) systemNotify("Whisper from " + t.name, (ev.whisper && ev.whisper.text) || "", "whisper-" + ev.whisper_id, null);
+  if (settings.sound && !viewing) ping();
+}
+
+function openWhispers() {
+  wh.open = null;
+  renderWhispers();
+}
+
+function openWhisper(u) {
+  const t = whisperThread(u);
+  wh.open = t.id;
+  wh.unread -= t.unread;
+  t.unread = 0;
+  updateWhisperDot();
+  renderWhispers();
+}
+
+let whisperDraft = "";
+let whisperErr = "";
+
+function renderWhispers() {
+  const root = el("div", "tools");
+  root.dataset.whispers = "1";
+  root.appendChild(el("h2", null, "Whispers"));
+  const t = wh.open && wh.threads.get(wh.open);
+  if (!hasScope("user:manage:whispers")) {
+    root.appendChild(reconnectNote("sending and receiving whispers"));
+  } else if (!t) {
+    root.appendChild(el("p", "hint", "Private messages between you and one other person. Twitch requires a verified phone number on your account to send them, and they aren't saved here: closing the app clears them."));
+    const list = el("div", "tool-list");
+    const threads = [...wh.threads.values()].sort((a, b) => (b.msgs.at(-1)?.ts || 0) - (a.msgs.at(-1)?.ts || 0));
+    for (const th of threads) {
+      const row = btn("", () => openWhisper(th), "ghost tool-thread");
+      row.append(el("b", null, th.name), el("span", "hint", " " + ((th.msgs.at(-1) || {}).text || "").slice(0, 60)));
+      if (th.unread) row.appendChild(el("span", "unread", String(th.unread)));
+      list.appendChild(row);
+    }
+    if (!threads.length) list.appendChild(el("div", "hint", "No whispers yet. Tap someone's name in chat, then Whisper."));
+    root.appendChild(list);
+  } else {
+    root.appendChild(btn("← All whispers", openWhispers, "small ghost"));
+    root.appendChild(el("h3", null, t.name));
+    const log = el("div", "whisper-log");
+    for (const m of t.msgs) log.appendChild(el("div", "whisper-msg" + (m.mine ? " mine" : ""), m.text));
+    if (!t.msgs.length) log.appendChild(el("div", "hint", "No messages yet."));
+    root.appendChild(log);
+    if (whisperErr) root.appendChild(el("div", "tool-msg err", whisperErr));
+    const input = textBox(whisperDraft, 500, "Whisper to " + t.name, (v) => { whisperDraft = v; });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") send.click(); });
+    const send = btn("Send", async () => {
+      const text = whisperDraft.trim();
+      if (!text) return;
+      send.disabled = true;
+      const r = await api("/api/whisper", { user_id: t.id, message: text });
+      if (!r.ok) { whisperErr = r.error; } else { whisperErr = ""; whisperDraft = ""; t.msgs.push({ mine: true, text, ts: Date.now() }); }
+      if (sheetShows("whispers")) renderWhispers();
+    }, "small");
+    const row = el("div", "tool-option");
+    row.append(input, send);
+    root.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+}
+
+window.toolsAccountItems = (item) => {
+  const out = [];
+  if (hasScope("user:manage:whispers")) out.push(item("Whispers" + (wh.unread ? " (" + wh.unread + ")" : ""), openWhispers));
+  out.push(item("Discover streams", openDiscover));
+  return out;
+};
+
+window.toolsOnSession = (sid) => {
+  if (hasScope("user:read:whispers")) api("/api/whispers/subscribe", { session_id: sid });
+  loadBlocks();
+};
+
+// ---------- your Twitch block list ----------
+
+function applyBlocked() {
+  document.querySelectorAll(".msg[data-user]").forEach((n) => n.classList.toggle("ignored", isHidden(n.dataset.user)));
+}
+
+async function loadBlocks() {
+  if (!hasScope("user:read:blocked_users") || settings.syncBlocks === false) return;
+  const r = await api("/api/blocks");
+  if (!r.ok) return;
+  blockedIds.clear();
+  for (const u of r.users) blockedIds.add(u.id);
+  applyBlocked();
+}
+window.toolsReloadBlocks = () => { blockedIds.clear(); applyBlocked(); loadBlocks(); };
+
+// ---------- info bar: subscription chip, mod tools button ----------
+
+const subCache = new Map(); // broadcaster id -> { at, sub }
+const TIER = { "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3" };
+
+function renderSub(tab) {
+  const chip = $("sub-chip");
+  const c = tab && tab.broadcaster && subCache.get(tab.broadcaster.id);
+  if (!c || !c.sub) { chip.hidden = true; return; }
+  const tier = TIER[c.sub.tier] || "";
+  chip.hidden = false;
+  chip.textContent = "Sub" + (tier ? " · " + tier.replace("Tier ", "T") : "");
+  chip.title = "You're subscribed to " + tab.broadcaster.name + (tier ? " (" + tier + ")" : "") + (c.sub.isGift ? ", a gift" + (c.sub.gifter ? " from " + c.sub.gifter : "") : "") + ".";
+}
+
+async function refreshSub(tab) {
+  if (!hasScope("user:read:subscriptions") || !tab.broadcaster || (me && tab.broadcaster.id === me.userId)) return;
+  const hit = subCache.get(tab.broadcaster.id);
+  if (hit && Date.now() - hit.at < 10 * 60000) return;
+  subCache.set(tab.broadcaster.id, { at: Date.now(), sub: null }); // one lookup at a time
+  const r = await api("/api/sub?broadcaster_id=" + encodeURIComponent(tab.broadcaster.id));
+  if (!r.ok) { subCache.delete(tab.broadcaster.id); return; }
+  subCache.set(tab.broadcaster.id, { at: Date.now(), sub: r.sub });
+  if (tab === active) renderSub(tab);
+}
+
+window.toolsRenderInfo = (tab) => {
+  const b = $("modtools-btn");
+  const mod = !!(tab && tab.isMod && tab.broadcaster && hasScope("moderator:manage:announcements"));
+  b.hidden = !mod;
+  if (mod) b.textContent = "Mod tools" + (tab.unbanCount ? " (" + tab.unbanCount + ")" : "");
+  renderSub(tab);
+  if (tab) refreshSub(tab);
+};
+
+// ---------- go-live alerts ----------
+
+let liveSeen = null;
+
+async function pollLive() {
+  if (!settings.liveAlerts || !me || !hasScope("user:read:follows")) return;
+  const r = await api("/api/following");
+  if (!r.ok) return;
+  following = r;
+  followingAt = Date.now();
+  const seen = liveSeen;
+  liveSeen = new Set(r.live.map((c) => c.id));
+  if (!seen) return; // the first look only learns who's already live
+  for (const c of r.live) if (!seen.has(c.id)) announceLive(c);
+}
+
+function announceLive(c) {
+  systemNotify(c.name + " is live", (c.game ? c.game + " · " : "") + c.title, "live-" + c.id, c.login);
+  if (!active) return;
+  const li = el("li", "sys live-note");
+  li.append(c.name + " went live" + (c.game ? " (" + c.game + ")" : "") + ": " + c.title + " ");
+  li.appendChild(btn("Open", () => openTab(c.login), "small"));
+  append(active, li, false);
+}
+
+setInterval(pollLive, 120000);
+window.toolsPollLive = pollLive; // (the tests drive it directly)
+window.toolsLiveSettingChanged = () => {
+  liveSeen = null;
+  if (settings.liveAlerts) {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") Notification.requestPermission().catch(() => {});
+    pollLive();
+  }
+};
+
+// ---------- discovery ----------
+
+const ds = { q: "", game: null, gameName: "", channels: [], streams: [], cats: [], cursor: null, loading: false, err: "", mode: "top", req: 0 };
+
+function openDiscover() {
+  ds.q = ""; ds.game = null; ds.gameName = ""; ds.mode = "top"; ds.channels = ds.streams = ds.cats = []; ds.cursor = null; ds.err = "";
+  renderDiscover();
+  loadDiscover(true);
+}
+
+let discoverTimer = null;
+
+async function loadDiscover(reset) {
+  const mode = ds.mode;
+  const req = ++ds.req;
+  if (reset) { ds.channels = []; ds.streams = []; ds.cursor = null; }
+  ds.loading = true; ds.err = "";
+  renderDiscover();
+  if (mode === "search") {
+    const [chans, cats] = await Promise.all([
+      api("/api/discover/search?q=" + encodeURIComponent(ds.q) + (ds.cursor ? "&after=" + encodeURIComponent(ds.cursor) : "")),
+      reset ? api("/api/discover/categories?q=" + encodeURIComponent(ds.q)) : Promise.resolve(null),
+    ]);
+    if (req !== ds.req) return;
+    ds.loading = false;
+    if (!chans.ok) ds.err = chans.error; else { ds.channels.push(...chans.channels); ds.cursor = chans.cursor; }
+    if (cats && cats.ok) ds.cats = cats.categories;
+  } else {
+    const r = await api("/api/discover/top" + (ds.game || ds.cursor ? "?" : "") + [ds.game ? "game_id=" + ds.game : "", ds.cursor ? "after=" + encodeURIComponent(ds.cursor) : ""].filter(Boolean).join("&"));
+    if (req !== ds.req) return;
+    ds.loading = false;
+    if (!r.ok) ds.err = r.error; else { ds.streams.push(...r.streams); ds.cursor = r.cursor; }
+  }
+  if (sheetShows("discover")) renderDiscover();
+}
+
+function renderDiscover() {
+  const root = el("div", "tools discover");
+  root.dataset.discover = "1";
+  root.appendChild(el("h2", null, "Discover streams"));
+  const box = textBox(ds.q, 100, "Search channels and categories", (t) => {
+    ds.q = t;
+    clearTimeout(discoverTimer);
+    discoverTimer = setTimeout(() => {
+      ds.game = null; ds.gameName = "";
+      ds.mode = ds.q.trim() ? "search" : "top";
+      loadDiscover(true);
+    }, 350);
+  });
+  root.appendChild(box);
+  if (ds.mode === "search" && ds.cats.length) {
+    const chips = el("div", "browse-tabs");
+    for (const c of ds.cats.slice(0, 6)) chips.appendChild(btn(c.name, () => { ds.mode = "top"; ds.game = c.id; ds.gameName = c.name; ds.q = ""; loadDiscover(true); }, "small ghost"));
+    root.appendChild(chips);
+  }
+  if (ds.mode === "top") {
+    const head = el("div", "tool-head");
+    head.appendChild(el("b", null, ds.game ? "Live in " + ds.gameName : "Top live streams"));
+    if (ds.game) head.appendChild(btn("All categories", () => { ds.game = null; ds.gameName = ""; loadDiscover(true); }, "small ghost"));
+    root.appendChild(head);
+  }
+  const rows = ds.mode === "search" ? ds.channels : ds.streams;
+  for (const x of rows) {
+    const row = el("div", "disc-row");
+    if (x.thumbnail) { const img = document.createElement("img"); img.src = x.thumbnail; img.alt = ""; img.loading = "lazy"; row.appendChild(img); }
+    const meta = el("div", "disc-meta");
+    meta.append(el("b", null, x.name + (x.live === false ? " (offline)" : "")), el("div", "hint", (x.game ? x.game + " · " : "") + (x.title || "")));
+    if (x.viewers != null) meta.appendChild(el("div", "hint", compactCount(x.viewers) + " watching"));
+    row.append(meta, btn("Open", () => { closeSheet(); openTab(x.login); }, "small"));
+    root.appendChild(row);
+  }
+  if (ds.loading) root.appendChild(el("div", "hint", "Loading…"));
+  else if (ds.err) root.appendChild(el("div", "tool-msg err", ds.err));
+  else if (!rows.length) root.appendChild(el("div", "hint", ds.mode === "search" ? "No channels found." : "Nothing live right now."));
+  else if (ds.cursor) root.appendChild(btn("Load more", () => loadDiscover(false), "small ghost"));
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+  if (document.activeElement === document.body && !coarse) box.focus();
+}
+
+// Typing in the channel box also searches Twitch for channels you don't follow.
+let findTimer = null;
+window.toolsFollowExtra = (q, box) => {
+  clearTimeout(findTimer);
+  if (q.length < 2) return;
+  findTimer = setTimeout(async () => {
+    const r = await api("/api/discover/search?q=" + encodeURIComponent(q));
+    if (!r.ok || !r.channels.length || $("follow-list").hidden || $("channel").value.trim().replace(/^[#@]/, "").toLowerCase() !== q) return;
+    box.appendChild(el("div", "fl-head", "On Twitch"));
+    for (const c of r.channels.slice(0, 6)) {
+      const b = el("button", "fl-row" + (c.live ? " live" : ""));
+      b.type = "button";
+      b.dataset.find = c.login;
+      b.append(el("span", c.live ? "dot" : "dot off"), el("span", "fl-name", c.name), el("span", "fl-sub", c.live ? (c.game || "") : "offline"));
+      b.addEventListener("click", () => { closeFollowList(); $("channel").value = ""; openTab(c.login); });
+      box.appendChild(b);
+    }
+  }, 350);
+};
+
+})();

@@ -95,7 +95,7 @@ export function renderPage(): string {
       <div class="banner error" id="error" hidden></div>
       <div class="banner error" id="expired" hidden>Your sign-in has ended. <a href="/auth/login">Sign in again</a></div>
       <div class="banner info" id="reauth" hidden>Twitch needs extra permissions to read and send chat. <a href="/auth/login">Reconnect Twitch</a></div>
-      <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels, clipping and mod tools.</div>
+      <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels, clipping, mod tools, whispers and more.</div>
       <div class="banner info" id="cycle-status" hidden></div>
     </div>
   </div>
@@ -104,6 +104,7 @@ export function renderPage(): string {
   <div class="chat" id="chat" hidden>
     <div class="infobar" id="infobar" hidden>
       <span class="live" id="live"></span>
+      <span class="sub-chip" id="sub-chip" hidden></span>
       <span class="modes" id="modes"></span>
       <button class="icon-btn" id="video-btn" type="button" title="Show or hide the stream" aria-label="Show or hide the stream" aria-pressed="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="m8 2 4 4 4-4"/></svg>
@@ -124,6 +125,7 @@ export function renderPage(): string {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </button>
       <button class="ghost small" id="quality-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="Video quality" hidden>Auto</button>
+      <button class="ghost small" id="modtools-btn" type="button" hidden>Mod tools</button>
       <button class="ghost small" id="modes-btn" type="button" hidden>Modes</button>
     </div>
     <div class="quality-menu" id="quality-menu" role="menu" aria-label="Video quality" hidden></div>
@@ -198,6 +200,7 @@ export function renderPage(): string {
   </div>
 </div>
 <script src="${versioned("/app.js")}"></script>
+<script src="${versioned("/tools.js")}"></script>
 </body>
 </html>`;
 }

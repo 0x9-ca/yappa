@@ -73,7 +73,7 @@ await page.addInitScript(() => {
 });
 // Console errors the checks provoke on purpose: the CSP check, the 503 status, the aborted request.
 // The CSP one is allowed once, so a real violation by the app still fails the run.
-const expectedErrors = [/status of 401/, /status of 503/, /status of 502/, /net::ERR_FAILED/];
+const expectedErrors = [/status of 403/, /status of 401/, /status of 503/, /status of 502/, /net::ERR_FAILED/];
 let allowedCspErrors = 1;
 const expected = (t) => expectedErrors.some((re) => re.test(t)) || (/Content Security Policy/.test(t) && allowedCspErrors-- > 0);
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && !expected(m.text()) && errors.push(m.text()));
@@ -88,6 +88,8 @@ let statusDown = false, slowSend = 0;
 const ids = { uwoslab: "999", otherchan: "888", targetchan: "777", alphachan: "666" };
 let followingMode = "ok";
 let followedExtra = false;
+let toolsScope = true;
+const tools = { terms: [{ id: "t1", text: "spoiler", createdAt: "2024-01-01T00:00:00Z" }], shield: false, unbans: [{ id: "r1", userId: "501", login: "oldtimer", name: "OldTimer", text: "sorry about before!", createdAt: new Date(Date.now() - 3600e3).toISOString(), status: "pending" }] };
 let flakyClip = 0;
 let embedScriptFails = false;
 let sessionExpiredMock = false, streamsFail = false, extrasFail = false;
@@ -157,6 +159,7 @@ await ctx.route("**/*", async (route) => {
       log.following = (log.following || 0) + 1;
       if (u.searchParams.has("fresh")) log.followingFresh = (log.followingFresh || 0) + 1;
       if (followingMode === "scope") return j({ ok: false, error: "Missing user:read:follows", needsScope: true });
+      if (followingMode === "newlive") return j({ ok: true, live: [{ id: "4040", login: "newstreamer", name: "NewStreamer", title: "just started", game: "Chess", viewers: 5, startedAt: new Date().toISOString() }], channels: [{ id: "4040", login: "newstreamer", name: "NewStreamer" }] });
       return j({ ok: true,
         live: [{ id: "777", login: "targetchan", name: "TargetChan", title: "speedrun attempts", game: "Celeste", viewers: 4321, startedAt: new Date().toISOString() },
                { id: "999", login: "uwoslab", name: "UwoSlab", title: "Building a chat app", game: "Software and Game Development", viewers: 1234, startedAt: new Date().toISOString() }],
@@ -170,6 +173,36 @@ await ctx.route("**/*", async (route) => {
       if (noMyClips) return j({ ok: true, clips: [], cursor: null });
       if (u.searchParams.get("after") === "20") return j({ ok: true, clips: [mkClip("MineThree", "Third of mine", 7)], cursor: null });
       return j({ ok: true, clips: [mkClip("MineOne", "My first clip", 120), mkClip("MineTwo", "My second clip", 80)], cursor: "20" });
+    }
+    // Moderator and personal tools.
+    if (u.pathname.startsWith("/api/mod/") || u.pathname === "/api/sub" || u.pathname === "/api/blocks" || u.pathname === "/api/whisper" || u.pathname === "/api/whispers/subscribe") {
+      const m = route.request().method();
+      const b = m === "POST" ? body() : {};
+      log.tools = [...(log.tools || []), m + " " + u.pathname + (m === "POST" ? " " + JSON.stringify(b) : "")];
+      if (!toolsScope) return route.fulfill({ status: 403, json: { ok: false, error: "Reconnect Twitch to allow this.", needsScope: true } });
+      switch (u.pathname) {
+        case "/api/mod/announce": return j({ ok: true });
+        case "/api/mod/shoutout": return j({ ok: true, target: "OtherChan" });
+        case "/api/mod/warn": return j({ ok: true });
+        case "/api/mod/terms": if (m === "GET") return j({ ok: true, terms: tools.terms }); tools.terms.unshift({ id: "t" + (tools.terms.length + 1), text: b.text, createdAt: new Date().toISOString() }); return j({ ok: true, term: tools.terms[0] });
+        case "/api/mod/terms/remove": tools.terms = tools.terms.filter((t) => t.id !== b.id); return j({ ok: true });
+        case "/api/mod/shield": if (m === "POST") tools.shield = b.active; return j({ ok: true, active: tools.shield });
+        case "/api/mod/suspicious": return j({ ok: true });
+        case "/api/mod/unbans": if (m === "POST") { tools.unbans = tools.unbans.filter((r) => r.id !== b.id); return j({ ok: true }); } return j({ ok: true, requests: tools.unbans });
+        case "/api/mod/chatters": return j({ ok: true, total: 1500, names: ["Alice", "Bob", "Carol", "Dave"] });
+        case "/api/sub": return j({ ok: true, sub: u.searchParams.get("broadcaster_id") === "999" ? { tier: "2000", isGift: true, gifter: "KindPerson" } : null });
+        case "/api/blocks": if (m === "POST") return j({ ok: true }); return j({ ok: true, users: [{ id: "7777", login: "blockedguy", name: "BlockedGuy" }] });
+        case "/api/whisper": return j({ ok: true });
+        case "/api/whispers/subscribe": return j({ ok: true, id: "w1" });
+      }
+    }
+    if (u.pathname.startsWith("/api/discover/") || u.pathname === "/api/schedule") {
+      log.discover = [...(log.discover || []), u.pathname + u.search];
+      if (u.pathname === "/api/schedule") return j({ ok: true, segments: [{ id: "s1", start: new Date(Date.now() + 86400e3).toISOString(), end: null, title: "Friday night stream", category: "Just Chatting", recurring: true, canceled: false }, { id: "s2", start: new Date(Date.now() + 3 * 86400e3).toISOString(), end: null, title: "Special event", category: null, recurring: false, canceled: true }] });
+      if (u.pathname === "/api/discover/categories") return j({ ok: true, categories: [{ id: "509658", name: "Just Chatting", art: null }, { id: "27471", name: "Minecraft", art: null }] });
+      if (u.pathname === "/api/discover/search") { const q = u.searchParams.get("q"); return j({ ok: true, channels: q === "otherchan" || q === "zzz" ? [] : [{ id: "321", login: "findable", name: "Findable", live: true, title: "found me", game: "Minecraft", startedAt: new Date().toISOString() }, { id: "322", login: "sleepy", name: "Sleepy", live: false, title: "", game: "", startedAt: null }], cursor: null }); }
+      const gid = u.searchParams.get("game_id");
+      return j({ ok: true, streams: [{ id: "1", login: "topstreamer", name: "TopStreamer", title: gid ? "Minecraft run" : "Huge stream", game: gid ? "Minecraft" : "Fortnite", viewers: 45000, startedAt: new Date().toISOString(), thumbnail: "https://img.test/thumb-top.jpg", language: "en" }], cursor: null });
     }
     if (u.pathname === "/api/chat/subscribe") { const b = body(); log.subs.push(b.channel + "@" + b.session_id); return j({ ok: true, broadcaster: { id: ids[b.channel], login: b.channel, name: { uwoslab: "UwoSlab", otherchan: "OtherChan", targetchan: "TargetChan", alphachan: "AlphaChan" }[b.channel] || b.channel }, isMod: b.channel === "uwoslab", subscriptionIds: [b.channel + "-s1", b.channel + "-s2"], automod: b.channel === "uwoslab", settings: b.channel === "uwoslab" ? chatSettings : null }); }
     if (u.pathname === "/api/streams") return j([{ user_id: "999", title: "Building a chat app", game_name: "Software and Game Development", viewer_count: 1234, started_at: new Date(Date.now() - 3 * 3600e3).toISOString() }]);
@@ -520,6 +553,234 @@ await page.evaluate(() => composer.setText(""));
   check("whisper: 1-500 characters to a numeric id; block needs a boolean", T.parseWhisper({ user_id: "5", message: "hey" }).message === "hey" && typeof T.parseWhisper({ user_id: "5", message: "" }) === "string" && T.parseBlock({ user_id: "5", block: false }).block === false && typeof T.parseBlock({ user_id: "5" }) === "string");
   check("search and top-streams parameters are checked", T.parseSearch(new URLSearchParams("q=cats&live=1")).liveOnly === true && typeof T.parseSearch(new URLSearchParams("q=")) === "string" && typeof T.parseTop(new URLSearchParams("game_id=x")) === "string" && T.parseTop(new URLSearchParams("game_id=33214")).gameId === "33214");
   check("tool failures are explained in words", /Reconnect Twitch/.test(T.toolFailure("x", 401, "")) && /may not be a moderator/.test(T.toolFailure("send the announcement", 403, "")) && /rate limiting/.test(T.toolFailure("x", 429, "")) && T.slimUnban({ id: "1", user_id: "2", user_login: "l", user_name: "L", text: "t", created_at: "c", status: "pending" }).login === "l" && T.slimStreamRow({ user_id: "1", user_login: "a", user_name: "A", title: "t", game_name: "g", viewer_count: 5, started_at: "s", thumbnail_url: "https://x/{width}x{height}.jpg", language: "en" }).thumbnail === "https://x/320x180.jpg");
+}
+
+// =============== moderator tools, whispers, block list, subscription chip, alerts, discovery ===============
+{
+  const L = () => log.tools.at(-1);
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await sleep(300);
+
+  // Subscription chip
+  check("subscription chip shows your tier on a channel you're subscribed to", await page.$eval("#sub-chip", (c) => !c.hidden && c.textContent === "Sub · T2" && /Tier 2/.test(c.title) && /KindPerson/.test(c.title)));
+  await page.evaluate(() => activate(tabs.get("otherchan")));
+  await sleep(300);
+  check("no chip where you're not subscribed", await page.$eval("#sub-chip", (c) => c.hidden));
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+
+  // Mod tools button: only where you moderate
+  check("Mod tools button shows in a channel you moderate", await page.$eval("#modtools-btn", (b) => !b.hidden));
+  await page.evaluate(() => activate(tabs.get("otherchan")));
+  check("and not elsewhere", await page.$eval("#modtools-btn", (b) => b.hidden));
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+
+  await page.click("#modtools-btn");
+  await page.waitForSelector(".modtools .tool-body input");
+  check("mod tools has Announce, Shoutout, Blocked terms, Shield Mode, Unbans, Chatters", JSON.stringify(await page.$$eval(".modtools .browse-tabs button", (b) => b.map((x) => x.textContent))) === '["Announce","Shoutout","Blocked terms","Shield Mode","Unbans","Chatters"]');
+  await page.fill(".modtools .tool-body input", "Giveaway at the top of the hour");
+  await page.selectOption(".modtools .tool-body select", "purple");
+  await page.screenshot({ path: dir + "/t69-modtools.png" });
+  await shot("mod-tools");
+  await page.click('.modtools button:has-text("Send announcement")');
+  await page.waitForSelector('.modtools .tool-msg:has-text("Announcement sent")');
+  check("announcement is sent to this channel with the chosen color", L() === 'POST /api/mod/announce {"broadcaster_id":"999","message":"Giveaway at the top of the hour","color":"purple"}', L());
+  await page.click('.modtools .browse-tabs button:has-text("Shoutout")');
+  await page.fill(".modtools .tool-body input", "@OtherChan");
+  await page.click('.modtools button:has-text("Send shoutout")');
+  await page.waitForSelector('.modtools .tool-msg:has-text("Shouted out OtherChan")');
+  check("shoutout names the channel to promote", L() === 'POST /api/mod/shoutout {"broadcaster_id":"999","to_login":"@OtherChan"}', L());
+  await page.click('.modtools .browse-tabs button:has-text("Blocked terms")');
+  await page.waitForSelector(".modtools .tool-row");
+  check("blocked terms lists the current ones", (await page.textContent(".modtools .tool-row")).includes("spoiler"));
+  await page.fill(".modtools .tool-body input", "leaked");
+  await page.click('.modtools button:has-text("Block this term")');
+  await page.waitForSelector('.modtools .tool-msg:has-text("Term blocked")');
+  check("adding a term puts it first", (await page.$$eval(".modtools .tool-row span", (r) => r.map((x) => x.textContent))).join() === "leaked,spoiler");
+  await page.click('.modtools .tool-row:has-text("spoiler") button');
+  await page.waitForSelector('.modtools .tool-msg:has-text("Term removed")');
+  check("removing a term sends its id", L() === 'POST /api/mod/terms/remove {"broadcaster_id":"999","id":"t1"}' && (await page.$$(".modtools .tool-row")).length === 1, L());
+  await page.click('.modtools .browse-tabs button:has-text("Shield Mode")');
+  await page.waitForSelector('.modtools button:has-text("Turn Shield Mode on")');
+  await page.click('.modtools button:has-text("Turn Shield Mode on")');
+  await page.waitForSelector('.modtools button:has-text("Turn Shield Mode off")');
+  check("Shield Mode turns on", L() === 'POST /api/mod/shield {"broadcaster_id":"999","active":true}' && /is ON/.test(await page.textContent(".modtools .tool-body")), L());
+  await page.click('.modtools button:has-text("Turn Shield Mode off")');
+  await page.waitForSelector('.modtools button:has-text("Turn Shield Mode on")');
+  await page.click('.modtools .browse-tabs button:has-text("Unbans")');
+  await page.waitForSelector(".modtools .tool-card");
+  check("unban requests show who asked and why", (await page.textContent(".modtools .tool-card")).includes("OldTimer") && (await page.textContent(".modtools .tool-card")).includes("sorry about before!"));
+  await page.fill(".modtools .tool-body input", "Welcome back");
+  await page.click('.modtools .tool-card button:has-text("Unban")');
+  await page.waitForSelector('.modtools .tool-msg:has-text("was unbanned")');
+  check("approving sends the note and clears the request", L() === 'POST /api/mod/unbans {"broadcaster_id":"999","id":"r1","status":"approved","text":"Welcome back"}' && !(await page.$(".modtools .tool-card")), L());
+  await page.click('.modtools .browse-tabs button:has-text("Chatters")');
+  await page.waitForSelector("#tool-chatters .chatter");
+  check("chatters shows the total and the names", /1,500 in chat/.test(await page.textContent(".modtools .tool-body")) && (await page.$$("#tool-chatters .chatter")).length === 4);
+  await page.fill(".modtools .tool-body input", "car");
+  check("and filters them", (await page.$$eval("#tool-chatters .chatter", (c) => c.map((x) => x.textContent))).join() === "Carol");
+  await page.keyboard.press("Escape");
+
+  // User card: moderator actions, whisper, block
+  sockets[0].send(chat("999", "toolmsg1", "Target", "7001", "hello mods"));
+  await page.waitForSelector('li[data-id="toolmsg1"]');
+  await page.evaluate(() => { window.prompt = () => "Please stop that"; });
+  await page.evaluate(() => document.querySelector('li[data-id="toolmsg1"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  const cardBtns = await page.$$eval("#sheet .card-actions button", (b) => b.map((x) => x.textContent));
+  check("the user card offers Warn, Monitor/Restrict/Clear, Shout out, Whisper and Block", ["Warn", "Monitor", "Restrict", "Clear mark", "Shout out", "Whisper", "Block"].every((x) => cardBtns.includes(x)), JSON.stringify(cardBtns));
+  await page.click('#sheet .card-actions button:has-text("Warn")');
+  await sleep(200);
+  check("Warn sends the reason", log.tools.some((x) => x === 'POST /api/mod/warn {"broadcaster_id":"999","user_id":"7001","reason":"Please stop that"}'), JSON.stringify(log.tools.slice(-3)));
+  await page.evaluate(() => document.querySelector('li[data-id="toolmsg1"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  await page.click('#sheet .card-actions button:has-text("Restrict")');
+  await sleep(200);
+  check("Restrict marks them as a suspicious user", log.tools.some((x) => x === 'POST /api/mod/suspicious {"broadcaster_id":"999","user_id":"7001","status":"RESTRICTED"}'));
+  await page.evaluate(() => document.querySelector('li[data-id="toolmsg1"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  await page.click('#sheet .card-actions button:has-text("Block")');
+  await sleep(200);
+  check("Block blocks them on Twitch and hides their messages", log.tools.some((x) => x === 'POST /api/blocks {"user_id":"7001","block":true}') && await page.$eval('li[data-id="toolmsg1"]', (l) => l.classList.contains("ignored")));
+  await page.evaluate(() => document.querySelector('li[data-id="toolmsg1"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  await page.click('#sheet .card-actions button:has-text("Unblock")');
+  await sleep(200);
+  check("Unblock undoes it", log.tools.some((x) => x === 'POST /api/blocks {"user_id":"7001","block":false}') && await page.$eval('li[data-id="toolmsg1"]', (l) => !l.classList.contains("ignored")));
+  // Your Twitch block list is applied when you connect.
+  sockets[0].send(chat("999", "blockedmsg", "BlockedGuy", "7777", "you can't see me"));
+  await page.waitForSelector('li[data-id="blockedmsg"]', { state: "attached" });
+  await page.evaluate(() => toolsReloadBlocks());
+  await sleep(300);
+  check("messages from people on your Twitch block list are hidden", await page.$eval('li[data-id="blockedmsg"]', (l) => l.classList.contains("ignored")));
+  await page.evaluate(() => { settings.syncBlocks = false; saveSettings(); toolsReloadBlocks(); });
+  await sleep(200);
+  check("unless you turn that off", await page.$eval('li[data-id="blockedmsg"]', (l) => !l.classList.contains("ignored")));
+  await page.evaluate(() => { settings.syncBlocks = true; saveSettings(); toolsReloadBlocks(); });
+  await sleep(200);
+
+  // Feeds
+  sockets[0].send(chat("999", "susp1", "Shady", "7002", "buy my stuff"));
+  await page.waitForSelector('li[data-id="susp1"]');
+  sockets[0].send(msg("notification", { subscription: { type: "channel.suspicious_user.message" }, event: { broadcaster_user_id: "999", user_id: "7002", user_login: "shady", user_name: "Shady", low_trust_status: "restricted", ban_evasion_evaluation: "likely", types: ["ban_evader"], message: { message_id: "susp1", text: "buy my stuff", fragments: [] } } }));
+  await page.waitForSelector('li[data-id="susp1"] .flag.suspicious');
+  check("a message from a suspicious user is flagged, saying why", /restricted, likely ban evader/.test(await page.textContent('li[data-id="susp1"] .flag.suspicious')));
+  sockets[0].send(msg("notification", { subscription: { type: "channel.suspicious_user.message" }, event: { broadcaster_user_id: "999", user_id: "7003", user_login: "early", user_name: "Early", low_trust_status: "active_monitoring", ban_evasion_evaluation: "possible", types: [], message: { message_id: "susp2", text: "first", fragments: [] } } }));
+  sockets[0].send(chat("999", "susp2", "Early", "7003", "first"));
+  await page.waitForSelector('li[data-id="susp2"] .flag.suspicious');
+  check("the flag also lands when the flagged event arrives before the message", /monitored, possible ban evader/.test(await page.textContent('li[data-id="susp2"] .flag.suspicious')));
+  const ev2 = (extra) => msg("notification", { subscription: { type: "channel.moderate" }, event: { broadcaster_user_id: "999", moderator_user_id: "50", moderator_user_login: "modbot", moderator_user_name: "ModBot", ...extra } });
+  sockets[0].send(ev2({ action: "ban", ban: { user_name: "Troll", reason: "spam" } }));
+  await sleep(200);
+  check("moderator actions aren't shown unless you turn the log on", !(await page.$$eval("li.modlog", (l) => l.some((x) => /banned Troll/.test(x.textContent)))));
+  await page.evaluate(() => { settings.modLog = true; saveSettings(); });
+  sockets[0].send(ev2({ action: "ban", ban: { user_name: "Troll", reason: "spam" } }));
+  sockets[0].send(ev2({ action: "timeout", timeout: { user_name: "Mouthy", reason: "rude", expires_at: new Date(Date.now() + 600e3).toISOString() } }));
+  sockets[0].send(ev2({ action: "delete", delete: { user_name: "Mouthy", message_body: "bad words" } }));
+  sockets[0].send(ev2({ action: "slow", slow: { wait_time_seconds: 30 } }));
+  await sleep(300);
+  const logLines = await page.$$eval("li.modlog", (l) => l.map((x) => x.textContent));
+  check("with the log on, bans, timeouts, deletions and chat modes appear as lines", ["ModBot banned Troll: spam", "ModBot timed out Mouthy for 10m: rude", "ModBot deleted a message from Mouthy: \u201cbad words\u201d", "ModBot turned on slow mode (30s)"].every((t) => logLines.includes(t)), JSON.stringify(logLines.slice(-5)));
+  await page.evaluate(() => { settings.modLog = false; saveSettings(); });
+  sockets[0].send(msg("notification", { subscription: { type: "channel.unban_request.create" }, event: { id: "r2", broadcaster_user_id: "999", user_id: "7004", user_login: "banned1", user_name: "Banned1", text: "I'm sorry", created_at: new Date().toISOString() } }));
+  await page.waitForFunction(() => /Mod tools \(1\)/.test(document.getElementById("modtools-btn").textContent));
+  check("a new unban request says so in chat and on the Mod tools button", (await page.$$eval("li.modlog", (l) => l.some((x) => /Banned1 asked to be unbanned: \u201cI'm sorry\u201d/.test(x.textContent)))));
+  await page.evaluate(() => { tabs.get("uwoslab").unbanCount = 0; renderInfo(); });
+  // Shared chat
+  sockets[0].send(chat("999", "shared1", "Visitor", "7005", "hi from another chat", { source_broadcaster_user_id: "888", source_broadcaster_user_name: "OtherChan" }));
+  await page.waitForSelector('li[data-id="shared1"] .shared-pill');
+  check("a message from another channel in a shared chat names where it came from", (await page.textContent('li[data-id="shared1"] .shared-pill')) === "OtherChan");
+  sockets[0].send(chat("999", "notshared", "Local", "7006", "just us", { source_broadcaster_user_id: "999", source_broadcaster_user_name: "UwoSlab" }));
+  await page.waitForSelector('li[data-id="notshared"]');
+  check("messages from this channel itself get no label", !(await page.$('li[data-id="notshared"] .shared-pill')));
+
+  // Whispers
+  sockets[0].send(msg("notification", { subscription: { type: "user.whisper.message" }, event: { from_user_id: "7010", from_user_login: "whisperer", from_user_name: "Whisperer", to_user_id: "111", whisper_id: "w1", whisper: { text: "psst, got a minute?" } } }));
+  await page.waitForSelector("#profile-btn.has-whisper");
+  check("an incoming whisper puts a dot on your picture", true);
+  await page.click("#profile-btn");
+  check("and a count on Whispers in the menu", (await page.$$eval("#account-menu button", (b) => b.map((x) => x.textContent))).includes("Whispers (1)"));
+  await page.click('#account-menu button:has-text("Whispers")');
+  await page.waitForSelector(".tool-thread");
+  await page.click(".tool-thread");
+  await page.waitForSelector(".whisper-msg");
+  check("opening the thread shows the message and clears the dot", (await page.textContent(".whisper-log")).includes("psst, got a minute?") && await page.$eval("#profile-btn", (b) => !b.classList.contains("has-whisper")));
+  await page.fill('.tools input[type=text]', "sure, what's up");
+  await page.screenshot({ path: dir + "/t70-whispers.png" });
+  await shot("whispers");
+  await page.click('.tools button:has-text("Send")');
+  await page.waitForSelector(".whisper-msg.mine");
+  check("replying sends the whisper and shows it", log.tools.some((x) => x === 'POST /api/whisper {"user_id":"7010","message":"sure, what\'s up"}') && (await page.textContent(".whisper-msg.mine")) === "sure, what's up");
+  await page.keyboard.press("Escape");
+
+  // Go-live alerts and stream changes
+  await page.evaluate(() => { settings.liveAlerts = true; saveSettings(); toolsLiveSettingChanged(); });
+  await sleep(300);
+  const before = await page.$$eval("li.live-note", (l) => l.length);
+  await page.evaluate(() => { following = null; });
+  await page.evaluate(async () => { await toolsPollLive(); });
+  check("the first look only learns who is live (no alerts for existing streams)", (await page.$$eval("li.live-note", (l) => l.length)) === before);
+  await page.evaluate(() => { toolsLiveSettingChanged(); });
+  await sleep(300);
+  log.followingMode = 1;
+  followingMode = "newlive";
+  await page.evaluate(async () => { await toolsPollLive(); });
+  await page.waitForSelector("li.live-note");
+  check("a followed channel going live is announced in chat with an Open button", (await page.textContent("li.live-note")).includes("NewStreamer went live") && !!(await page.$("li.live-note button")));
+  followingMode = "ok";
+  await page.evaluate(() => { settings.liveAlerts = false; saveSettings(); });
+  await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "old title", game_name: "Old Game", viewer_count: 1, started_at: new Date().toISOString() }; });
+  await page.evaluate(async () => { await refreshStreams(); });
+  await sleep(200);
+  const lines = await page.$$eval("li.sys", (l) => l.map((x) => x.textContent));
+  check("a title and category change in a channel you have open is noted in its chat", lines.some((x) => x === "Stream title changed: Building a chat app") && lines.some((x) => x === "Category changed: Old Game → Software and Game Development"), JSON.stringify(lines.slice(-4)));
+
+  // Discovery
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Discover streams")');
+  await page.waitForSelector(".discover .disc-row");
+  check("Discover starts with the top live streams", (await page.textContent(".discover")).includes("Top live streams") && (await page.textContent(".disc-row")).includes("TopStreamer") && (await page.textContent(".disc-row")).includes("45k watching"));
+  await page.screenshot({ path: dir + "/t71-discover.png" });
+  await shot("discover");
+  await page.fill(".discover input", "mine");
+  await page.waitForSelector(".discover .disc-row:has-text(\"Findable\")");
+  check("typing searches channels (live first) and offers matching categories", (await page.$$eval(".discover .disc-row b", (b) => b.map((x) => x.textContent))).join() === "Findable,Sleepy (offline)" && (await page.$$eval(".discover .browse-tabs button", (b) => b.map((x) => x.textContent))).includes("Minecraft"));
+  await page.click('.discover .browse-tabs button:has-text("Minecraft")');
+  await page.waitForSelector('.discover:has-text("Live in Minecraft")');
+  check("choosing a category lists its live streams", log.discover.at(-1) === "/api/discover/top?game_id=27471" && (await page.textContent(".disc-row")).includes("Minecraft run"));
+  await page.click('.discover .disc-row button:has-text("Open")');
+  await page.waitForFunction(() => location.hash === "#topstreamer");
+  check("Open opens the channel in a tab", true);
+  await page.evaluate(() => closeTab(tabs.get("topstreamer")));
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  // The channel box also searches Twitch.
+  await page.fill("#channel", "");
+  await page.type("#channel", "find");
+  await page.waitForSelector('#follow-list .fl-row[data-find="findable"]');
+  check("typing in the channel box also lists matching channels from all of Twitch", (await page.textContent("#follow-list")).includes("On Twitch") && (await page.textContent('#follow-list .fl-row[data-find="findable"]')).includes("Minecraft"));
+  await page.click('#follow-list .fl-row[data-find="findable"]');
+  await page.waitForFunction(() => location.hash === "#findable");
+  await page.evaluate(() => closeTab(tabs.get("findable")));
+  await page.evaluate(() => activate(tabs.get("uwoslab")));
+  await sleep(300);
+  log.unsubs.length = 0; // (the tabs opened just above)
+  // Schedule
+  await page.click("#clips-btn");
+  await page.click('#browse-body .browse-tabs button:has-text("Schedule")');
+  await page.waitForSelector("#browse-body .brow.sched");
+  const sched = await page.$$eval("#browse-body .brow.sched", (r) => r.map((x) => ({ t: x.querySelector(".bt").textContent, s: x.querySelector(".bs").textContent, c: x.classList.contains("canceled") })));
+  check("the Schedule tab lists upcoming streams, marking recurring and canceled ones", sched.length === 2 && sched[0].t === "Friday night stream" && /Just Chatting · weekly/.test(sched[0].s) && sched[1].c && /canceled/.test(sched[1].s), JSON.stringify(sched));
+  await page.keyboard.press("Escape");
+
+  // Without the new permissions: nothing offered, reconnect inside the panels.
+  toolsScope = false;
+  await page.evaluate(() => { status.twitch.missingOptionalScopes = ["moderator:manage:announcements", "user:manage:whispers", "user:read:subscriptions"]; renderInfo(); });
+  check("without the new permissions the Mod tools button is hidden", await page.$eval("#modtools-btn", (b) => b.hidden));
+  await page.evaluate(() => { status.twitch.missingOptionalScopes = []; renderInfo(); });
+  await page.click("#modtools-btn");
+  await page.waitForSelector('.modtools a[href="/auth/login"]');
+  check("a 403 needsScope answer shows a reconnect link instead", (await page.textContent(".modtools")).includes("Reconnect Twitch"));
+  toolsScope = true;
+  await page.keyboard.press("Escape");
 }
 
 // close tab
@@ -2025,7 +2286,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#profile-btn");
   const menu = await page.evaluate(() => ({ expanded: document.getElementById("profile-btn").getAttribute("aria-expanded"), name: document.querySelector("#account-menu .dn").textContent, login: document.querySelector("#account-menu .ln").textContent, items: [...document.querySelectorAll("#account-menu button")].map((b) => b.textContent), h: Math.round(document.querySelector("#account-menu button").getBoundingClientRect().height), pic: !!document.querySelector("#account-menu .who img") }));
   check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
-    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items) === '["Settings","Your clips","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
+    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items) === '["Settings","Your clips","Whispers","Discover streams","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
   await page.screenshot({ path: dir + "/t35-account-menu.png" });
   await shot("account-menu");
   await page.keyboard.press("Escape");

@@ -3,6 +3,10 @@ declare module "*/client/app.js" {
   const source: string;
   export default source;
 }
+declare module "*/client/tools.js" {
+  const source: string;
+  export default source;
+}
 declare module "*/client/theme.js" {
   const source: string;
   export default source;

@@ -178,8 +178,8 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .tab .live-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #eb0400; }
 
 /* Info bar: live status, chat modes, search, mod controls */
-.infobar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); min-width: 0; }
-.infobar .live { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
+.infobar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); min-width: 0; flex-wrap: wrap; row-gap: 2px; }
+.infobar .live { flex: 1 1 110px; min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
 .infobar .live.on .dot { width: 8px; height: 8px; border-radius: 50%; background: #eb0400; flex: none; box-shadow: 0 0 6px #eb0400; }
 .infobar .live.on b { color: var(--live-text); }
 .infobar .live .title { overflow: hidden; text-overflow: ellipsis; }
@@ -397,3 +397,38 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .emote-tip .et-name { font-weight: 700; overflow-wrap: anywhere; }
 .emote-tip .et-src { font-size: 12px; color: var(--muted); }
 .emote-tip button { flex: none; }
+
+/* Moderator tools, whispers, discovery, subscription chip */
+.sub-chip { flex: none; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--info-bg); color: var(--link); white-space: nowrap; }
+.shared-pill { font-size: 10px; font-weight: 700; padding: 0 5px; margin-right: 4px; border-radius: 3px; background: var(--ghost); color: var(--muted); vertical-align: 1px; white-space: nowrap; }
+.flag.suspicious { background: #6b3b00; color: #ffd9a8; }
+:root[data-theme="light"] .flag.suspicious { background: #ffe1b8; color: #6b3b00; }
+.msg.suspicious { border-left: 3px solid #f5a623; }
+.sys.modlog { color: var(--am-head); }
+.sys.live-note { color: var(--ok-text); font-style: normal; }
+.sys.live-note button { margin-left: 6px; }
+.tool-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.tool-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.tool-card { padding: 8px 0; border-top: 1px solid var(--line); }
+.tool-card .tool-actions { margin-top: 6px; }
+.tool-thread { display: flex; gap: 6px; align-items: baseline; text-align: left; width: 100%; white-space: normal; }
+.tool-chatters { display: flex; flex-wrap: wrap; gap: 4px 10px; max-height: 40vh; overflow-y: auto; margin-top: 6px; }
+.tool-chatters .chatter { font-size: 13px; }
+.whisper-log { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow-y: auto; margin: 6px 0; padding: 6px; background: var(--raised); border-radius: 8px; }
+.whisper-msg { align-self: flex-start; max-width: 85%; padding: 5px 9px; border-radius: 10px; background: var(--ghost); overflow-wrap: anywhere; }
+.whisper-msg.mine { align-self: flex-end; background: var(--accent); color: #fff; }
+#profile-btn.has-whisper::after { content: ""; position: absolute; top: 0; right: 0; width: 10px; height: 10px; border-radius: 50%; background: #eb0400; border: 2px solid var(--panel); }
+.disc-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+.disc-row img { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: #000; flex: none; }
+.disc-meta { min-width: 0; flex: 1; }
+.disc-meta .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brow.sched .bmeta { padding: 8px 4px; }
+.brow.sched.canceled { opacity: .6; text-decoration: line-through; }
+.tools h2 { margin: 0 0 10px; font-size: 16px; }
+.tools input[type=text] { width: 100%; margin-bottom: 6px; }
+.tool-option { display: flex; gap: 4px; align-items: center; }
+.tool-label { display: block; margin: 8px 0; font-size: 13px; color: var(--muted); }
+.tool-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 8px 0; }
+.tool-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tool-msg { margin: 0 0 8px; font-size: 13px; color: var(--ok-text); }
+.tool-msg.err { color: var(--err-text); }

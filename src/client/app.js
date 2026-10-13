@@ -49,7 +49,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -445,6 +445,7 @@ function renderFollowList() {
   }
   if (followIndex >= followItems.length) followIndex = followItems.length - 1;
   highlightFollow();
+  window.toolsFollowExtra?.(q, box); // plus a search of Twitch for channels you don't follow
 }
 
 function highlightFollow() {
@@ -546,6 +547,7 @@ function openSocket(url, gen, migrating) {
         if (old && old !== ws) { old.retired = true; old.close(); }
       } else {
         for (const t of tabs.values()) subscribeTab(t);
+        window.toolsOnSession?.(sessionId);
       }
     } else if (type === "session_reconnect") {
       openSocket(msg.payload.session.reconnect_url, gen, true);
@@ -634,7 +636,7 @@ async function subscribeTab(tab) {
   const sid = sessionId;
   if (!sid || tab.joining === sid) return;
   tab.joining = sid;
-  const r = await api("/api/chat/subscribe", { channel: tab.login, session_id: sid });
+  const r = await api("/api/chat/subscribe", { channel: tab.login, session_id: sid, mod_log: !!settings.modLog });
   tab.joining = null;
   if (!tabs.has(tab.login)) {
     if (r.ok) api("/api/chat/unsubscribe", { ids: r.subscriptionIds });
@@ -663,6 +665,7 @@ async function subscribeTab(tab) {
   tab.joined = true;
   tab.settings = r.settings || tab.settings || null;
   tab.automod = !!r.automod;
+  tab.feeds = r.feeds || {};
   updateTabEl(tab);
   // Messages we missed (or, on first join, recent history) get inserted above this line.
   const marker = sysLine(tab, (rejoin ? "Reconnected to #" : "Joined #") + r.broadcaster.name + "." +
@@ -1532,6 +1535,12 @@ function renderMessage(tab, ev, opts = {}) {
     img.alt = img.title = info.title;
     li.appendChild(img);
   }
+  // Shared chat: a message from another channel taking part says where it came from.
+  if (ev.source_broadcaster_user_id && ev.source_broadcaster_user_id !== ev.broadcaster_user_id) {
+    const from = el("span", "shared-pill", ev.source_broadcaster_user_name || "shared chat");
+    from.title = "Sent in " + (ev.source_broadcaster_user_name || "another channel") + "'s chat (shared chat)";
+    li.appendChild(from);
+  }
   const nm = nameNode(ev);
   nm.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1568,6 +1577,8 @@ function renderMessage(tab, ev, opts = {}) {
   if (ev.first || ev.message_type === "user_intro" || firstMsgIds.has(ev.message_id)) addFlag(li, "first", "First-time chatter");
   const points = pointsLabel(ev);
   if (points) addFlag(li, "points", points);
+  const sus = tab.suspicious && tab.suspicious.get(ev.message_id);
+  if (sus) addFlag(li, "suspicious", sus);
 
   if (opts.merge) {
     insertByTime(tab, li, ev.ts);
@@ -1608,6 +1619,7 @@ function renderNotification(tab, ev) {
 }
 
 function handleEvent(type, ev, ts) {
+  if (type === "user.whisper.message") return window.toolsHandleEvent?.(type, ev, null, ts);
   if (type === "channel.raid") return handleRaid(tabForBroadcaster(ev.from_broadcaster_user_id), ev);
   const tab = tabForBroadcaster(ev.broadcaster_user_id);
   if (!tab) return;
@@ -1626,6 +1638,9 @@ function handleEvent(type, ev, ts) {
     case "automod.message.hold": return renderHeld(tab, ev);
     case "automod.message.update": return resolveHeld(tab, ev);
     case "channel.chat.notification": return renderNotification(tab, ev);
+    case "channel.suspicious_user.message":
+    case "channel.moderate":
+    case "channel.unban_request.create": return window.toolsHandleEvent?.(type, ev, tab, ts);
     case "channel.chat.message_delete": {
       const li = list.querySelector('.msg[data-id="' + CSS.escape(ev.message_id) + '"]');
       if (li) addFlag(li, "deleted", "Deleted by a moderator");
@@ -2519,7 +2534,12 @@ async function refreshStreams() {
   const byId = new Map(list.map((st) => [st.user_id, st]));
   for (const t of tabs.values()) {
     if (!t.broadcaster) continue;
+    const before = t.stream;
     t.stream = byId.get(t.broadcaster.id) || null;
+    if (settings.streamChanges !== false && before && t.stream) {
+      if (before.title !== t.stream.title) sysLine(t, "Stream title changed: " + t.stream.title);
+      if ((before.game_name || "") !== (t.stream.game_name || "")) sysLine(t, "Category changed: " + (before.game_name || "none") + " → " + (t.stream.game_name || "none"));
+    }
     updateTabEl(t);
   }
   renderInfo();
@@ -3196,6 +3216,7 @@ function renderInfo() {
   $("modes").replaceChildren(...modeLabels(tab.settings).map((l) => el("span", "chip", l)));
   show("modes-btn", !!tab.isMod);
   renderFollowBtn();
+  window.toolsRenderInfo?.(tab);
 }
 
 // Twitch has no API to follow or unfollow (it was removed in 2023), so the button shows
@@ -3340,7 +3361,7 @@ function resolveHeld(tab, ev) {
 // embeds or opened on Twitch, plus creating a clip of the live stream (needs the clips:edit
 // permission). Clip creation is asynchronous on Twitch's side, so we poll for the new clip.
 
-const BROWSE_MODES = [["clips", "Clips"], ["archive", "Past broadcasts"], ["highlight", "Highlights"], ["upload", "Uploads"]];
+const BROWSE_MODES = [["clips", "Clips"], ["archive", "Past broadcasts"], ["highlight", "Highlights"], ["upload", "Uploads"], ["schedule", "Schedule"]];
 const CLIP_PERIODS = [["all", "All time"], ["month", "This month"], ["week", "This week"], ["day", "Today"]];
 const CLIP_SECONDS = [15, 30, 60];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -3380,6 +3401,9 @@ async function loadBrowse(reset) {
   let path;
   if (b.mine) {
     path = "/api/my/clips";
+  } else if (b.mode === "schedule") {
+    path = "/api/schedule";
+    q.set("broadcaster_id", b.tab.broadcaster.id);
   } else if (b.mode === "clips") {
     path = "/api/channel/clips";
     q.set("broadcaster_id", b.tab.broadcaster.id);
@@ -3391,11 +3415,11 @@ async function loadBrowse(reset) {
     q.set("sort", b.sort);
   }
   if (b.cursor) q.set("after", b.cursor);
-  const kind = b.mine || b.mode === "clips" ? "clip" : "video";
+  const kind = b.mine || b.mode === "clips" ? "clip" : b.mode === "schedule" ? "segment" : "video";
   const r = await api(path + "?" + q);
   if (browse !== b || b.req !== req) return; // closed, or a newer filter owns the list now
   b.loading = false;
-  const list = kind === "clip" ? r.clips : r.videos;
+  const list = kind === "clip" ? r.clips : kind === "segment" ? r.segments : r.videos;
   if (!r.ok || !Array.isArray(list)) b.error = r.error || "Couldn't load them.";
   else {
     b.items.push(...list.map((x) => ({ ...x, kind })));
@@ -3436,7 +3460,21 @@ async function shareItem(item, button) {
   button.labelTimer = setTimeout(() => { button.textContent = label; }, 1500);
 }
 
+/** One upcoming (or canceled) stream from a channel's schedule. */
+function scheduleRow(item) {
+  const row = el("div", "brow sched" + (item.canceled ? " canceled" : ""));
+  const when = new Date(item.start);
+  const meta = el("div", "bmeta");
+  meta.append(
+    el("span", "bt", item.title || "Stream"),
+    el("span", "bs", when.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + (item.category ? " · " + item.category : "") + (item.recurring ? " · weekly" : "") + (item.canceled ? " · canceled" : "")),
+  );
+  row.appendChild(meta);
+  return row;
+}
+
 function browseCard(b, item) {
+  if (item.kind === "segment") return scheduleRow(item);
   const row = el("div", "brow" + (item.fresh ? " fresh" : ""));
   const card = el("button", "bcard");
   card.type = "button";
@@ -3557,7 +3595,9 @@ function renderBrowse() {
     tabs.appendChild(t);
   }
   const filter = el("div", "browse-filter");
-  if (b.mode === "clips") {
+  if (b.mode === "schedule") {
+    filter.append("Upcoming streams, in your time zone");
+  } else if (b.mode === "clips") {
     filter.append("Most viewed from", dropdown(CLIP_PERIODS, b.period, (v) => { b.period = v; loadBrowse(true); }));
   } else {
     filter.append("Sort", dropdown([["time", "Newest"], ["views", "Most viewed"]], b.sort, (v) => { b.sort = v; loadBrowse(true); }));
@@ -3571,7 +3611,7 @@ function renderBrowse() {
     const note = el("div", "browse-note", b.error + " ");
     note.appendChild(btn("Try again", () => loadBrowse(!b.items.length), "small"));
     parts.push(note);
-  } else if (!b.items.length) parts.push(el("div", "browse-note", b.mine ? "You haven't made any clips with Yappa yet." : "Nothing here yet."));
+  } else if (!b.items.length) parts.push(el("div", "browse-note", b.mine ? "You haven't made any clips with Yappa yet." : b.mode === "schedule" ? "No streams scheduled." : "Nothing here yet."));
   else if (!b.done) {
     const more = btn("Load more", () => loadBrowse(false), "ghost small");
     more.classList.add("browse-more");
@@ -3813,6 +3853,8 @@ async function openUserCard(tab, u) {
     }, "stop"));
   }
 
+  for (const b of window.toolsUserCardActions?.(tab, u) || []) actions.appendChild(b);
+
   // Their recent messages in this tab.
   const msgs = el("ul", "card-msgs");
   const theirs = [...tab.list.querySelectorAll('.msg[data-user="' + CSS.escape(u.id) + '"]')].slice(-20).reverse();
@@ -3841,7 +3883,8 @@ async function openUserCard(tab, u) {
 
 // ---------- hidden users ----------
 
-function isHidden(id) { return settings.hidden.some((h) => h.id === id); }
+const blockedIds = new Set();   // your Twitch block list (filled by tools.js)
+function isHidden(id) { return settings.hidden.some((h) => h.id === id) || (settings.syncBlocks !== false && blockedIds.has(id)); }
 
 function setHidden(u, hide) {
   settings.hidden = settings.hidden.filter((h) => h.id !== u.id);
@@ -3996,6 +4039,7 @@ function toggleAccountMenu() {
     who,
     item("Settings", openSettings),
     item("Your clips", () => openBrowse({ mine: true })),
+    ...(window.toolsAccountItems?.(item) || []),
     item("Log out", () => { if (confirm("Log out? This disconnects your Twitch account from Yappa.")) logout(); }, "danger"),
   );
   show("account-menu", true);
@@ -4170,6 +4214,15 @@ function openSettings() {
     el("h3", null, "GIFs"),
     row("Show GIFs", checkbox(settings.gifs !== false, (c) => { settings.gifs = c.checked; saveSettings(); }),
       "Tier 2 and 3 subscribers can send GIFs. They're big and animated, so turn this off to get a link instead (applies to new messages)."),
+    el("h3", null, "Moderation and alerts"),
+    row("Show moderator actions in chat", checkbox(!!settings.modLog, (c) => { settings.modLog = c.checked; saveSettings(); }),
+      "In channels you moderate, add a line when another moderator bans, times out, deletes, or changes a chat mode. Takes effect for channels you open next."),
+    row("Tell me when followed channels go live", checkbox(!!settings.liveAlerts, (c) => { settings.liveAlerts = c.checked; saveSettings(); window.toolsLiveSettingChanged?.(); }),
+      "A notification and a line in chat while Yappa is open (it can't notify when the app is closed). Allow notifications when asked."),
+    row("Note stream title and category changes", checkbox(settings.streamChanges !== false, (c) => { settings.streamChanges = c.checked; saveSettings(); }),
+      "Add a line to a channel's chat when its title or category changes."),
+    row("Use my Twitch block list", checkbox(settings.syncBlocks !== false, (c) => { settings.syncBlocks = c.checked; saveSettings(); window.toolsReloadBlocks?.(); }),
+      "Hide messages from people you've blocked on Twitch, as Twitch's own chat does."),
     el("h3", null, "Ignored users"),
     hiddenList,
   );

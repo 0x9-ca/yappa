@@ -107,8 +107,10 @@ Some things people expect from a chat client aren't possible for a third-party a
   Twitch to change it.
 - **Spending Bits or channel points, starting polls, predictions or raids, and choosing your badges:** no API for
   an app acting as you (some need the broadcaster's own token). Yappa hands off to Twitch where it can.
-- **Watch-time and stream streaks:** only Twitch's own embed, while you're signed in, counts as watching;
-  Yappa deliberately doesn't simulate it.
+- **Watch streaks, channel points and drops:** Twitch credits these for watching on twitch.tv or its own apps.
+  Embedded players on other sites, like the one in Yappa, don't appear to count (Twitch doesn't document it
+  either way; in testing, 30 minutes of watching in Yappa didn't advance a streak). Yappa doesn't try to fake watching.
+  To keep a streak, watch on Twitch; the gem button opens the channel there.
 - **Full channel-points redemption feed:** only the broadcaster can see it; Yappa marks the redemptions that
   show up in chat.
 

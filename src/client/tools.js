@@ -263,6 +263,9 @@ window.toolsUserCardActions = (tab, u) => {
       say(r.ok ? "Shouted out " + r.target + "." : "Couldn't send the shoutout: " + r.error, r.ok ? undefined : "err");
     }, "small"));
   }
+  const note = settings.notes && settings.notes[u.id];
+  if (note && (note.note || note.label)) out.push(el("div", "card-note", (note.label ? note.label + ": " : "") + (note.note || "")));
+  out.push(btn(note ? "Edit note" : "Add note", () => openNoteEditor(tab, u), "small"));
   if (!isMe && hasScope("user:manage:whispers")) out.push(btn("Whisper", () => { closeSheet(); openWhisper({ id: u.id, login: u.login, name: u.name }); }, "small"));
   if (!isMe && hasScope("user:manage:blocked_users")) {
     const blocked = blockedIds.has(u.id);
@@ -442,7 +445,9 @@ function renderWhispers() {
 
 window.toolsAccountItems = (item) => {
   const out = [];
+  if (active) out.push(item("Settings for #" + (active.broadcaster ? active.broadcaster.name : active.login), () => openChannelSettings(active)));
   if (hasScope("user:manage:whispers")) out.push(item("Whispers" + (wh.unread ? " (" + wh.unread + ")" : ""), openWhispers));
+  out.push(item("Bookmarks" + ((settings.bookmarks || []).length ? " (" + settings.bookmarks.length + ")" : ""), openBookmarks));
   out.push(item("Mentions" + (mentionsUnread ? " (" + Math.min(mentionsUnread, 99) + ")" : ""), openMentions));
   if (tabs.size > 1) out.push(item("All chats in one feed", openCombined));
   out.push(item("Discover streams", openDiscover));
@@ -516,8 +521,11 @@ window.toolsRenderInfo = (tab) => {
 
 let liveSeen = null;
 
+const liveMode = (login) => (settings.channels && settings.channels[login] && settings.channels[login].live) || "default";
+
 async function pollLive() {
-  if (!settings.liveAlerts || !me || !hasScope("user:read:follows")) return;
+  if (!me || !hasScope("user:read:follows")) return;
+  if (!settings.liveAlerts && !Object.values(settings.channels || {}).some((c) => c.live === "on")) return;
   const r = await api("/api/following");
   if (!r.ok) return;
   following = r;
@@ -529,6 +537,8 @@ async function pollLive() {
 }
 
 function announceLive(c) {
+  const mode = liveMode(c.login);
+  if (mode === "off" || (mode !== "on" && !settings.liveAlerts)) return;
   systemNotify(c.name + " is live", (c.game ? c.game + " · " : "") + c.title, "live-" + c.id, c.login);
   if (!active) return;
   const li = el("li", "sys live-note");
@@ -896,5 +906,238 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/" && active) { composer.focus(); e.preventDefault(); }
   else if (e.key === "?") { openShortcuts(); e.preventDefault(); }
 });
+
+// ---------- settings for one channel ----------
+
+const CHAN_CHOICES = [["default", "Same as Settings"], ["on", "Always"], ["off", "Never"]];
+
+function setChan(login, patch) {
+  const cur = { ...(settings.channels[login] || {}), ...patch };
+  for (const k of Object.keys(cur)) {
+    const v = cur[k];
+    if (v === "default" || v === undefined || (Array.isArray(v) && !v.length)) delete cur[k];
+  }
+  if (Object.keys(cur).length) settings.channels[login] = cur; else delete settings.channels[login];
+  saveSettings();
+}
+
+function openChannelSettings(tab) {
+  if (!tab) return;
+  const login = tab.login;
+  const name = tab.broadcaster ? tab.broadcaster.name : login;
+  const row = (label, hint, control) => {
+    const r = el("div", "row");
+    const l = el("label");
+    l.append(el("div", null, label), el("div", "hint", hint));
+    r.append(l, control);
+    return r;
+  };
+  const cs = settings.channels[login] || {};
+  const words = el("div", "rules");
+  const renderWords = () => {
+    words.replaceChildren();
+    const list = (settings.channels[login] || {}).muteWords || [];
+    if (!list.length) words.appendChild(el("div", "hint", "None."));
+    list.forEach((w, i) => {
+      const line = el("div", "row");
+      line.append(el("label", null, w), btn("Remove", () => { setChan(login, { muteWords: list.filter((_, j) => j !== i) }); renderWords(); }, "ghost small"));
+      words.appendChild(line);
+    });
+  };
+  renderWords();
+  const err = el("div", "hint");
+  const input = textBox("", 100, "Word, phrase or /pattern/", () => {});
+  input.autocapitalize = "off";
+  const add = btn("Mute here", () => {
+    const w = input.value.trim();
+    if (!w) return;
+    if (!muteMatcher(w)) { err.textContent = "That isn't a valid pattern."; return; }
+    err.textContent = "";
+    const list = (settings.channels[login] || {}).muteWords || [];
+    if (!list.includes(w)) setChan(login, { muteWords: [...list, w] });
+    input.value = "";
+    renderWords();
+  }, "small");
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add.click(); } });
+  const root = el("div", "tools");
+  root.dataset.chansettings = "1";
+  root.append(
+    el("h2", null, "Settings for #" + name),
+    el("p", "hint", "Overrides for this channel only. They sync with your other settings."),
+    row("Notifications", "Mentions and highlights while you're elsewhere.", dropdown(CHAN_CHOICES, cs.notify || "default", (v) => setChan(login, { notify: v }))),
+    row("Sound", "The chime for mentions and highlights.", dropdown(CHAN_CHOICES, cs.sound || "default", (v) => setChan(login, { sound: v }))),
+    row("Go-live alert", "When this channel starts streaming (it must be one you follow).", dropdown(CHAN_CHOICES, cs.live || "default", (v) => { setChan(login, { live: v }); pollLive(); })),
+    el("h3", null, "Muted only in this channel"),
+    words, input, add, err,
+    btn("Reset this channel", () => { delete settings.channels[login]; saveSettings(); openChannelSettings(tab); }, "ghost small"),
+  );
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+}
+
+// ---------- private notes and labels on people ----------
+
+function openNoteEditor(tab, u) {
+  const cur = (settings.notes || {})[u.id] || {};
+  const draft = { label: cur.label || "", color: cur.color || NOTE_COLORS[4], note: cur.note || "" };
+  const root = el("div", "tools");
+  root.dataset.noteeditor = "1";
+  root.append(el("h2", null, "Note on " + u.name), el("p", "hint", "Only you see this. It shows after their name in every chat and syncs to your other devices."));
+  root.appendChild(textBox(draft.label, 16, "Label, e.g. regular, mod friend, spammer", (v) => { draft.label = v; }));
+  const sw = el("div", "swatches");
+  for (const c of NOTE_COLORS) {
+    const b = el("button", "swatch" + (c === draft.color ? " on" : ""));
+    b.type = "button";
+    b.style.background = c;
+    b.setAttribute("aria-label", "Color " + c);
+    b.addEventListener("click", () => { draft.color = c; sw.querySelectorAll(".swatch").forEach((x) => x.classList.toggle("on", x === b)); });
+    sw.appendChild(b);
+  }
+  root.appendChild(sw);
+  root.appendChild(textBox(draft.note, 200, "Note (optional)", (v) => { draft.note = v; }));
+  const msg = el("div", "tool-msg err");
+  const save = btn("Save", () => {
+    const label = draft.label.trim(), note = draft.note.trim();
+    if (!label && !note) { remove.click(); return; }
+    if (!settings.notes[u.id] && Object.keys(settings.notes).length >= 300) { msg.textContent = "You've reached 300 notes; remove one first."; return; }
+    settings.notes[u.id] = { login: u.login || "", label, color: draft.color, note };
+    saveSettings();
+    refreshUserTags(u.id);
+    closeSheet();
+  }, "small");
+  const remove = btn("Remove", () => { delete settings.notes[u.id]; saveSettings(); refreshUserTags(u.id); closeSheet(); }, "ghost small");
+  const bar = el("div", "card-actions");
+  bar.append(save);
+  if (cur.label || cur.note) bar.append(remove);
+  root.append(bar, msg);
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+}
+
+// ---------- quick messages ----------
+
+const snippetsBox = $("snippets");
+
+function closeSnippets() { snippetsBox.hidden = true; }
+
+function insertSnippet(text) {
+  const v = composer.getText();
+  const add = (v && !/\s$/.test(v) ? " " : "") + text;
+  if ((v + add).length > 500) return;
+  composer.setText(v + add, (v + add).length);
+  if (!coarse) composer.focus();
+}
+
+function renderSnippets() {
+  const list = settings.snippets || [];
+  const draft = composer.getText().trim();
+  const box = el("div", "snip-list");
+  if (!list.length) box.appendChild(el("div", "hint", "Save messages you type often (greetings, !commands, emote strings). Tap one to put it in the message box."));
+  list.forEach((s, i) => {
+    const row = el("div", "snip-row");
+    const main = el("button", "snip-main");
+    main.type = "button";
+    main.append(el("b", null, s.label), el("span", "hint", s.text));
+    main.addEventListener("click", () => { insertSnippet(s.text); closeSnippets(); });
+    row.appendChild(main);
+    if (!draft) row.appendChild(btn("Send", () => { closeSnippets(); composer.setText(s.text); $("send-form").requestSubmit(); }, "small"));
+    row.appendChild(btn("✕", () => { settings.snippets = list.filter((_, j) => j !== i); saveSettings(); renderSnippets(); }, "ghost small snip-del"));
+    box.appendChild(row);
+  });
+  const form = el("div", "snip-form");
+  const label = textBox("", 20, "Name", () => {});
+  const text = textBox("", 500, "Message", () => {});
+  const addBtn = btn("Add", () => {
+    const l = label.value.trim(), x = text.value.trim();
+    if (!x) { text.focus(); return; }
+    if (list.length >= 30) return;
+    settings.snippets = [...list, { label: l || x.slice(0, 20), text: x }];
+    saveSettings();
+    renderSnippets();
+  }, "small");
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addBtn.click(); } });
+  form.append(label, text, addBtn);
+  snippetsBox.replaceChildren(box, form);
+}
+
+$("snip-btn").addEventListener("click", () => {
+  if (!snippetsBox.hidden) { closeSnippets(); return; }
+  closePicker();
+  closeSuggest();
+  renderSnippets();
+  snippetsBox.hidden = false;
+});
+$("emote-btn").addEventListener("click", closeSnippets);
+document.addEventListener("pointerdown", (e) => { if (!snippetsBox.hidden && !e.target.closest("#snippets, #snip-btn")) closeSnippets(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSnippets(); });
+
+// ---------- bookmarks ----------
+
+window.toolsBookmark = (tab, ev) => {
+  const list = settings.bookmarks || [];
+  const had = list.some((b) => b.id === ev.message_id);
+  if (had) settings.bookmarks = list.filter((b) => b.id !== ev.message_id);
+  else settings.bookmarks = [{
+    id: ev.message_id, login: tab.login, channel: tab.broadcaster ? tab.broadcaster.name : tab.login,
+    user: ev.chatter_user_name, color: ev.color || "", text: ev.message.text, ts: ev.ts || Date.now(),
+  }, ...list].slice(0, 100);
+  saveSettings();
+  sysLine(tab, had ? "Removed the bookmark." : "Saved " + ev.chatter_user_name + "'s message to Bookmarks (account menu).");
+};
+
+function openBookmarks() {
+  const root = el("div", "tools");
+  root.dataset.bookmarks = "1";
+  root.append(el("h2", null, "Bookmarks"), el("p", "hint", "Messages you saved with Save in the message menu. They sync to your other devices."));
+  const list = el("div", "tool-list");
+  for (const m of settings.bookmarks || []) {
+    const wrap = el("div", "bm-row");
+    const row = el("button", "mention-row");
+    row.type = "button";
+    const head = el("div", "mr-head");
+    const who = el("b", null, m.user);
+    if (m.color) who.style.color = m.color;
+    head.append(el("span", "shared-pill", m.channel), who, el("span", "hint", " " + new Date(m.ts).toLocaleString()));
+    row.append(head, el("div", "mr-text", m.text));
+    row.addEventListener("click", () => { closeSheet(); openTab(m.login); });
+    wrap.append(row, btn("Remove", () => { settings.bookmarks = settings.bookmarks.filter((b) => b.id !== m.id); saveSettings(); openBookmarks(); }, "ghost small"));
+    list.appendChild(wrap);
+  }
+  if (!(settings.bookmarks || []).length) list.appendChild(el("div", "hint", "Nothing saved yet."));
+  root.appendChild(list);
+  $("sheet-body").replaceChildren(root);
+  show("sheet", true);
+}
+
+// ---------- translate a message ----------
+
+const translateLang = () => (navigator.language || "en").split("-")[0].toLowerCase();
+
+/** Uses the browser's own on-device translator where it has one; otherwise null. */
+async function translateOnDevice(text, target) {
+  if (!("Translator" in self) || !("LanguageDetector" in self)) return null;
+  const det = await self.LanguageDetector.create();
+  const guess = (await det.detect(text))[0];
+  if (!guess || !guess.detectedLanguage || guess.detectedLanguage === "und") return null;
+  if (guess.detectedLanguage === target) return { same: true };
+  const tr = await self.Translator.create({ sourceLanguage: guess.detectedLanguage, targetLanguage: target });
+  return { text: await tr.translate(text), from: guess.detectedLanguage };
+}
+
+window.toolsTranslate = async (tab, ev, li) => {
+  const text = ev.message.text, target = translateLang();
+  const old = li.querySelector(".translation");
+  if (old) { old.remove(); return; }
+  let r = null;
+  try { r = await translateOnDevice(text, target); } catch { r = null; }
+  if (!r) {
+    // No on-device translator: hand the text to Google Translate in a new tab (only when asked).
+    launchers.window("https://translate.google.com/?sl=auto&tl=" + encodeURIComponent(target) + "&op=translate&text=" + encodeURIComponent(text), "_blank");
+    return;
+  }
+  const out = el("div", "translation", r.same ? "Already in your language (" + target + ")." : "(" + r.from + " → " + target + ") " + r.text);
+  const body = li.querySelector(".body");
+  if (body) body.after(out); else li.appendChild(out);
+};
 
 })();

@@ -153,6 +153,7 @@ export function renderPage(): string {
       <div class="note" id="picker-note" hidden></div>
       <div class="scroll" id="picker-list"></div>
     </div>
+    <div class="popover snippets" id="snippets" hidden></div>
     <div class="popover suggest" id="suggest" role="listbox" hidden></div>
     <form id="send-form">
       <button type="button" class="ghost" id="emote-btn" aria-label="Emotes" title="Emotes" disabled>
@@ -160,6 +161,9 @@ export function renderPage(): string {
       </button>
       <button type="button" class="ghost" id="twitch-btn" aria-label="Bits and channel points (opens Twitch)" title="Bits and channel points: open on Twitch" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20"/></svg>
+      </button>
+      <button type="button" class="ghost" id="snip-btn" aria-label="Quick messages" title="Quick messages" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
       </button>
       <div id="message" class="composer" contenteditable="false" role="textbox" aria-label="Message" aria-disabled="true"
         data-placeholder="Open a channel to chat" autocapitalize="off" autocorrect="off" spellcheck="true" enterkeyhint="send"></div>

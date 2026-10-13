@@ -49,7 +49,7 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true, mute: { words: [], bots: false, commands: false } };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true, mute: { words: [], bots: false, commands: false }, channels: {}, notes: {}, snippets: [], favEmotes: [], bookmarks: [] };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -1028,7 +1028,8 @@ function updateComposer() {
 
   $("send").disabled = !on;
   $("emote-btn").disabled = !on;
-  $("twitch-btn").disabled = !active;   // only needs a channel, not a live connection
+  $("twitch-btn").disabled = !active;
+  $("snip-btn").disabled = !on;   // only needs a channel, not a live connection
   composer.setEnabled(on, on
     ? "Send a message" + (active.isMod ? " (mod: /ban /timeout /unban /clear)" : "")
     : (active ? "Connecting…" : "Open a channel to chat"));
@@ -1594,7 +1595,7 @@ function renderMessage(tab, ev, opts = {}) {
   li.dataset.user = ev.chatter_user_id;
   li.dataset.login = ev.chatter_user_login || "";
   if (isHidden(ev.chatter_user_id)) li.classList.add("ignored");
-  else if (isMuted(ev)) { li.classList.add("ignored"); li.dataset.muted = "1"; }
+  else if (isMuted(ev, tab.login)) { li.classList.add("ignored"); li.dataset.muted = "1"; }
   if (ev.chatter_user_login) tab.chatters.set(ev.chatter_user_login, ev.chatter_user_name);
   if (tab.chatters.size > 1000) tab.chatters.delete(tab.chatters.keys().next().value);
 
@@ -1622,6 +1623,8 @@ function renderMessage(tab, ev, opts = {}) {
     openUserCard(tab, { id: ev.chatter_user_id, login: ev.chatter_user_login, name: ev.chatter_user_name, color: nm.style.color, badges: ev.badges || [] });
   });
   li.appendChild(nm);
+  const tag = userTag(ev.chatter_user_id);
+  if (tag) li.appendChild(tag);
   const mine = me && ev.chatter_user_id === me.userId;
   li.appendChild(document.createTextNode(": "));
   const body = el("span", "body");
@@ -1640,6 +1643,8 @@ function renderMessage(tab, ev, opts = {}) {
 
   const actions = el("div", "actions");
   actions.appendChild(actionButton("Reply", () => setReply({ id: ev.message_id, user: ev.chatter_user_name, text: ev.message.text })));
+  actions.appendChild(actionButton("Save", () => window.toolsBookmark?.(tab, ev)));
+  actions.appendChild(actionButton("Translate", () => window.toolsTranslate?.(tab, ev, li)));
   const target = !mine && tab.broadcaster && ev.chatter_user_id !== tab.broadcaster.id;
   if (tab.isMod && target) {
     actions.appendChild(actionButton("Delete", () => modAction(tab, { action: "delete", message_id: ev.message_id })));
@@ -1759,6 +1764,7 @@ function showEmoteTip(img) {
   if (usable) {
     const add = btn("Add to message", () => { hideEmoteTip(); insertEmote(name); }, "small");
     tip.appendChild(add);
+    tip.appendChild(btn(isFavorite(name) ? "★ Unfavorite" : "☆ Favorite", () => { toggleFavorite(name, img.src); hideEmoteTip(); }, "small"));
   }
   document.body.appendChild(tip);
   emoteTip = { node: tip, img };
@@ -1943,6 +1949,26 @@ function recentHere(tab) {
     .filter(Boolean);
 }
 
+/** Favorite emotes that this channel can use. */
+function favHere(tab) {
+  const twitchKnown = !!(tab && tab.twitchEmotes && tab.twitchEmotes.ok);
+  return (settings.favEmotes || [])
+    .map((e) => emoteInChannel(tab, e.name) || (!twitchKnown && /static-cdn\.jtvnw\.net/.test(e.url) ? e : null))
+    .filter(Boolean);
+}
+
+const isFavorite = (name) => (settings.favEmotes || []).some((e) => e.name === name);
+
+/** Adds or removes a favorite; returns whether it is one now. */
+function toggleFavorite(name, url) {
+  const list = settings.favEmotes || [];
+  if (isFavorite(name)) settings.favEmotes = list.filter((e) => e.name !== name);
+  else settings.favEmotes = [...list, { name, url }].slice(-60);
+  saveSettings();
+  if (!$("picker").hidden) renderPicker();
+  return isFavorite(name);
+}
+
 function recentEmotes() {
   try { return JSON.parse(safeGet("recentEmotes") || "[]"); } catch { return []; }
 }
@@ -1988,6 +2014,7 @@ function renderPicker() {
     ? tab.twitchEmotes.emotes.filter((e) => e.group === group).map((e) => ({ name: e.name, url: twitchEmoteUrl(e) }))
     : [];
 
+  add("★ Favorites", favHere(tab));
   if (!q) add("Recent", recentHere(tab));
   add("Twitch · this channel", tw("This channel"));
   if (tab) for (const src of EXT_SOURCES) add(src + " · this channel", ext(tab.ext, src));
@@ -2041,6 +2068,7 @@ function renderPicker() {
     }
     list.appendChild(grid);
   }
+  if (!q && !(settings.favEmotes || []).length) list.appendChild(el("div", "hint fav-hint", "Tip: long-press (or right-click) an emote to favorite it."));
 }
 
 function insertEmote(name) {
@@ -2069,6 +2097,14 @@ $("emote-search").addEventListener("keydown", (e) => {
     if (first) first.click();
   }
 });
+// Long-press (touch) or right-click an emote to favorite it.
+$("picker-list").addEventListener("contextmenu", (e) => {
+  const b = e.target.closest(".grid button");
+  if (!b) return;
+  e.preventDefault();
+  toggleFavorite(b.dataset.name, b.dataset.url);
+});
+
 $("picker-list").addEventListener("click", (e) => {
   const b = e.target.closest(".grid button");
   if (!b) return;
@@ -3977,6 +4013,29 @@ function mentionName(login, name) {
 function normLogin(u) { return String(u || "").trim().replace(/^@/, "").toLowerCase(); }
 
 /** Highlight rules: a phrase, a user, or a phrase only when that user says it. */
+/** This channel's own overrides of the global alert and mute settings (see "Settings for this channel"). */
+function chanSetting(login) { return (settings.channels && settings.channels[login]) || {}; }
+
+const NOTE_COLORS = ["#ff4d4d", "#ff9f1a", "#f2d600", "#2ecc71", "#3aa0ff", "#b36bff"];
+
+/** Your private label for someone, shown after their name wherever they chat. */
+function userTag(id) {
+  const n = settings.notes && settings.notes[id];
+  if (!n || !(n.label || n.note)) return null;
+  const t = el("span", "user-tag", n.label || "note");
+  if (n.color) t.style.setProperty("--tag", n.color);
+  t.title = n.note || n.label;
+  return t;
+}
+
+function refreshUserTags(id) {
+  document.querySelectorAll('.msg[data-user="' + CSS.escape(id) + '"]').forEach((li) => {
+    li.querySelectorAll(".user-tag").forEach((n) => n.remove());
+    const t = userTag(id), nm = li.querySelector(".name");
+    if (t && nm) nm.after(t);
+  });
+}
+
 /** Well-known chat bots, hidden by "Hide bots". Names you want gone beyond these go on the ignore list. */
 const KNOWN_BOTS = new Set(["nightbot", "streamelements", "streamlabs", "moobot", "fossabot", "wizebot", "soundalerts", "sery_bot", "pokemoncommunitygame"]);
 const muteRegexes = new Map();
@@ -3996,13 +4055,13 @@ function muteMatcher(entry) {
 }
 
 /** Messages the mute filters hide (never your own). */
-function isMuted(ev) {
+function isMuted(ev, channel) {
   const mute = settings.mute;
   if (!mute || (me && ev.chatter_user_id === me.userId)) return false;
   const text = (ev.message && ev.message.text) || "";
   if (mute.bots && KNOWN_BOTS.has(normLogin(ev.chatter_user_login))) return true;
   if (mute.commands && /^\s*!\w/.test(text)) return true;
-  return (mute.words || []).some((w) => { const re = muteMatcher(w); return re && re.test(text); });
+  return [...(mute.words || []), ...(chanSetting(channel).muteWords || [])].some((w) => { const re = muteMatcher(w); return re && re.test(text); });
 }
 
 function matchesHighlight(ev) {
@@ -4038,8 +4097,9 @@ document.addEventListener("pointerdown", () => { if (settings.sound && !audioCtx
 function alertFor(tab, ev) {
   const away = document.hidden || tab !== active;
   if (!away) return;
-  if (settings.sound) ping();
-  if (!settings.notify || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const cs = chanSetting(tab.login);
+  if (cs.sound === "on" || (cs.sound !== "off" && settings.sound)) ping();
+  if (!(cs.notify === "on" || (cs.notify !== "off" && settings.notify)) || typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const title = ev.chatter_user_name + " in #" + (tab.broadcaster ? tab.broadcaster.name : tab.login);
   const opts = { body: ev.message.text, tag: ev.message_id, icon: "/icons/icon-192.png", data: { tab: tab.login } };
   // Android requires notifications to come from the service worker.

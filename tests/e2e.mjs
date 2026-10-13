@@ -394,7 +394,7 @@ s = await state();
 check("switching clears unread, updates hash", s.tabs === "UwoSlab*[MOD] | OtherChan" && s.hash === "#uwoslab", s.tabs + " " + s.hash);
 check("mod hint in placeholder", s.placeholder.includes("/ban"), s.placeholder);
 const modBtns = await page.$$eval('li[data-id="u2"] .actions button', (bs) => bs.map((b) => b.textContent));
-check("mod actions on others' messages", modBtns.join(",") === "Reply,Delete,Timeout,Ban", modBtns.join(","));
+check("mod actions on others' messages", modBtns.join(",") === "Reply,Save,Translate,Delete,Timeout,Ban", modBtns.join(","));
 
 await page.tap('li[data-id="u2"] .body');
 await sleep(100);
@@ -1267,8 +1267,8 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
     m["emote-btn"].w === m["twitch-btn"].w && m["emote-btn"].h === m["twitch-btn"].h && m["emote-btn"].w === 38 && m["emote-btn"].h === 38 &&
     m["emote-btn"].top === m["twitch-btn"].top && m["emote-btn"].bottom === m["twitch-btn"].bottom && m["emote-btn"].top === m["message"].top, JSON.stringify(m));
   check("the Chat button is the same height and top/bottom as the message box", m.send.h === m.message.h && m.send.top === m.message.top && m.send.bottom === m.message.bottom, JSON.stringify(m.send));
-  const gap = await page.evaluate(() => { const a = document.getElementById("emote-btn").getBoundingClientRect(), b = document.getElementById("twitch-btn").getBoundingClientRect(), c = document.getElementById("message").getBoundingClientRect(); return [Math.round(b.left - a.right), Math.round(c.left - b.right)]; });
-  check("even spacing between the buttons and the message box", gap[0] === gap[1], JSON.stringify(gap));
+  const gap = await page.evaluate(() => { const r = ["emote-btn", "twitch-btn", "snip-btn", "message"].map((id) => document.getElementById(id).getBoundingClientRect()); return [Math.round(r[1].left - r[0].right), Math.round(r[2].left - r[1].right), Math.round(r[3].left - r[2].right)]; });
+  check("even spacing between the buttons and the message box", gap[0] === gap[1] && gap[1] === gap[2], JSON.stringify(gap));
 }
 {
   await page.click(".tab:first-child .tab-name");
@@ -1630,7 +1630,7 @@ check("typing after an emote leaves earlier nodes untouched", await page.evaluat
   document.getElementById("message").dispatchEvent(new InputEvent("input", { bubbles: true }));
   return same;
 }));
-await page.keyboard.press("Home");
+await page.keyboard.press("Control+Home");
 await page.keyboard.type("so ");
 ce = await page.evaluate(() => composer.getText());
 check("editing in the middle keeps the caret in place", ce === "so hi Kappa catJAM OMEGALUL and more", ce);
@@ -2318,13 +2318,13 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#profile-btn");
   const menu = await page.evaluate(() => ({ expanded: document.getElementById("profile-btn").getAttribute("aria-expanded"), name: document.querySelector("#account-menu .dn").textContent, login: document.querySelector("#account-menu .ln").textContent, items: [...document.querySelectorAll("#account-menu button")].map((b) => b.textContent), h: Math.round(document.querySelector("#account-menu button").getBoundingClientRect().height), pic: !!document.querySelector("#account-menu .who img") }));
   check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
-    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Whispers","Mentions","All chats in one feed","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
+    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Settings for #UwoSlab","Whispers","Bookmarks","Mentions","All chats in one feed","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
   await page.screenshot({ path: dir + "/t35-account-menu.png" });
   await shot("account-menu");
   await page.keyboard.press("Escape");
   check("Escape closes it", await page.$eval("#account-menu", (m) => m.hidden) && (await page.getAttribute("#profile-btn", "aria-expanded")) === "false");
   await page.click("#profile-btn");
-  await page.mouse.click(200, 400);
+  await page.mouse.click(8, 700);
   check("tapping elsewhere closes it", await page.$eval("#account-menu", (m) => m.hidden));
   await openSettingsUI();
   check("Settings opens from the menu (and the menu closes)", (await page.textContent("#sheet-body")).includes("Settings") && await page.$eval("#account-menu", (m) => m.hidden));
@@ -2580,6 +2580,161 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.keyboard.press("/");
   check("/ jumps to the message box", await page.evaluate(() => document.activeElement === document.getElementById("message")));
   syncMockOff = true;
+}
+
+
+// =============== per-channel settings, notes, quick messages, favorites, bookmarks, translate ===============
+{
+  const names = await page.evaluate(() => [...tabs.keys()]);
+  const first = names[0], second = names.find((n) => n !== first);
+  await page.evaluate((n) => activate(tabs.get(n)), first);
+  const idOf = (n) => page.evaluate((x) => tabs.get(x).broadcaster.id, n);
+  const secondId = await idOf(second);
+
+  // ---- settings for one channel ----
+  await page.evaluate(() => { window.__pings = 0; window.ping = () => { window.__pings++; }; settings.sound = true; settings.notify = false; saveSettings(); });
+  const mentionFrags = [{ type: "text", text: "yo " }, { type: "mention", text: "@testuser", mention: { user_id: "111" } }];
+  cur().send(chat(secondId, "pc1", "Pinger", "9401", "yo @testuser", { fragments: mentionFrags }));
+  await page.waitForSelector('li[data-id="pc1"]', { state: "attached" });
+  const p1 = await page.evaluate(() => window.__pings);
+  await page.evaluate((n) => { settings.channels[n] = { sound: "off" }; saveSettings(); }, second);
+  cur().send(chat(secondId, "pc2", "Pinger", "9401", "yo @testuser again", { fragments: mentionFrags }));
+  await page.waitForSelector('li[data-id="pc2"]', { state: "attached" });
+  const p2 = await page.evaluate(() => window.__pings);
+  check("sound for mentions is on globally, and a channel can switch it off", p1 === 1 && p2 === 1, p1 + " " + p2);
+  await page.evaluate((n) => { settings.sound = false; settings.channels[n] = { sound: "on" }; saveSettings(); }, second);
+  cur().send(chat(secondId, "pc3", "Pinger", "9401", "third @testuser", { fragments: mentionFrags }));
+  await page.waitForSelector('li[data-id="pc3"]', { state: "attached" });
+  check("...or on when it's off globally", (await page.evaluate(() => window.__pings)) === 2);
+  await page.evaluate((n) => { delete settings.channels[n]; saveSettings(); }, second);
+
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Settings for #")');
+  await page.waitForSelector("#sheet [data-chansettings]");
+  await page.fill('#sheet input[placeholder="Word, phrase or /pattern/"]', "blahword");
+  await page.click('#sheet button:has-text("Mute here")');
+  const firstId = await idOf(first);
+  check("a muted word is stored for just this channel", await page.evaluate((n) => JSON.stringify(settings.channels[n]) === '{"muteWords":["blahword"]}', first));
+  await shot("channel-settings");
+  await page.selectOption("#sheet select >> nth=1", "off");
+  check("a dropdown sets the channel's sound", await page.evaluate((n) => settings.channels[n].sound === "off", first));
+  await page.keyboard.press("Escape");
+  cur().send(chat(firstId, "cm1", "Someone", "9402", "this has blahword in it"));
+  cur().send(chat(secondId, "cm2", "Someone", "9402", "this has blahword in it"));
+  await page.waitForSelector('li[data-id="cm2"]', { state: "attached" });
+  check("it hides there and nowhere else", await page.evaluate(() => document.querySelector('li[data-id="cm1"]').classList.contains("ignored") && !document.querySelector('li[data-id="cm2"]').classList.contains("ignored")));
+  await page.evaluate((n) => { delete settings.channels[n]; saveSettings(); }, first);
+
+  // go-live alerts per channel
+  const notes0 = await page.$$eval("li.live-note", (l) => l.length);
+  await page.evaluate(() => { settings.liveAlerts = false; settings.channels.newstreamer = { live: "on" }; saveSettings(); });
+  followingMode = "ok";
+  await page.evaluate(async () => { await toolsPollLive(); });
+  followingMode = "newlive";
+  await page.evaluate(async () => { await toolsPollLive(); });
+  await sleep(200);
+  check("a channel set to Always is announced even with go-live alerts off", (await page.$$eval("li.live-note", (l) => l.length)) === notes0 + 1);
+  await page.evaluate(() => { settings.liveAlerts = true; settings.channels.newstreamer = { live: "off" }; saveSettings(); });
+  followingMode = "ok";
+  await page.evaluate(async () => { await toolsPollLive(); });
+  await sleep(200);
+  const notes1 = await page.$$eval("li.live-note", (l) => l.length);
+  followingMode = "newlive";
+  await page.evaluate(async () => { await toolsPollLive(); });
+  await sleep(200);
+  check("...and one set to Never is not, even with them on", (await page.$$eval("li.live-note", (l) => l.length)) === notes1);
+  followingMode = "ok";
+  await page.evaluate(() => { settings.liveAlerts = false; delete settings.channels.newstreamer; saveSettings(); });
+
+  // ---- notes on people ----
+  cur().send(chat(firstId, "nt1", "Regular", "9501", "hello from a regular"));
+  await page.waitForSelector('li[data-id="nt1"]', { state: "attached" });
+  await page.evaluate(() => document.querySelector('li[data-id="nt1"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  await page.click('#sheet .card-actions button:has-text("Add note")');
+  await page.fill('#sheet input[placeholder^="Label"]', "friend");
+  await page.fill('#sheet input[placeholder^="Note"]', "met at a meetup");
+  await page.click("#sheet .swatch >> nth=3");
+  await shot("user-note");
+  await page.click('#sheet button:has-text("Save")');
+  const tagInfo = await page.$eval('li[data-id="nt1"] .user-tag', (t) => ({ text: t.textContent, title: t.title, after: t.previousElementSibling.classList.contains("name") }));
+  check("a note shows as a colored label after their name, with the note as its tooltip", tagInfo.text === "friend" && tagInfo.title === "met at a meetup" && tagInfo.after, JSON.stringify(tagInfo));
+  cur().send(chat(firstId, "nt2", "Regular", "9501", "second message"));
+  await page.waitForSelector('li[data-id="nt2"]', { state: "attached" });
+  check("new messages from them carry it too", !!(await page.$('li[data-id="nt2"] .user-tag')));
+  await page.evaluate(() => document.querySelector('li[data-id="nt2"] .name').click());
+  await page.waitForSelector("#sheet .card-note");
+  check("the user card shows the note", /friend: met at a meetup/.test(await page.textContent("#sheet .card-note")));
+  await page.click('#sheet .card-actions button:has-text("Edit note")');
+  await page.click('#sheet button:has-text("Remove")');
+  check("removing a note removes the label everywhere", (await page.$$('.msg[data-user="9501"] .user-tag')).length === 0 && !(await page.evaluate(() => "9501" in settings.notes)));
+
+  // ---- quick messages ----
+  await page.click("#snip-btn");
+  await page.waitForSelector("#snippets:not([hidden])");
+  await page.fill('#snippets input[placeholder="Name"]', "hi");
+  await page.fill('#snippets input[placeholder="Message"]', "hello everyone!");
+  await page.click('#snippets button:has-text("Add")');
+  check("a quick message is saved", await page.evaluate(() => JSON.stringify(settings.snippets) === '[{"label":"hi","text":"hello everyone!"}]'));
+  await shot("quick-messages");
+  await page.evaluate(() => composer.setText(""));
+  await page.click("#snippets .snip-main");
+  check("tapping one puts it in the message box and closes the list", (await page.evaluate(() => composer.getText())) === "hello everyone!" && await page.$eval("#snippets", (n) => n.hidden));
+  await page.evaluate(() => composer.setText(""));
+  await page.click("#snip-btn");
+  const sentBefore = log.sent.length;
+  await page.click('#snippets button:has-text("Send")');
+  await sleep(400);
+  check("Send posts it straight away", log.sent.length === sentBefore + 1 && log.sent.at(-1) === "hello everyone!", JSON.stringify(log.sent.at(-1)));
+  await page.evaluate(() => composer.setText("half a draft"));
+  await page.click("#snip-btn");
+  check("with a draft in the box there's no Send, so it can't be lost", (await page.$$('#snippets button:has-text("Send")')).length === 0);
+  await page.evaluate(() => { composer.setText(""); });
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { settings.snippets = []; saveSettings(); });
+
+  // ---- favorite emotes ----
+  await page.click("#emote-btn");
+  await page.waitForSelector("#picker-list .grid button");
+  const emoteName = await page.$eval("#picker-list .grid button", (b) => b.dataset.name);
+  await page.click(`#picker-list .grid button[data-name="${emoteName}"]`, { button: "right" });
+  const heads2 = await page.$$eval("#picker-list h3", (n) => n.map((x) => x.textContent));
+  check("right-click or long-press favorites an emote, listed first", heads2[0].startsWith("★ Favorites") && await page.evaluate((n) => settings.favEmotes[0].name === n, emoteName), JSON.stringify(heads2));
+  await shot("favorite-emotes");
+  await page.click(`#picker-list .grid button[data-name="${emoteName}"]`, { button: "right" });
+  check("doing it again removes it", (await page.evaluate(() => settings.favEmotes.length)) === 0);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => closePicker());
+
+  // ---- bookmarks ----
+  await page.evaluate(() => document.querySelector('li[data-id="nt1"]').click());
+  await page.click('li[data-id="nt1"] .actions button:has-text("Save")');
+  check("Save in the message menu bookmarks it", await page.evaluate(() => settings.bookmarks.length === 1 && settings.bookmarks[0].text === "hello from a regular"));
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Bookmarks")');
+  await page.waitForSelector("#sheet [data-bookmarks] .mention-row");
+  check("the Bookmarks sheet lists it with channel and author", /Regular/.test(await page.textContent("#sheet .mention-row")) && /hello from a regular/.test(await page.textContent("#sheet .mention-row")));
+  await shot("bookmarks");
+  await page.click('#sheet button:has-text("Remove")');
+  check("and can remove it", (await page.evaluate(() => settings.bookmarks.length)) === 0);
+  await page.keyboard.press("Escape");
+
+  // ---- translate ----
+  await page.evaluate(() => { window.__opened = []; launchers.window = (url) => { window.__opened.push(url); }; });
+  await page.evaluate(() => document.querySelector('li[data-id="nt1"]').click());
+  await page.click('li[data-id="nt1"] .actions button:has-text("Translate")');
+  await sleep(200);
+  const opened = await page.evaluate(() => window.__opened);
+  check("without a built-in translator, Translate opens Google Translate with the text", opened.length === 1 && /translate\.google\.com\/\?sl=auto&tl=\w+&op=translate&text=hello%20from%20a%20regular/.test(opened[0]), JSON.stringify(opened));
+  await page.evaluate(() => {
+    self.LanguageDetector = { create: async () => ({ detect: async () => [{ detectedLanguage: "fr" }] }) };
+    self.Translator = { create: async (o) => ({ translate: async (t) => "[" + o.sourceLanguage + ">" + o.targetLanguage + "] " + t }) };
+  });
+  await page.evaluate(() => document.querySelector('li[data-id="nt1"]').click());
+  await page.click('li[data-id="nt1"] .actions button:has-text("Translate")');
+  await page.waitForSelector('li[data-id="nt1"] .translation');
+  check("with one, the translation shows under the message", /\[fr>\w+\] hello from a regular/.test(await page.textContent('li[data-id="nt1"] .translation')));
+  await page.evaluate(() => { delete self.LanguageDetector; delete self.Translator; });
 }
 
 // =============== moving to a new address ===============

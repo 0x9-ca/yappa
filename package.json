@@ -7,7 +7,9 @@
     "deploy": "wrangler deploy",
     "types": "wrangler types",
     "check": "tsc --noEmit",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test": "node tests/unit.mjs && node tests/e2e.mjs",
+    "test:unit": "node tests/unit.mjs"
   },
   "dependencies": {
     "hls.js": "1.7.3"

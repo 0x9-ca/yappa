@@ -11,7 +11,7 @@ The Worker is still named `yappa` (the project started as a chat-color prank).
 ## Commands
 
 - `npm run check`: type-check the Worker (`tsc --noEmit`). Client JS isn't type-checked; run `node --check src/client/app.js`.
-- `npm run test:e2e`: end-to-end UI test in headless Chromium (see Testing). Run it before every deploy.
+- `npm test`: both test suites (see Testing); run it before every deploy. `npm run test:unit` is the fast, browser-free half (about a second); `npm run test:e2e` the browser half (about a minute).
 - `npm run deploy`: `wrangler deploy` to the custom domain. Deploying is how changes reach the user; there is no staging.
 - `npm run types`: regenerate `worker-configuration.d.ts` after changing `wrangler.jsonc` bindings or vars. That file is gitignored (it embeds the config values), so run it after cloning too; `npm run check` needs it.
 
@@ -76,9 +76,10 @@ Tokens never reach the browser.
 
 ## Testing
 
-`tests/e2e.mjs` loads the real page and client JS in headless Chromium at phone size (390×760) and fakes everything external. That covers the `/api` routes (stateful mocks), the EventSub and IRC WebSockets, the recent-messages service, the 7TV/BTTV/FFZ CDNs, the Twitch embed script and Document Picture-in-Picture. It also runs the Worker itself in Node (Durable Object runtime faked) to test sign-in, sessions and the allowlist. It prints PASS/FAIL per check and exits non-zero on any failure, browser console error or 404. Screenshots go to `tests/output/` (git-ignored). `SHOTS=1` (plus `SHOTS_FONTS=<dir of Roboto .woff2 files>` so the text isn't in the headless browser's fallback font) also saves the phone + desktop gallery in `docs/screenshots/` for the README (tracked; regenerate when the UI changes and add a `shot("name")` call for new features). Look at them for layout work: there's no other way to check layout.
+`tests/unit.mjs` (no browser) checks the Worker's request validation, the usher relay and the Worker itself run directly in Node (sign-in, sessions, allowlist, sync) with the Durable Object faked; `tests/support.mjs` bundles the code for it. `tests/e2e.mjs` loads the real page and client JS in headless Chromium at phone size (390×760) and fakes everything external. That covers the `/api` routes (stateful mocks), the EventSub and IRC WebSockets, the recent-messages service, the 7TV/BTTV/FFZ CDNs, the Twitch embed script and Document Picture-in-Picture. It also runs the Worker itself in Node (Durable Object runtime faked) to test sign-in, sessions and the allowlist. It prints PASS/FAIL per check and exits non-zero on any failure, browser console error or 404. Screenshots go to `tests/output/` (git-ignored). `SHOTS=1` (plus `SHOTS_FONTS=<dir of Roboto .woff2 files>` so the text isn't in the headless browser's fallback font) also saves the phone + desktop gallery in `docs/screenshots/` for the README (tracked; regenerate when the UI changes and add a `shot("name")` call for new features). Look at them for layout work: there's no other way to check layout.
 
-- **Add checks with every feature,** including mocks in the `ctx.route` handler.
+- **Add checks with every feature,** including mocks in the `ctx.route` handler. Pure logic (parsers, validators, Worker routes) goes in `unit.mjs`; anything that needs the page goes in `e2e.mjs`. The e2e blocks run in order and share state (open tabs, settings, mock flags), so a block can depend on the ones before it.
+- **Waits:** the e2e suite is mostly fixed `sleep`s. The app's own long timers have test seams (`window.__timing` in `TEST_TIMING`: sync delay, color-bump grace, raid tick; `clipPollMs`); add one rather than sleeping through a real timer. Prefer `waitForFunction`/`waitForSelector` over a new `sleep`.
 - **Browser setup:** set `CHROMIUM_PATH` if the headless shell isn't at the default `~/.cache/ms-playwright/chromium_headless_shell-1234/...` path. If it fails to start over missing shared libraries (libatk, libatk-bridge, libXdamage, libasound, libatspi), `apt-get download` those packages, extract them with `dpkg-deb -x`, and run with `LD_LIBRARY_PATH` pointing at the extracted `usr/lib/x86_64-linux-gnu`. No root needed.
 - **Real Twitch is never exercised.** Say so when reporting, and note which behavior is still unverified.
 

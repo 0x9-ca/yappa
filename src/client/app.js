@@ -83,6 +83,8 @@ function applySettings() {
 // text size, notification permission, and whether the history service was agreed to.
 const DEVICE_SETTINGS = ["notify", "sound", "fontSize", "theme", "player", "nativeQuality", "bitsButton", "history", "sync", "showTime", "showBadges", "compact", "zebra", "chatFont"];
 let syncTimer = null, syncedJson = "", lastPullAt = 0;
+const TEST_TIMING = window.__timing || {}; // set only by the tests, which can't sit through the real waits
+let syncDelayMs = TEST_TIMING.sync || 2000;
 const syncTime = () => Number(safeGet("syncAt")) || 0;
 
 function syncBlob() {
@@ -97,7 +99,7 @@ function syncBlob() {
 function syncChanged() {
   if (settings.sync === false || !me) return;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(syncPush, 2000);
+  syncTimer = setTimeout(syncPush, syncDelayMs);
 }
 
 async function syncPush() {
@@ -1931,6 +1933,7 @@ $("chat").addEventListener("click", (e) => {
 // ---------- raids ----------
 
 const RAID_FOLLOW_SECONDS = 5;
+let raidTickMs = TEST_TIMING.raidTick || 1000;
 let raidTimer = null;
 
 /** The channel in a tab raided out. Follow it (like Twitch does) if it's the one being watched. */
@@ -1968,7 +1971,7 @@ function handleRaid(tab, ev) {
     }
     note.textContent = "Following in " + left + "s…";
     left--;
-    raidTimer = setTimeout(tick, 1000);
+    raidTimer = setTimeout(tick, raidTickMs);
   };
   tick();
 }
@@ -4243,6 +4246,7 @@ if (navigator.serviceWorker) {
 // Messages sent from here already advance the color server-side. For our own messages
 // that arrive without having been sent from this app (e.g. the official Twitch app),
 // ask the server for the next color. Wait for in-flight sends so we can tell them apart.
+let bumpDelayMs = TEST_TIMING.bump || 1500;
 function maybeBumpColor(messageId) {
   if (!status || !status.cycle || !status.cycle.enabled) return;
   setTimeout(async () => {
@@ -4250,7 +4254,7 @@ function maybeBumpColor(messageId) {
     if (sentIds.has(messageId)) return;
     const r = await api("/api/cycle/bump", { message_id: messageId });
     if (r.ok && status) { status.cycle = r.cycle; renderCycle(r.cycle); }
-  }, 1500);
+  }, bumpDelayMs);
 }
 
 // ---------- settings ----------

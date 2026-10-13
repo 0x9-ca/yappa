@@ -25,6 +25,7 @@ The Worker is still named `yappa` (the project started as a chat-color prank).
 - `src/twitch.ts`: OAuth and Helix helpers. `SCOPES` are required. `OPTIONAL_SCOPES` power the emote list and mod tools; adding one means the user must reconnect (the client shows a banner from `missingOptionalScopes`).
 - `src/page.ts`: the HTML shell. `src/static.ts`: client assets, icons and the web manifest, served with content-hash `?v=` URLs. `APP_NAME` lives here.
 - `src/client/{app.js,app.css,sw.js}`: plain browser JS/CSS with no build step and no TypeScript, imported into the Worker as text modules (`rules` in `wrangler.jsonc`; declarations in `src/client/modules.d.ts`). Keep client code here, not in TS template strings: escapes like `\s` silently break inside template literals.
+- `scripts/draw-social.mjs [out.png]`: renders `scripts/social-preview.html` to the GitHub social preview (1280×640, default `docs/social-preview.png`; upload it under the repo's Settings → Social preview by hand, GitHub has no API for it). `SHOTS_FONTS` makes it render in Roboto like the screenshots.
 - `scripts/draw-icon.mjs <outdir>`: draws the app icon (a rainbow chat bubble with a `#`) on a headless Chromium canvas and writes all icon sizes plus a 1024px preview to `<outdir>`. Copy the five icon PNGs into `src/client/icons/`; the preview isn't used.
 
 The browser talks to these directly:

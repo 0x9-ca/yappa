@@ -93,7 +93,7 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
   size and notification choices stay per device).
 - Per-channel overrides for notifications, sound, go-live alerts and muted words.
 - Private notes and colored labels on people; quick messages for things you type often; favorite emotes.
-- Light and dark themes, compact or shaded rows, hidden times or badges, monospace or serif font.
+- Light and dark themes, compact or shaded rows, hidden times or badges, monospace or serif font. Settings is a short list of collapsible sections with a search box.
 - Tab menu (move, live-first, pin, close others), desktop shortcuts (`?` lists them), save a chat as text or
   JSON, and a settings backup you can restore from a file.
 - Optional **chat color cycling**: a new random hex color every time you send a message (needs Twitch Turbo or
@@ -501,11 +501,12 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 <details>
 <summary><b>Settings and color cycling</b> (3 screens)</summary>
 
-**Settings**
+**Settings: collapsible sections with a search box**
 
 | Phone | Desktop |
 |---|---|
-| <img src="docs/screenshots/settings-mobile.png" width="240" alt="Settings (phone)"> | <img src="docs/screenshots/settings-desktop.png" width="520" alt="Settings (desktop)"> |
+| <img src="docs/screenshots/settings-mobile.png" width="240" alt="Settings sections (phone)"> | <img src="docs/screenshots/settings-desktop.png" width="520" alt="Settings sections (desktop)"> |
+| <img src="docs/screenshots/settings-section-mobile.png" width="240" alt="One Settings section open (phone)"> | <img src="docs/screenshots/settings-section-desktop.png" width="520" alt="One Settings section open (desktop)"> |
 
 **Light theme**
 

@@ -4390,7 +4390,9 @@ function backupControls() {
   return box;
 }
 
-function openSettings() {
+let settingsGroup = null; // the section that was open last time, so Settings reopens where you were
+
+function openSettings(wantGroup) {
   const row = (labelText, control, hint) => {
     const r = el("div", "row");
     const l = el("label");
@@ -4550,82 +4552,131 @@ function openSettings() {
   colorLabel.append(el("div", null, "Change my color every message"), el("div", "hint", "A new random color for each message you send. Shows your current color and how many times it has changed."));
   color.append(colorLabel);
 
-  openSheet(
-    el("h2", null, "Settings"),
-    el("h3", null, "Chat color"),
-    color,
-    cyclerEl,
-    el("h3", null, "Account"),
-    account,
-    el("h3", null, "Chat history"),
-    historyRow,
-    el("h3", null, "Raids"),
-    row("Follow raids", checkbox(settings.followRaids, (c) => { settings.followRaids = c.checked; saveSettings(); }),
-      "When the channel you're watching raids, switch to the raided channel after " + RAID_FOLLOW_SECONDS + " seconds (you can stay)."),
-    el("h3", null, "Alerts"),
-    row("Notifications", notify, notifyHint),
-    row("Sound", sound, "A short chime for mentions and highlights when you're looking elsewhere."),
-    el("h3", null, "Highlight rules"),
-    el("div", "hint", "Matching messages are highlighted in orange (and alert you, if on). Phrases match whole words, ignoring case."),
-    rulesList,
-    addRule,
-    el("h3", null, "Mute filters"),
-    el("div", "hint", "Hide messages instead of highlighting them. Your own are never hidden, and changes apply to new messages."),
-    row("Hide known bots", checkbox(!!settings.mute.bots, (c) => { settings.mute.bots = c.checked; saveSettings(); }),
-      "Nightbot, StreamElements, Streamlabs, Moobot, Fossabot, WizeBot, SoundAlerts, Sery_Bot and the Pokémon community game bot."),
-    row("Hide !commands", checkbox(!!settings.mute.commands, (c) => { settings.mute.commands = c.checked; saveSettings(); }),
-      "Messages that start with ! (people triggering bot commands)."),
-    el("div", "hint", "Muted words and phrases match whole words, ignoring case. Wrap a regular expression in slashes, like /^gg+$/, to match a pattern."),
-    muteList,
-    addMute,
-    muteErr,
-    el("h3", null, "Video player"),
-    playerSeg,
-    el("div", "hint", "Native plays the stream directly in a plain video player, which can autoplay (muted) on phones. " +
-      "Tested: Native works in Firefox for Android but not in Chrome (Twitch only lets its own site load its video in browsers that enforce cross-site rules), and Twitch's player is the other way round. " +
-      "This choice is saved per browser. Native also relies on an unofficial Twitch API that can stop working at any time; if it fails, Yappa switches back to Twitch's player for that visit."),
-    el("h3", null, "Bits and channel points"),
-    bitsSeg,
-    el("div", "hint", "What the gem button next to the emote button does. Twitch: opens twitch.tv, as the pop-out chat on computers or the Twitch app on phones. " +
-      "Chat embed (experimental): Twitch's chat in a window here, with Bits and channel points. It needs your twitch.tv login to be shared with this site; closing the window keeps it loaded in the background (up to 3 channels) so you stay signed in." + chatEmbedTip(navigator.userAgent)),
-    el("h3", null, "Appearance"),
-    themeSeg,
-    el("h3", null, "Chat text size"),
-    seg,
-    el("h3", null, "Chat layout"),
-    row("Compact", checkbox(!!settings.compact, (c) => { settings.compact = c.checked; saveSettings(); }), "Tighter spacing between messages."),
-    row("Alternate row shading", checkbox(!!settings.zebra, (c) => { settings.zebra = c.checked; saveSettings(); }), "Every other line gets a faint background, which helps on fast chats."),
-    row("Show times", checkbox(settings.showTime !== false, (c) => { settings.showTime = c.checked; saveSettings(); })),
-    row("Show badges", checkbox(settings.showBadges !== false, (c) => { settings.showBadges = c.checked; saveSettings(); })),
-    row("Font", dropdown([["default", "Default"], ["mono", "Monospace"], ["serif", "Serif"]], settings.chatFont || "default", (v) => { settings.chatFont = v; saveSettings(); }), "These layout choices are saved per device."),
-    el("h3", null, "Clips"),
-    row("Post new clips in chat", checkbox(settings.postClips !== false, (c) => { settings.postClips = c.checked; saveSettings(); }),
-      "When you create a clip with Yappa (the clapper button in the info bar), send its link to the channel's chat as you."),
-    el("h3", null, "GIFs"),
-    row("Show GIFs", checkbox(settings.gifs !== false, (c) => { settings.gifs = c.checked; saveSettings(); }),
-      "Tier 2 and 3 subscribers can send GIFs. They're big and animated, so turn this off to get a link instead (applies to new messages)."),
-    el("h3", null, "Moderation and alerts"),
-    row("Show moderator actions in chat", checkbox(!!settings.modLog, (c) => { settings.modLog = c.checked; saveSettings(); }),
-      "In channels you moderate, add a line when another moderator bans, times out, deletes, or changes a chat mode. Takes effect for channels you open next."),
-    row("Tell me when followed channels go live", checkbox(!!settings.liveAlerts, (c) => { settings.liveAlerts = c.checked; saveSettings(); window.toolsLiveSettingChanged?.(); }),
-      "A notification and a line in chat while Yappa is open (it can't notify when the app is closed). Allow notifications when asked."),
-    row("Note stream title and category changes", checkbox(settings.streamChanges !== false, (c) => { settings.streamChanges = c.checked; saveSettings(); }),
-      "Add a line to a channel's chat when its title or category changes."),
-    row("Use my Twitch block list", checkbox(settings.syncBlocks !== false, (c) => { settings.syncBlocks = c.checked; saveSettings(); window.toolsReloadBlocks?.(); }),
-      "Hide messages from people you've blocked on Twitch, as Twitch's own chat does."),
-    el("h3", null, "Devices"),
-    row("Sync across my devices", checkbox(settings.sync !== false, (c) => {
+  // ---- grouped into collapsible sections, with a search box, so the page isn't one long scroll ----
+  const item = (title, ...nodes) => {
+    const d = el("div", "set-item");
+    if (title) d.appendChild(el("h3", null, title));
+    d.append(...nodes);
+    return d;
+  };
+  const groups = [];
+  const group = (id, title, summary, items) => {
+    const d = el("details", "set-group");
+    d.dataset.group = id;
+    const sum = el("summary");
+    sum.append(el("span", "sg-title", title), el("span", "sg-sum", summary));
+    d.append(sum, ...items);
+    // Our own handling of the tap (not the toggle event, which also fires for the search opening sections).
+    sum.addEventListener("click", (e) => {
+      e.preventDefault();
+      d.open = !d.open;
+      if (d.open) {
+        settingsGroup = id;
+        for (const g of groups) if (g !== d) g.open = false; // one at a time keeps it short
+        d.scrollIntoView?.({ block: "nearest" });
+      }
+    });
+    groups.push(d);
+    return d;
+  };
+
+  group("color", "Chat color", "Change it every message", [item(null, color, cyclerEl)]);
+  group("chat", "Chat", "History, GIFs, clips, raids", [
+    item("Chat history", historyRow),
+    item("GIFs", row("Show GIFs", checkbox(settings.gifs !== false, (c) => { settings.gifs = c.checked; saveSettings(); }),
+      "Tier 2 and 3 subscribers can send GIFs. They're big and animated, so turn this off to get a link instead (applies to new messages).")),
+    item("Clips", row("Post new clips in chat", checkbox(settings.postClips !== false, (c) => { settings.postClips = c.checked; saveSettings(); }),
+      "When you create a clip with Yappa (the clapper button in the info bar), send its link to the channel's chat as you.")),
+    item("Raids", row("Follow raids", checkbox(settings.followRaids, (c) => { settings.followRaids = c.checked; saveSettings(); }),
+      "When the channel you're watching raids, switch to the raided channel after " + RAID_FOLLOW_SECONDS + " seconds (you can stay).")),
+  ]);
+  group("alerts", "Alerts and highlights", "Notifications, sound, go-live, highlight rules", [
+    item("Alerts",
+      row("Notifications", notify, notifyHint),
+      row("Sound", sound, "A short chime for mentions and highlights when you're looking elsewhere."),
+      row("Tell me when followed channels go live", checkbox(!!settings.liveAlerts, (c) => { settings.liveAlerts = c.checked; saveSettings(); window.toolsLiveSettingChanged?.(); }),
+        "A notification and a line in chat while Yappa is open (it can't notify when the app is closed). Allow notifications when asked."),
+      row("Note stream title and category changes", checkbox(settings.streamChanges !== false, (c) => { settings.streamChanges = c.checked; saveSettings(); }),
+        "Add a line to a channel's chat when its title or category changes.")),
+    item("Highlight rules",
+      el("div", "hint", "Matching messages are highlighted in orange (and alert you, if on). Phrases match whole words, ignoring case."),
+      rulesList, addRule),
+  ]);
+  group("filters", "Filters and moderation", "Mute filters, ignored users, block list", [
+    item("Mute filters",
+      el("div", "hint", "Hide messages instead of highlighting them. Your own are never hidden, and changes apply to new messages."),
+      row("Hide known bots", checkbox(!!settings.mute.bots, (c) => { settings.mute.bots = c.checked; saveSettings(); }),
+        "Nightbot, StreamElements, Streamlabs, Moobot, Fossabot, WizeBot, SoundAlerts, Sery_Bot and the Pokémon community game bot."),
+      row("Hide !commands", checkbox(!!settings.mute.commands, (c) => { settings.mute.commands = c.checked; saveSettings(); }),
+        "Messages that start with ! (people triggering bot commands)."),
+      el("div", "hint", "Muted words and phrases match whole words, ignoring case. Wrap a regular expression in slashes, like /^gg+$/, to match a pattern."),
+      muteList, addMute, muteErr),
+    item("Ignored users", hiddenList),
+    item("Twitch block list", row("Use my Twitch block list", checkbox(settings.syncBlocks !== false, (c) => { settings.syncBlocks = c.checked; saveSettings(); window.toolsReloadBlocks?.(); }),
+      "Hide messages from people you've blocked on Twitch, as Twitch's own chat does.")),
+    item("Moderation", row("Show moderator actions in chat", checkbox(!!settings.modLog, (c) => { settings.modLog = c.checked; saveSettings(); }),
+      "In channels you moderate, add a line when another moderator bans, times out, deletes, or changes a chat mode. Takes effect for channels you open next.")),
+  ]);
+  group("video", "Video", "Player, Bits and channel points", [
+    item("Video player", playerSeg,
+      el("div", "hint", "Native plays the stream directly in a plain video player, which can autoplay (muted) on phones. " +
+        "Tested: Native works in Firefox for Android but not in Chrome (Twitch only lets its own site load its video in browsers that enforce cross-site rules), and Twitch's player is the other way round. " +
+        "This choice is saved per browser. Native also relies on an unofficial Twitch API that can stop working at any time; if it fails, Yappa switches back to Twitch's player for that visit.")),
+    item("Bits and channel points", bitsSeg,
+      el("div", "hint", "What the gem button next to the emote button does. Twitch: opens twitch.tv, as the pop-out chat on computers or the Twitch app on phones. " +
+        "Chat embed (experimental): Twitch's chat in a window here, with Bits and channel points. It needs your twitch.tv login to be shared with this site; closing the window keeps it loaded in the background (up to 3 channels) so you stay signed in." + chatEmbedTip(navigator.userAgent))),
+  ]);
+  group("look", "Appearance", "Theme, text size, layout", [
+    item("Theme", themeSeg),
+    item("Chat text size", seg),
+    item("Chat layout",
+      row("Compact", checkbox(!!settings.compact, (c) => { settings.compact = c.checked; saveSettings(); }), "Tighter spacing between messages."),
+      row("Alternate row shading", checkbox(!!settings.zebra, (c) => { settings.zebra = c.checked; saveSettings(); }), "Every other line gets a faint background, which helps on fast chats."),
+      row("Show times", checkbox(settings.showTime !== false, (c) => { settings.showTime = c.checked; saveSettings(); })),
+      row("Show badges", checkbox(settings.showBadges !== false, (c) => { settings.showBadges = c.checked; saveSettings(); })),
+      row("Font", dropdown([["default", "Default"], ["mono", "Monospace"], ["serif", "Serif"]], settings.chatFont || "default", (v) => { settings.chatFont = v; saveSettings(); }), "These layout choices are saved per device.")),
+  ]);
+  group("account", "Account and devices", "Sign-in, sync, backup", [
+    item("Account", account),
+    item("Devices", row("Sync across my devices", checkbox(settings.sync !== false, (c) => {
       settings.sync = c.checked;
       saveSettings();
       if (c.checked) syncPull(false);
-    }), "Keep settings, open tabs and the pinned stream the same on every device you sign in on (the newest change wins). Video player, theme, text size and notifications stay per device."),
-    el("h3", null, "Backup"),
-    row("Settings file", backupControls(), "Save everything (settings, tabs, notes, bookmarks, quick messages) to a file, or restore from one. Restoring replaces what's here."),
-    el("h3", null, "Ignored users"),
-    hiddenList,
-    el("h3", null, "Startup timings"),
-    el("div", "hint", startupSummary()),
-  );
+    }), "Keep settings, open tabs and the pinned stream the same on every device you sign in on (the newest change wins). Video player, theme, text size and notifications stay per device.")),
+    item("Backup", row("Settings file", backupControls(), "Save everything (settings, tabs, notes, bookmarks, quick messages) to a file, or restore from one. Restoring replaces what's here.")),
+    item("Startup timings", el("div", "hint", startupSummary())),
+  ]);
+
+  // Search: show only the matching settings (opening their sections); empty shows the sections again.
+  const find = document.createElement("input");
+  find.type = "search";
+  find.className = "set-find";
+  find.placeholder = "Find a setting";
+  find.setAttribute("aria-label", "Find a setting");
+  find.autocomplete = "off";
+  const none = el("div", "hint set-none", "No setting matches that.");
+  none.hidden = true;
+  find.addEventListener("input", () => {
+    const q = find.value.trim().toLowerCase();
+    let any = false;
+    for (const g of groups) {
+      const items = [...g.querySelectorAll(":scope > .set-item")];
+      let hit = 0;
+      for (const it of items) {
+        const match = !q || it.textContent.toLowerCase().includes(q);
+        it.hidden = !match;
+        if (match) hit++;
+      }
+      g.hidden = !hit;
+      if (q) g.open = hit > 0; else g.open = g.dataset.group === settingsGroup;
+      if (hit) any = true;
+    }
+    none.hidden = any;
+  });
+
+  openSheet(el("h2", null, "Settings"), find, ...groups, none);
+  const first = groups.find((g) => g.dataset.group === (wantGroup || settingsGroup));
+  if (first) first.open = true;
 }
 
 // ---------- mobile viewport ----------

@@ -372,7 +372,13 @@ const state = () => page.evaluate(() => ({
 }));
 let passed = 0, failed = 0;
 // Settings now lives in the account menu (your picture in the corner).
-const openSettingsUI = async () => { await page.click("#profile-btn"); await page.click('#account-menu button:has-text("Settings")'); };
+// Settings opens as collapsed sections; most tests just want every control reachable, so this expands them all.
+// (The tests of the sections themselves open Settings by hand.)
+const openSettingsUI = async ({ expand = true } = {}) => {
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Settings")');
+  if (expand) await page.evaluate(() => document.querySelectorAll("#sheet details.set-group").forEach((d) => { d.open = true; }));
+};
 const check = (label, cond, extra = "") => {
   cond ? passed++ : failed++;
   console.log((cond ? "PASS " : "FAIL ") + label + (extra && !cond ? "  → " + extra : ""));
@@ -1033,7 +1039,6 @@ await page.click('#sheet-body .rule-form button');
 check("rules editor lists both rules", (await page.textContent("#sheet-body .rules")).includes("“deploy now”only from @host2"), await page.textContent("#sheet-body .rules"));
 await page.click('#sheet-body .seg button:has-text("XL")');
 await page.screenshot({ path: dir + "/t10-settings.png" });
-await shot("settings");
 await page.click("#sheet-close");
 cur().send(chat("999", "hl1", "Host", "704", "GIVEAWAY starts now"));
 cur().send(chat("999", "hl2", "Host", "704", "giveaways are fun")); // not a whole-word match
@@ -2797,6 +2802,46 @@ check("history marks messages deleted before they were loaded", await page.evalu
   // Put the run back as it was.
   await page.evaluate((o) => { settings.snippets = []; settings.rules = []; saveSettings(); localStorage.setItem("tabs", JSON.stringify(o)); }, order0);
   await page.keyboard.press("Escape");
+}
+
+
+// =============== Settings: collapsible sections and search ===============
+{
+  await openSettingsUI({ expand: false });
+  await page.waitForSelector("#sheet details.set-group");
+  const groups = await page.$$eval("#sheet details.set-group", (g) => g.map((d) => d.dataset.group));
+  check("Settings is a short list of sections", JSON.stringify(groups) === '["color","chat","alerts","filters","video","look","account"]', JSON.stringify(groups));
+  const open0 = await page.$$eval("#sheet details.set-group[open]", (g) => g.length);
+  const fits = await page.evaluate(() => { const b = document.getElementById("sheet-body"); return b.scrollHeight <= b.clientHeight + 2; });
+  check("they start collapsed (apart from the one you had open last), so nothing needs scrolling", open0 <= 1 && fits, open0 + " open, fits " + fits);
+  await page.evaluate(() => document.querySelectorAll("#sheet details.set-group").forEach((d) => { d.open = false; }));
+  await shot("settings");
+  await page.click('#sheet summary:has-text("Video")');
+  check("tapping a section opens it", await page.$eval('#sheet details[data-group="video"]', (d) => d.open) && await page.isVisible('#sheet button:has-text("Native (HLS)")'));
+  await page.click('#sheet summary:has-text("Appearance")');
+  const open1 = await page.$$eval("#sheet details.set-group[open]", (g) => g.map((d) => d.dataset.group));
+  check("opening another closes the first", JSON.stringify(open1) === '["look"]', JSON.stringify(open1));
+  await shot("settings-section");
+  await page.click('#sheet summary:has-text("Appearance")');
+  check("tapping an open section closes it", (await page.$$eval("#sheet details.set-group[open]", (g) => g.length)) === 0);
+  await page.click('#sheet summary:has-text("Alerts and highlights")');
+  await page.click("#sheet-close");
+  await openSettingsUI({ expand: false });
+  check("Settings reopens on the section you were in", JSON.stringify(await page.$$eval("#sheet details.set-group[open]", (g) => g.map((d) => d.dataset.group))) === '["alerts"]');
+
+  // Search.
+  await page.fill("#sheet .set-find", "sound");
+  const shown = await page.$$eval("#sheet details.set-group:not([hidden])", (g) => g.map((d) => d.dataset.group));
+  const itemsShown = await page.$$eval("#sheet details.set-group:not([hidden]) .set-item:not([hidden])", (i) => i.length);
+  check("searching shows only the matching settings, with their sections open", shown.includes("alerts") && !shown.includes("video") && await page.$eval('#sheet details[data-group="alerts"]', (d) => d.open) && itemsShown >= 1 && await page.isVisible('#sheet label:has-text("A short chime")'), JSON.stringify([shown, itemsShown]));
+  await page.fill("#sheet .set-find", "bots");
+  check("it finds settings in any section", (await page.$$eval("#sheet details.set-group:not([hidden])", (g) => g.map((d) => d.dataset.group))).join() === "filters" && await page.isVisible('#sheet label:has-text("Hide known bots")'));
+  await page.fill("#sheet .set-find", "zzzzzz");
+  check("no match says so", (await page.$$eval("#sheet details.set-group:not([hidden])", (g) => g.length)) === 0 && await page.isVisible("#sheet .set-none"));
+  await page.fill("#sheet .set-find", "");
+  const back = await page.$$eval("#sheet details.set-group:not([hidden])", (g) => g.length);
+  check("clearing the search brings every section back", back === 7 && await page.$eval("#sheet .set-none", (n) => n.hidden) && (await page.$$eval("#sheet details.set-group[open]", (g) => g.length)) <= 1);
+  await page.click("#sheet-close");
 }
 
 // =============== moving to a new address ===============

@@ -179,6 +179,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
     }
 
     case "GET /api/status":
+      // The first call after opening the app also carries the account's synced settings, saving a round trip.
+      if (url.searchParams.has("sync")) {
+        const [status, sync] = await Promise.all([stub.status(), stub.getSync()]);
+        return json({ ...status, sync });
+      }
       return json(await stub.status());
 
     case "POST /api/cycle": {

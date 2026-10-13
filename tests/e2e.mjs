@@ -178,7 +178,7 @@ await ctx.route("**/*", async (route) => {
       return j({ ok: true, sync: syncMockOff ? null : syncStore });
     }
     if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
-    if (u.pathname === "/api/status") { statusCalls++; return j({ twitch: { login: "testuser", userId: "111", displayName: "TestUser", avatar: noAvatar ? null : "https://img.test/avatar.png", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
+    if (u.pathname === "/api/status") { statusCalls++; return j({ ...(u.searchParams.has("sync") ? { sync: syncMockOff ? null : syncStore } : {}), twitch: { login: "testuser", userId: "111", displayName: "TestUser", avatar: noAvatar ? null : "https://img.test/avatar.png", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
     if (u.pathname === "/auth/logout") { log.logouts = (log.logouts || 0) + 1; return j({ ok: true }); }
     if (u.pathname === "/api/my/clips") {
       log.mine = [...(log.mine || []), u.search];
@@ -245,6 +245,7 @@ await ctx.route("**/*", async (route) => {
       "bits/1000": { url: "https://img.test/badge-bits.png", title: "cheer 1000", description: "cheer 1000" },
       "weird-badge/1": { url: "https://img.test/badge-weird.png", title: "Weird Badge", description: "Awarded for doing something unusual" },
     });
+    if (u.pathname === "/api/chat/emotes") { log.emotes = [...(log.emotes || []), u.searchParams.get("broadcaster_id")]; }
     if (u.pathname === "/api/chat/emotes") return j({ ok: true, emotes: [{ id: "25", name: "Kappa", group: "Twitch global", animated: false }, { id: "e1", name: "uwoHype", group: "This channel", animated: false }] });
   }
   // The app's old address (src/moved.ts).
@@ -881,6 +882,7 @@ await page.click("#sheet-close");
 
 // ---- first-time chatters, history, deletions ----
 await page.click(".tab:first-child .tab-name");
+await page.waitForSelector(".messages:not([hidden]) li.historical", { timeout: 3000 }).catch(() => {});
 s = await state();
 check("history loaded above join line", s.visibleMsgs.length && (await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent)).then((t) => t.findIndex((x) => x.includes(" from history")) < t.findIndex((x) => x.includes("Joined #UwoSlab")) && t.findIndex((x) => x.includes(" from history")) > t.findIndex((x) => x.includes("start of chat history")))));
 check("history emote parsed from IRC tags", await page.$eval('li[data-id="h1"]', (l) => !!l.querySelector('img[alt="Kappa"]')));
@@ -2858,6 +2860,40 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await p2.waitForFunction(() => typeof settings !== "undefined");
   check("import doesn't overwrite existing data", (await p2.evaluate(() => settings.rules[0].phrase)) === "moved" && !(await p2.evaluate(() => location.hash)).includes("import"));
   await p2.close();
+}
+
+
+// =============== opening the app (cold start) ===============
+{
+  syncMockOff = true;
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("tabs") || "[]"));
+  await page.evaluate(() => localStorage.setItem("tabs", '["otherchan","uwoslab"]'));
+  await page.evaluate(() => localStorage.setItem("lastChannel", "uwoslab"));
+  await page.evaluate(() => { settings.history = true; saveSettings(); });
+  log.emotes = [];
+  const histBefore = log.history.length, subsBefore = log.subs.length;
+  const statusUrls = [];
+  const onReq = (r) => { if (r.url().includes("/api/status")) statusUrls.push(r.url()); };
+  page.on("request", onReq);
+  await page.goto("https://yappa.test/?cold=1#uwoslab");
+  await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length >= 2, null, { timeout: 8000 });
+  await sleep(500);
+  page.off("request", onReq);
+  const subs = log.subs.slice(subsBefore).map((x) => x.split("@")[0]);
+  check("the tab you're looking at is joined first", subs[0] === "uwoslab", JSON.stringify(subs));
+  check("the first status call also fetches the synced settings (one round trip)", statusUrls[0] && statusUrls[0].includes("sync=1"), JSON.stringify(statusUrls));
+  check("Twitch emotes are fetched for the open tab only at first", JSON.stringify(log.emotes) === '["999"]', JSON.stringify(log.emotes));
+  check("...and so is the history", log.history.length === histBefore + 1 && /^uwoslab\?/.test(log.history.at(-1)), JSON.stringify(log.history.slice(histBefore)));
+  const marks = await page.evaluate(() => startup);
+  check("startup timings are recorded in order", marks.status > 0 && marks.socket >= 0 && marks.firstJoin >= marks.socket && marks.allJoined >= marks.firstJoin, JSON.stringify(marks));
+  await page.click('.tab:has(.tab-name:text-is("OtherChan"))');
+  await page.waitForFunction(() => document.querySelector(".messages:not([hidden]) li.historical") || true);
+  await sleep(400);
+  check("a background tab fetches its emotes and history when first opened", JSON.stringify(log.emotes) === '["999","888"]' && log.history.length === histBefore + 2 && /^otherchan\?/.test(log.history.at(-1)), JSON.stringify([log.emotes, log.history.slice(histBefore)]));
+  await openSettingsUI();
+  check("Settings shows where startup time went", /Startup timings/.test(await page.textContent("#sheet")) && /signed in \d/.test(await page.textContent("#sheet")));
+  await page.keyboard.press("Escape");
+  await page.evaluate((t) => localStorage.setItem("tabs", JSON.stringify(t)), saved);
 }
 
 // =============== log out (last: it closes every tab) ===============

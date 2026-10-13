@@ -20,15 +20,23 @@ const OFFLINE_HTML = `<!doctype html>
 </div></body></html>`;
 
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("activate", (event) => event.waitUntil((async () => {
+  // Navigation preload: the page request starts while the service worker is still waking up
+  // (on a phone that can take a noticeable fraction of a second), instead of after it.
+  try { await self.registration.navigationPreload?.enable(); } catch {}
+  await self.clients.claim();
+})()));
 
 self.addEventListener("fetch", (event) => {
   if (event.request.mode !== "navigate") return;
-  event.respondWith(
-    fetch(event.request).catch(
-      () => new Response(OFFLINE_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } }),
-    ),
-  );
+  event.respondWith((async () => {
+    try {
+      try { const early = await event.preloadResponse; if (early) return early; } catch {} // (then ask again below)
+      return await fetch(event.request);
+    } catch {
+      return new Response(OFFLINE_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+  })());
 });
 
 // Mention/highlight notifications: focus the app and open the channel's tab.

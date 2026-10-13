@@ -17,10 +17,16 @@ const b64 = (bytes: ArrayBuffer | Uint8Array): string =>
   btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64 = (s: string): Uint8Array => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 
-async function hmacKey(env: Env): Promise<CryptoKey> {
+let cachedKey: { secret: string; key: Promise<CryptoKey> } | undefined;
+
+/** The signing key, imported once per isolate (and again if the secret changes). */
+function hmacKey(env: Env): Promise<CryptoKey> {
   const secret = env.SESSION_SECRET;
-  if (typeof secret !== "string" || secret.length < 32) throw new Error("SESSION_SECRET must be set to at least 32 characters.");
-  return crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  if (typeof secret !== "string" || secret.length < 32) return Promise.reject(new Error("SESSION_SECRET must be set to at least 32 characters."));
+  if (cachedKey?.secret !== secret) {
+    cachedKey = { secret, key: crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]) };
+  }
+  return cachedKey.key;
 }
 
 export async function signSession(env: Env, uid: string, login: string, now = Date.now()): Promise<string> {

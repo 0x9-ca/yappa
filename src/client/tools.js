@@ -461,7 +461,7 @@ window.toolsAccountItems = (item) => {
 
 window.toolsOnSession = (sid) => {
   if (hasScope("user:read:whispers")) api("/api/whispers/subscribe", { session_id: sid });
-  loadBlocks();
+  setTimeout(loadBlocks, 3000); // not needed to show chat; leave the first seconds to joining channels
 };
 
 // ---------- your Twitch block list ----------

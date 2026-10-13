@@ -36,9 +36,17 @@ const icons = {
 /** Path including a ?v= content hash, for long-lived caching. */
 const scripts = { "/app.js": appJs, "/tools.js": toolsJs, "/theme.js": themeJs, "/hls.js": hlsJs };
 
+// Hashing the assets (nearly a megabyte with hls.js) takes a while, and they never change within a deploy.
+const versions = new Map<string, string>();
+
 export function versioned(path: keyof typeof icons | keyof typeof scripts | "/app.css"): string {
-  const body = path === "/app.css" ? appCss : path in scripts ? scripts[path as keyof typeof scripts] : icons[path as keyof typeof icons];
-  return `${path}?v=${hash(body)}`;
+  let v = versions.get(path);
+  if (!v) {
+    const body = path === "/app.css" ? appCss : path in scripts ? scripts[path as keyof typeof scripts] : icons[path as keyof typeof icons];
+    v = `${path}?v=${hash(body)}`;
+    versions.set(path, v);
+  }
+  return v;
 }
 
 const manifest = JSON.stringify({

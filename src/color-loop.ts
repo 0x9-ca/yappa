@@ -115,6 +115,12 @@ function randomHexColor(): string {
 export class ColorLoop extends DurableObject<Env> {
   /** Channel owners' display names, for grouping emotes. */
   private ownerNames = new Map<string, string>();
+  private channelCache = new Map<string, { at: number; user: NonNullable<Awaited<ReturnType<typeof getUser>>> }>();
+  /** Twitch emote lists per channel, kept briefly (and shared by concurrent requests): the list is paged and slow. */
+  private emoteCache = new Map<string, { at: number; value: Awaited<ReturnType<ColorLoop["loadEmotes"]>> }>();
+  private emotePending = new Map<string, Promise<Awaited<ReturnType<ColorLoop["loadEmotes"]>>>>();
+  private followingPending: Promise<unknown> | undefined;
+  private moderatedPending: Promise<string[]> | undefined;
   private moderated: { at: number; ids: Set<string> } | undefined;
   /** The refresh in progress, shared so concurrent requests don't spend the refresh token twice. */
   private refreshing: Promise<Tokens> | undefined;
@@ -212,60 +218,52 @@ export class ColorLoop extends DurableObject<Env> {
   > {
     try {
       return await this.withToken(async (t) => {
-        const user = await getUser(this.env, t.accessToken, channel);
+        const user = await this.channelUser(t.accessToken, channel);
         if (!user) return { ok: false as const, error: `No Twitch channel named ${channel}.` };
         const condition = { broadcaster_user_id: user.id, user_id: t.userId };
-        const [created, isMod, settings] = await Promise.all([
-          Promise.allSettled(
-            CHAT_EVENTS.map((type) => createWebSocketSubscription(this.env, t.accessToken, type, condition, sessionId)),
-          ),
-          this.isModerator(t, user.id),
-          getChatSettings(this.env, t.accessToken, user.id).catch(() => null),
-        ]);
-        const subscriptionIds = created.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+        const modCondition = { broadcaster_user_id: user.id, moderator_user_id: t.userId };
+        const make = (type: string, cond: Record<string, string>, version = "1") =>
+          createWebSocketSubscription(this.env, t.accessToken, type, cond, sessionId, version);
+        const isModP = this.isModerator(t, user.id);
+
+        // Everything is requested at once; the moderator-only extras start as soon as we know the
+        // account moderates here (usually instantly, from the cached list), not after the rest.
+        const chatP = Promise.allSettled(CHAT_EVENTS.map((type) => make(type, condition)));
+        // Outgoing raids from this channel (no special permission needed); best effort.
+        const raidP = make("channel.raid", { from_broadcaster_user_id: user.id }).then((id) => [id], () => [] as string[]);
+        const settingsP = getChatSettings(this.env, t.accessToken, user.id).catch(() => null);
+        const feeds = { suspicious: false, unbans: false, modLog: false };
+        let automod = false;
+        const modP = isModP.then(async (isMod) => {
+          const ids: string[] = [];
+          if (!isMod) return ids;
+          const best = async (type: string, version: string): Promise<string | null> => {
+            try { const id = await make(type, modCondition, version); ids.push(id); return id; } catch { return null; }
+          };
+          const feed = async (key: keyof typeof feeds, type: string, scopes: string[]) => {
+            if (scopes.some((sc) => t.scopes?.includes(sc))) feeds[key] = (await best(type, key === "modLog" ? "2" : "1")) !== null;
+          };
+          await Promise.all([
+            // AutoMod queue (an old token may lack the scope)
+            (async () => {
+              if (!t.scopes?.includes("moderator:manage:automod")) return;
+              const results = await Promise.all(AUTOMOD_EVENTS.map((type) => best(type, "2")));
+              automod = results.every((r) => r !== null);
+            })(),
+            feed("suspicious", "channel.suspicious_user.message", ["moderator:read:suspicious_users", "moderator:manage:suspicious_users"]),
+            feed("unbans", "channel.unban_request.create", ["moderator:manage:unban_requests"]),
+            ...(opts.modLog ? [feed("modLog", "channel.moderate", ["moderator:manage:banned_users", "moderator:manage:chat_messages", "moderator:manage:chat_settings"])] : []),
+          ]);
+          return ids;
+        });
+
+        const [created, raidIds, isMod, settings, modIds] = await Promise.all([chatP, raidP, isModP, settingsP, modP]);
+        const subscriptionIds = [...created.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])), ...raidIds, ...modIds];
         const failed = created.find((r) => r.status === "rejected");
         if (failed) {
           // Don't leave half a channel subscribed (they count against the session's limit).
           await Promise.all(subscriptionIds.map((id) => deleteSubscription(this.env, t.accessToken, id).catch(() => {})));
-          throw failed.reason;
-        }
-        // Outgoing raids from this channel (no special permission needed).
-        try {
-          subscriptionIds.push(
-            await createWebSocketSubscription(this.env, t.accessToken, "channel.raid", { from_broadcaster_user_id: user.id }, sessionId),
-          );
-        } catch {}
-        // AutoMod queue for channels we moderate (best effort: an old token may lack the scope).
-        let automod = false;
-        if (isMod && t.scopes?.includes("moderator:manage:automod")) {
-          try {
-            const modCondition = { broadcaster_user_id: user.id, moderator_user_id: t.userId };
-            subscriptionIds.push(
-              ...(await Promise.all(
-                AUTOMOD_EVENTS.map((type) =>
-                  createWebSocketSubscription(this.env, t.accessToken, type, modCondition, sessionId, "2"),
-                ),
-              )),
-            );
-            automod = true;
-          } catch {}
-        }
-        // More moderator feeds, each best effort (a login from before they existed lacks the scope).
-        const feeds = { suspicious: false, unbans: false, modLog: false };
-        if (isMod) {
-          const modCondition = { broadcaster_user_id: user.id, moderator_user_id: t.userId };
-          const feed = async (key: keyof typeof feeds, type: string, version: string, scopes: string[]) => {
-            if (!scopes.some((sc) => t.scopes?.includes(sc))) return;
-            try {
-              subscriptionIds.push(await createWebSocketSubscription(this.env, t.accessToken, type, modCondition, sessionId, version));
-              feeds[key] = true;
-            } catch {}
-          };
-          await Promise.all([
-            feed("suspicious", "channel.suspicious_user.message", "1", ["moderator:read:suspicious_users", "moderator:manage:suspicious_users"]),
-            feed("unbans", "channel.unban_request.create", "1", ["moderator:manage:unban_requests"]),
-            ...(opts.modLog ? [feed("modLog", "channel.moderate", "2", ["moderator:manage:banned_users", "moderator:manage:chat_messages", "moderator:manage:chat_settings"])] : []),
-          ]);
+          throw (failed as PromiseRejectedResult).reason;
         }
         return {
           ok: true as const,
@@ -280,6 +278,18 @@ export class ColorLoop extends DurableObject<Env> {
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
+  }
+
+  /** A channel's id and names by login. Ids don't change, so a lookup is remembered for hours (one less call per join). */
+  private async channelUser(accessToken: string, login: string) {
+    const hit = this.channelCache.get(login);
+    if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.user;
+    const user = await getUser(this.env, accessToken, login);
+    if (user) {
+      if (this.channelCache.size > 200) this.channelCache.clear();
+      this.channelCache.set(login, { at: Date.now(), user });
+    }
+    return user;
   }
 
   /** Incoming whispers for this browser session (one subscription per socket, not per channel). */
@@ -299,7 +309,9 @@ export class ColorLoop extends DurableObject<Env> {
     if (!t.scopes?.includes("user:read:moderated_channels")) return null;
     if (!this.moderated || Date.now() - this.moderated.at > 5 * 60_000) {
       try {
-        const ids = await getModeratedChannelIds(this.env, t.accessToken, t.userId);
+        // Several channels joining at once share one fetch of the list.
+        this.moderatedPending ??= getModeratedChannelIds(this.env, t.accessToken, t.userId).finally(() => { this.moderatedPending = undefined; });
+        const ids = await this.moderatedPending;
         this.moderated = { at: Date.now(), ids: new Set(ids) };
       } catch {
         return null;
@@ -371,8 +383,25 @@ export class ColorLoop extends DurableObject<Env> {
     }
   }
 
-  /** Twitch emotes the user can use in this channel, slimmed down for the picker. */
-  async chatEmotes(
+  /** Twitch emotes the user can use in this channel, slimmed down for the picker (kept for 5 minutes). */
+  async chatEmotes(broadcasterId: string) {
+    const hit = this.emoteCache.get(broadcasterId);
+    if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
+    let pending = this.emotePending.get(broadcasterId);
+    if (!pending) {
+      pending = this.loadEmotes(broadcasterId).then((value) => {
+        if (value.ok) {
+          if (this.emoteCache.size > 30) this.emoteCache.clear();
+          this.emoteCache.set(broadcasterId, { at: Date.now(), value });
+        }
+        return value;
+      }).finally(() => this.emotePending.delete(broadcasterId));
+      this.emotePending.set(broadcasterId, pending);
+    }
+    return pending;
+  }
+
+  private async loadEmotes(
     broadcasterId: string,
   ): Promise<{ ok: true; emotes: { id: string; name: string; group: string; animated: boolean; owner?: string }[] } | { ok: false; error: string; needsScope?: boolean }> {
     const tokens = await this.getTokens();
@@ -636,19 +665,25 @@ export class ColorLoop extends DurableObject<Env> {
     if (!tokens?.scopes?.includes("user:read:follows")) return { ok: false, error: "Missing user:read:follows", needsScope: true };
     if (!fresh && this.following && Date.now() - this.following.at < 2 * 60_000) return { ok: true, ...this.following.data };
     try {
-      const data = await this.withToken(async (t) => {
-        const [channels, live] = await Promise.all([
-          getFollowedChannels(this.env, t.accessToken, t.userId),
-          getFollowedStreams(this.env, t.accessToken, t.userId),
-        ]);
-        return {
-          channels: channels.map((c) => ({ id: c.broadcaster_id, login: c.broadcaster_login, name: c.broadcaster_name })),
-          live: live.map((s) => ({
-            id: s.user_id, login: s.user_login, name: s.user_name, title: s.title, game: s.game_name,
-            viewers: s.viewer_count, startedAt: s.started_at,
-          })),
-        };
-      });
+      // Concurrent callers (the channel box, the heart button, the go-live poll) share one fetch of the whole list.
+      if (!this.followingPending || fresh) {
+        const run = this.withToken(async (t) => {
+          const [channels, live] = await Promise.all([
+            getFollowedChannels(this.env, t.accessToken, t.userId),
+            getFollowedStreams(this.env, t.accessToken, t.userId),
+          ]);
+          return {
+            channels: channels.map((c) => ({ id: c.broadcaster_id, login: c.broadcaster_login, name: c.broadcaster_name })),
+            live: live.map((s) => ({
+              id: s.user_id, login: s.user_login, name: s.user_name, title: s.title, game: s.game_name,
+              viewers: s.viewer_count, startedAt: s.started_at,
+            })),
+          };
+        });
+        this.followingPending = run;
+        run.then(() => { if (this.followingPending === run) this.followingPending = undefined; }, () => { if (this.followingPending === run) this.followingPending = undefined; });
+      }
+      const data = (await this.followingPending) as Following;
       this.following = { at: Date.now(), data };
       return { ok: true, ...data };
     } catch (err) {

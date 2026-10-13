@@ -129,20 +129,30 @@ function applySync(remote, initial) {
   syncedJson = initial ? JSON.stringify(syncBlob()) : "";
 }
 
-async function syncPull(initial) {
+/** Compares the account's copy (null: none yet) with this device's and moves whichever is newer. */
+function adoptSync(remote, initial) {
   if (settings.sync === false || !me) return;
   lastPullAt = Date.now();
-  const r = await api("/api/sync");
-  if (!r || !r.ok) return;
-  if (!r.sync) { syncChanged(); return; } // the first device to sync seeds the account's copy
-  if (r.sync.at > syncTime()) applySync(r.sync, initial);
-  else if (r.sync.at === syncTime()) syncedJson = JSON.stringify(syncBlob());
+  if (!remote) { syncChanged(); return; } // the first device to sync seeds the account's copy
+  if (remote.at > syncTime()) applySync(remote, initial);
+  else if (remote.at === syncTime()) syncedJson = JSON.stringify(syncBlob());
   else syncChanged(); // this device has changes that never got sent
+}
+
+async function syncPull(initial) {
+  if (settings.sync === false || !me) return;
+  const r = await api("/api/sync");
+  if (r && r.ok) adoptSync(r.sync, initial);
 }
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && Date.now() - lastPullAt > 30000) syncPull(false);
 });
+
+// ---------- startup timings (shown at the bottom of Settings, to see where opening the app spends its time) ----------
+
+const startup = {};
+function startupMark(name) { if (!(name in startup)) startup[name] = Math.round(performance.now()); }
 
 // ---------- theme ----------
 
@@ -215,7 +225,7 @@ function normalizeChannel(v) {
 const cyclerEl = $("cycler"), swatchEl = $("swatch"), colorEl = $("color"), cycleBtn = $("cycle");
 
 async function refreshStatus() {
-  const s = await api("/api/status");
+  const s = await api("/api/status" + (status === null ? "?sync=1" : ""));
   // A failed request (offline, mid-deploy) says nothing about the account; keep the UI as is.
   if (!s || !("twitch" in s)) return;
   const first = status === null;
@@ -234,9 +244,10 @@ async function refreshStatus() {
   renderAccount();
 
   renderCycle(s.cycle);
+  if (first) startupMark("status");
   if (first && tw && tw.missingScopes.length === 0) {
-    // Adopt another device's tabs before opening any, but never wait long for it.
-    await Promise.race([syncPull(true), new Promise((r) => setTimeout(r, 3000))]);
+    // The first status answer carries the account's synced copy: adopt its tabs before opening any.
+    if ("sync" in s) adoptSync(s.sync, true);
     restoreTabs();
   }
 }
@@ -421,6 +432,8 @@ function activate(tab) {
   history.replaceState(null, "", "#" + tab.login);
   saveTabs();
   updateComposer();
+  ensureTwitchEmotes(tab);
+  if (tab.pendingHistory) { const p = tab.pendingHistory; tab.pendingHistory = null; backfill(tab, p); }
   window.toolsActivated?.(tab);
   composer.refresh(); // the draft carries over, but only this channel's emotes may show as emotes
   renderInfo();
@@ -644,10 +657,11 @@ function openSocket(url, gen, migrating) {
       sock = ws;
       lastSocketMsgAt = Date.now();
       sessionId = msg.payload.session.id;
+      startupMark("socket");
       if (migrating) {
         if (old && old !== ws) { old.retired = true; old.close(); }
       } else {
-        for (const t of tabs.values()) subscribeTab(t);
+        subscribeAll();
         window.toolsOnSession?.(sessionId);
       }
     } else if (type === "session_reconnect") {
@@ -733,6 +747,16 @@ function updateTitle() {
 }
 
 let joinRetryMs = 5000;
+/** Joins every tab on a new socket: the open one first, then the rest a few at a time (each join is ~10 Twitch calls). */
+async function subscribeAll() {
+  const sid = sessionId;
+  const queue = [...tabs.values()].sort((a, b) => (b === active) - (a === active));
+  const worker = async () => {
+    while (queue.length && sid === sessionId) await subscribeTab(queue.shift());
+  };
+  await Promise.all([worker(), worker(), worker()]);
+}
+
 async function subscribeTab(tab) {
   const sid = sessionId;
   if (!sid || tab.joining === sid) return;
@@ -757,6 +781,8 @@ async function subscribeTab(tab) {
   }
   tab.joinTries = 0;
   retries = 0;
+  startupMark("firstJoin");
+  if ([...tabs.values()].every((t) => t === tab || t.joined)) startupMark("allJoined");
   const rejoin = !!tab.broadcaster;
   // Pin the backfill window now: live messages arriving meanwhile must not narrow it.
   const range = { since: rejoin ? tab.lastTs : 0, until: Date.now() };
@@ -777,8 +803,12 @@ async function subscribeTab(tab) {
     tab.loadedExtras = true;
     await loadTabExtras(tab);
   }
-  if (settings.history === true) backfill(tab, { ...range, marker });
-  else if (settings.history == null) askHistory(tab);
+  if (settings.history === true) {
+    // A tab you aren't looking at fetches its first page of history when you first open it
+    // (a reconnect gap is still filled at once).
+    if (!rejoin && tab !== active) tab.pendingHistory = { ...range, marker };
+    else backfill(tab, { ...range, marker });
+  } else if (settings.history == null) askHistory(tab);
 }
 
 /**
@@ -870,6 +900,7 @@ async function backfill(tab, { since, until, marker }) {
   const lines = await fetchHistory(tab, {});
   if (!lines || !tabs.has(tab.login) || settings.history !== true) return;
   const stick = sticking(tab);
+  if (tab === active) startupMark("history");
   mergeHistory(tab, lines, { until, historical: true });
   tab.historyBefore = Math.min(...lines.map(receivedAt).filter(Boolean)) || 0;
   tab.historyDone = lines.length < HISTORY_PAGE || !tab.historyBefore;
@@ -939,7 +970,7 @@ function setHistory(on) {
   saveSettings();
   document.querySelectorAll(".history-ask").forEach((n) => n.remove());
   // Opting in mid-session: merge each open channel's history into what's already shown.
-  if (on) for (const t of tabs.values()) if (t.joined) backfill(t, { since: 0, until: Date.now() });
+  if (on) for (const t of tabs.values()) if (t.joined) { t.pendingHistory = null; backfill(t, { since: 0, until: Date.now() }); }
 }
 
 const IRC_MESSAGE_TYPES = {
@@ -1025,10 +1056,11 @@ function ircToEvent(line) {
 
 async function loadTabExtras(tab) {
   const id = tab.broadcaster.id;
-  const [badges, ext, emotes, cheermotes] = await Promise.all([
+  // The account's Twitch emotes are a long paged list (seconds, not milliseconds), so they load
+  // separately (ensureTwitchEmotes): chat and history must not wait for them.
+  const [badges, ext, cheermotes] = await Promise.all([
     api("/api/chat/badges?broadcaster_id=" + encodeURIComponent(id)),
     loadExtChannel(id),
-    api("/api/chat/emotes?broadcaster_id=" + encodeURIComponent(id)),
     api("/api/chat/cheermotes?broadcaster_id=" + encodeURIComponent(id)),
   ]);
   // The server answers {ok: false} (not an empty list) when Twitch couldn't be reached; ask
@@ -1037,13 +1069,26 @@ async function loadTabExtras(tab) {
   const failed = badgesFailed || !Array.isArray(cheermotes);
   tab.badges = badgesFailed || !badges ? {} : badges;
   tab.ext = ext;
-  tab.twitchEmotes = emotes;
   tab.cheermotes = new Map((Array.isArray(cheermotes) ? cheermotes : []).map((c) => [c.prefix.toLowerCase(), c]));
   if (failed) tab.loadedExtras = false;
   const counts = EXT_SOURCES.map((src) => [src, [...ext.values()].filter((e) => e.source === src).length]).filter(([, n]) => n);
   if (counts.length && !tab.emotesLogged) { tab.emotesLogged = true; sysLine(tab, "Channel emotes: " + counts.map(([src, n]) => n + " " + src).join(" · ") + "."); }
   if (tab === active && !$("picker").hidden) renderPicker();
   if (tab === active) composer.refresh(); // emotes typed before this channel's list arrived
+  if (tab === active) ensureTwitchEmotes(tab);
+}
+
+/** Loads the account's Twitch emotes for a tab once, when the tab is in view or the picker needs them. */
+function ensureTwitchEmotes(tab) {
+  if (!tab || !tab.broadcaster || tab.twitchEmotes || tab.twitchEmotesLoading) return;
+  tab.twitchEmotesLoading = true;
+  api("/api/chat/emotes?broadcaster_id=" + encodeURIComponent(tab.broadcaster.id)).then((r) => {
+    tab.twitchEmotesLoading = false;
+    if (!tabs.has(tab.login)) return;
+    tab.twitchEmotes = r;
+    if (tab === active && !$("picker").hidden) renderPicker();
+    if (tab === active) composer.refresh();
+  });
 }
 
 function tabForBroadcaster(id) {
@@ -2013,14 +2058,10 @@ function openPicker() {
   renderPicker();
   // Retry a failed Twitch emote load when the picker is reopened.
   if (active && active.broadcaster && active.twitchEmotes && !active.twitchEmotes.ok && !active.twitchEmotes.needsScope) {
-    const tab = active;
-    tab.twitchEmotes = null;
+    active.twitchEmotes = null;
     renderPicker();
-    api("/api/chat/emotes?broadcaster_id=" + encodeURIComponent(tab.broadcaster.id)).then((r) => {
-      tab.twitchEmotes = r;
-      if (tab === active && !$("picker").hidden) renderPicker();
-    });
   }
+  ensureTwitchEmotes(active);
 }
 
 function closePicker() {
@@ -4229,6 +4270,12 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("acco
 
 const BACKUP_APP = "yappa-settings";
 
+function startupSummary() {
+  const labels = [["status", "signed in"], ["socket", "live connection"], ["firstJoin", "first channel joined"], ["history", "history shown"], ["allJoined", "all channels joined"]];
+  const parts = labels.filter(([k]) => k in startup).map(([k, l]) => l + " " + (startup[k] / 1000).toFixed(1) + "s");
+  return parts.length ? "Since the page started loading: " + parts.join(" · ") + "." : "Not recorded yet.";
+}
+
 function backupFile() {
   let tabList = [];
   try { tabList = JSON.parse(safeGet("tabs") || "[]"); } catch {}
@@ -4518,6 +4565,8 @@ function openSettings() {
     row("Settings file", backupControls(), "Save everything (settings, tabs, notes, bookmarks, quick messages) to a file, or restore from one. Restoring replaces what's here."),
     el("h3", null, "Ignored users"),
     hiddenList,
+    el("h3", null, "Startup timings"),
+    el("div", "hint", startupSummary()),
   );
 }
 

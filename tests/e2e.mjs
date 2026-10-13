@@ -2869,11 +2869,12 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("tabs") || "[]"));
   await page.evaluate(() => localStorage.setItem("tabs", '["otherchan","uwoslab"]'));
   await page.evaluate(() => localStorage.setItem("lastChannel", "uwoslab"));
+  await page.evaluate(() => localStorage.setItem("chanIds", '{"uwoslab":{"id":"999"},"otherchan":{"id":"888"}}')); // remembered from an earlier visit
   await page.evaluate(() => { settings.history = true; saveSettings(); });
   log.emotes = [];
   const histBefore = log.history.length, subsBefore = log.subs.length;
-  const statusUrls = [];
-  const onReq = (r) => { if (r.url().includes("/api/status")) statusUrls.push(r.url()); };
+  const statusUrls = [], apiOrder = [];
+  const onReq = (r) => { if (r.url().includes("/api/status")) statusUrls.push(r.url()); if (r.url().includes("/api/chat/")) apiOrder.push(new URL(r.url()).pathname + new URL(r.url()).search); };
   page.on("request", onReq);
   await page.goto("https://yappa.test/?cold=1#uwoslab");
   await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length >= 2, null, { timeout: 8000 });
@@ -2881,7 +2882,9 @@ check("history marks messages deleted before they were loaded", await page.evalu
   page.off("request", onReq);
   const subs = log.subs.slice(subsBefore).map((x) => x.split("@")[0]);
   check("the tab you're looking at is joined first", subs[0] === "uwoslab", JSON.stringify(subs));
-  check("the first status call also fetches the synced settings (one round trip)", statusUrls[0] && statusUrls[0].includes("sync=1"), JSON.stringify(statusUrls));
+  check("the first status call also fetches the synced settings, and is made only once (started early by theme.js)", statusUrls.length === 1 && statusUrls[0].includes("sync=1") && (await page.evaluate(() => window.earlyStatus === null)), JSON.stringify(statusUrls));
+  const iBadges = apiOrder.indexOf("/api/chat/badges?broadcaster_id=999"), iSub = apiOrder.indexOf("/api/chat/subscribe");
+  check("the open channel's badges are requested from the remembered id, before the join, and only once", iBadges >= 0 && iSub >= 0 && iBadges < iSub && apiOrder.filter((x) => x === "/api/chat/badges?broadcaster_id=999").length === 1, JSON.stringify(apiOrder));
   check("Twitch emotes are fetched for the open tab only at first", JSON.stringify(log.emotes) === '["999"]', JSON.stringify(log.emotes));
   const h = log.history.slice(histBefore);
   check("...and so is the history: asked for early, then just the gap up to the join", h.length === 2 && h[0] === "uwoslab?limit=100" && /^uwoslab\?limit=100&after=\d+$/.test(h[1]), JSON.stringify(h));

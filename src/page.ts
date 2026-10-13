@@ -55,7 +55,7 @@ export function renderLogin(error?: string | null): string {
 
 export function renderPage(): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-app>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">

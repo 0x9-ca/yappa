@@ -192,6 +192,11 @@ async function api(path, body) {
     // Offline, or the phone just woke up: callers treat this like any failed request.
     return { ok: false, error: "Network error; check your connection.", retry: true };
   }
+  return readApi(res);
+}
+
+/** Turns a response into what api() returns (also used for the status request theme.js starts early). */
+async function readApi(res) {
   let data;
   try { data = await res.json(); } catch { data = { ok: false, error: "Request failed (" + res.status + ")", retry: res.status >= 500 }; }
   // 401 + signedOut: the sign-in cookie expired, or this account was taken off the allowlist.
@@ -225,7 +230,14 @@ function normalizeChannel(v) {
 const cyclerEl = $("cycler"), swatchEl = $("swatch"), colorEl = $("color"), cycleBtn = $("cycle");
 
 async function refreshStatus() {
-  const s = await api("/api/status" + (status === null ? "?sync=1" : ""));
+  let s;
+  if (status === null && window.earlyStatus) {
+    // theme.js started this request before the rest of the page had loaded.
+    const early = window.earlyStatus;
+    window.earlyStatus = null;
+    try { s = await readApi(await early); } catch { s = null; }
+  }
+  if (!s) s = await api("/api/status" + (status === null ? "?sync=1" : ""));
   // A failed request (offline, mid-deploy) says nothing about the account; keep the UI as is.
   if (!s || !("twitch" in s)) return;
   const first = status === null;
@@ -781,6 +793,7 @@ async function subscribeTab(tab) {
   }
   tab.joinTries = 0;
   retries = 0;
+  rememberChannel(r.broadcaster);
   startupMark("firstJoin");
   if ([...tabs.values()].every((t) => t === tab || t.joined)) startupMark("allJoined");
   const rejoin = !!tab.broadcaster;
@@ -1072,15 +1085,37 @@ function ircToEvent(line) {
   };
 }
 
+// Channel ids by login, remembered from earlier joins. They let the open channel's badges and
+// third-party emotes load while signing in and joining are still in progress.
+const chanIds = (() => { try { const v = JSON.parse(safeGet("chanIds") || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? v : {}; } catch { return {}; } })();
+function rememberChannel(b) {
+  if (chanIds[b.login] && chanIds[b.login].id === b.id) return;
+  chanIds[b.login] = { id: b.id };
+  const keys = Object.keys(chanIds);
+  if (keys.length > 60) delete chanIds[keys[0]];
+  safeSet("chanIds", JSON.stringify(chanIds));
+}
+
+const fetchExtras = (id) => Promise.all([
+  api("/api/chat/badges?broadcaster_id=" + encodeURIComponent(id)),
+  loadExtChannel(id),
+  api("/api/chat/cheermotes?broadcaster_id=" + encodeURIComponent(id)),
+]);
+
+let prefetchedExtras = null; // { id, promise }
+function prefetchExtras() {
+  const login = normalizeChannel(location.hash.slice(1)) || normalizeChannel(safeGet("lastChannel"));
+  const known = chanIds[login];
+  if (known && typeof known.id === "string" && /^\d{1,20}$/.test(known.id)) prefetchedExtras = { id: known.id, promise: fetchExtras(known.id) };
+}
+
 async function loadTabExtras(tab) {
   const id = tab.broadcaster.id;
   // The account's Twitch emotes are a long paged list (seconds, not milliseconds), so they load
   // separately (ensureTwitchEmotes): chat and history must not wait for them.
-  const [badges, ext, cheermotes] = await Promise.all([
-    api("/api/chat/badges?broadcaster_id=" + encodeURIComponent(id)),
-    loadExtChannel(id),
-    api("/api/chat/cheermotes?broadcaster_id=" + encodeURIComponent(id)),
-  ]);
+  const early = prefetchedExtras && prefetchedExtras.id === id ? prefetchedExtras : null;
+  if (early) prefetchedExtras = null;
+  const [badges, ext, cheermotes] = await (early ? early.promise : fetchExtras(id));
   // The server answers {ok: false} (not an empty list) when Twitch couldn't be reached; ask
   // again at the next (re)join instead of living without badges or cheermotes all session.
   const badgesFailed = !!(badges && badges.ok === false);
@@ -4610,6 +4645,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
 
 applySettings();
 prefetchHistory();
+prefetchExtras();
 loadExtGlobal();
 refreshStatus();
 // Everything that changes the status from here refreshes it (sending, the cycle toggle,

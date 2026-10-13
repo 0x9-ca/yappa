@@ -78,6 +78,10 @@ so `npm run types` knows about it and `wrangler deploy` fails if it's missing.
 - Tap the live chip in the info bar for the stream's uptime and a graph of viewers since you opened it. After you send a message in a slow-mode channel, a countdown shows when you can chat again.
 - Save a chat as text or JSON from the account menu. Desktop shortcuts: Alt+1…9 / Alt+←→ switch tabs, Alt+V video, `/` message box, `?` lists them all.
 - The emote picker groups the emotes of channels you're subscribed to by channel.
+- Per channel (account menu or a tab's menu → "Settings for #channel"): notifications, sound and go-live alerts set to Always / Never for just that channel, and words muted only there.
+- Notes on people: "Add note" on a user card puts a colored label after their name everywhere (private, synced). Quick messages (the bolt button by the message box) hold things you type often: tap one to insert it, or Send when the box is empty. Favorite emotes: long-press or right-click one in the picker. Bookmarks: "Save" in a message's menu, listed in the account menu. "Translate" uses the browser's built-in translator where it has one, otherwise opens Google Translate with that message.
+- Tabs: right-click or long-press a tab for Move left/right, Live channels first, Pin, Close others and (in a window 1000px or wider) Watch alongside, which shows a second stream next to the first. Desktop users can also drag tabs.
+- Chat layout (Settings, per device): compact spacing, alternate row shading, hide times or badges, and a monospace or serif font. Settings → Backup saves everything to a file and restores it.
 - Account menu: your Twitch picture in the corner opens a menu with your name, Settings, "Your clips" (the
   clips you made through Yappa) and Log out.
 - Clips & VODs: browse a channel's clips (most viewed by period), past broadcasts, highlights and uploads,
@@ -315,6 +319,31 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | Phone | Desktop |
 |---|---|
 | <img src="docs/screenshots/emote-picker-by-channel-mobile.png" width="240" alt="Emote picker grouped by channel (phone)"> | <img src="docs/screenshots/emote-picker-by-channel-desktop.png" width="520" alt="Emote picker grouped by channel (desktop)"> |
+
+### Personal touches
+
+**Per-channel settings** and **notes on people**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/channel-settings-mobile.png" width="240" alt="Settings for one channel (phone)"> | <img src="docs/screenshots/channel-settings-desktop.png" width="520" alt="Settings for one channel (desktop)"> |
+| <img src="docs/screenshots/user-note-mobile.png" width="240" alt="A note on a person (phone)"> | <img src="docs/screenshots/user-note-desktop.png" width="520" alt="A note on a person (desktop)"> |
+
+**Quick messages**, **favorite emotes** and **bookmarks**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/quick-messages-mobile.png" width="240" alt="Quick messages (phone)"> | <img src="docs/screenshots/quick-messages-desktop.png" width="520" alt="Quick messages (desktop)"> |
+| <img src="docs/screenshots/favorite-emotes-mobile.png" width="240" alt="Favorite emotes (phone)"> | <img src="docs/screenshots/favorite-emotes-desktop.png" width="520" alt="Favorite emotes (desktop)"> |
+| <img src="docs/screenshots/bookmarks-mobile.png" width="240" alt="Bookmarks (phone)"> | <img src="docs/screenshots/bookmarks-desktop.png" width="520" alt="Bookmarks (desktop)"> |
+
+**Tab menu**, **watching two streams** and **chat layout**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/tab-menu-mobile.png" width="240" alt="Tab menu (phone)"> | <img src="docs/screenshots/tab-menu-desktop.png" width="520" alt="Tab menu (desktop)"> |
+| <img src="docs/screenshots/watch-alongside-mobile.png" width="240" alt="Two streams side by side (phone window)"> | <img src="docs/screenshots/watch-alongside-desktop.png" width="520" alt="Two streams side by side (desktop)"> |
+| <img src="docs/screenshots/chat-layout-mobile.png" width="240" alt="Compact monospace chat (phone)"> | <img src="docs/screenshots/chat-layout-desktop.png" width="520" alt="Compact monospace chat (desktop)"> |
 
 ### Settings and color cycling
 

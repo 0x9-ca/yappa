@@ -480,3 +480,29 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .bm-row .mention-row { flex: 1; margin-bottom: 0; }
 .msg .translation { font-size: 12px; color: var(--muted); font-style: italic; padding-left: 4px; }
 .fav-hint { padding: 6px 2px; }
+
+/* Chat layout options (per device) */
+.app.compact .msg { padding-top: 1px; padding-bottom: 1px; line-height: 1.25; }
+.app.zebra .messages > .msg:nth-child(even) { background: var(--hover); }
+.app.no-time .msg .time { display: none; }
+.app.no-badges .msg .badge { display: none; }
+.app.font-mono .chat { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.app.font-serif .chat { font-family: Georgia, "Times New Roman", serif; }
+
+/* Tab menu */
+.tab-menu { position: fixed; z-index: 40; min-width: 180px; display: flex; flex-direction: column; padding: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px var(--shadow); }
+.tab-menu button { text-align: left; padding: 8px 10px; background: none; color: var(--text); font-weight: 500; border-radius: 6px; }
+.tab-menu button:hover { background: var(--hover-strong); }
+.tab-menu button.danger { color: var(--err-text); }
+.tab.drag-over { outline: 1px dashed var(--accent); }
+
+/* A second stream beside the first (wide windows only) */
+.video2 { display: none; }
+@media (min-width: 1000px) {
+  .app.with-video.dual { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 380px; grid-template-areas: "video video2 top" "video video2 chat" "video video2 footer"; }
+  .video2 { grid-area: video2; display: flex; flex-direction: column; min-height: 0; background: #000; border-right: 1px solid var(--line); }
+  .video2[hidden] { display: none; }
+  .v2-bar { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: var(--panel); color: var(--muted); font-size: 12px; }
+  .v2-frame { flex: 1; min-height: 0; display: grid; place-items: center; }
+  .v2-frame iframe { width: min(100%, calc(var(--app-height, 100dvh) * 16 / 9)); aspect-ratio: 16 / 9; height: auto; border: 0; }
+}

@@ -49,7 +49,8 @@ let sending = false;
 })();
 
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
-const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true, mute: { words: [], bots: false, commands: false }, channels: {}, notes: {}, snippets: [], favEmotes: [], bookmarks: [] };
+const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true, mute: { words: [], bots: false, commands: false }, channels: {}, notes: {}, snippets: [], favEmotes: [], bookmarks: [],
+  showTime: true, showBadges: true, compact: false, zebra: false, chatFont: "default" };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -64,7 +65,14 @@ function loadSettings() {
 }
 function saveSettings() { safeSet("settings", JSON.stringify(settings)); applySettings(); syncChanged(); }
 function applySettings() {
-  document.querySelector(".app").style.setProperty("--chat-font", settings.fontSize + "px");
+  const app = document.querySelector(".app");
+  app.style.setProperty("--chat-font", settings.fontSize + "px");
+  app.classList.toggle("compact", !!settings.compact);
+  app.classList.toggle("zebra", !!settings.zebra);
+  app.classList.toggle("no-time", settings.showTime === false);
+  app.classList.toggle("no-badges", settings.showBadges === false);
+  app.classList.toggle("font-mono", settings.chatFont === "mono");
+  app.classList.toggle("font-serif", settings.chatFont === "serif");
   applyTheme();
 }
 
@@ -73,7 +81,7 @@ function applySettings() {
 // Settings, open tabs and the pinned stream follow the account (the Durable Object keeps one copy;
 // the newest change wins). What belongs to the device stays here: how video plays, the theme,
 // text size, notification permission, and whether the history service was agreed to.
-const DEVICE_SETTINGS = ["notify", "sound", "fontSize", "theme", "player", "nativeQuality", "bitsButton", "history", "sync"];
+const DEVICE_SETTINGS = ["notify", "sound", "fontSize", "theme", "player", "nativeQuality", "bitsButton", "history", "sync", "showTime", "showBadges", "compact", "zebra", "chatFont"];
 let syncTimer = null, syncedJson = "", lastPullAt = 0;
 const syncTime = () => Number(safeGet("syncAt")) || 0;
 
@@ -256,7 +264,7 @@ cycleBtn.addEventListener("click", async () => {
 });
 
 /** Navigation seam (the tests replace it). */
-const nav = { home: () => location.replace("/") };
+const nav = { home: () => location.replace("/"), reload: () => location.reload() };
 
 async function logout() {
   for (const t of [...tabs.values()]) closeTab(t, { keepSaved: true });
@@ -353,9 +361,29 @@ function buildTabEl(tab) {
   close.setAttribute("aria-label", "Close " + tab.login);
   close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(tab); });
   wrap.append(btn, close);
+  // Drag a tab to reorder (mouse; on touch use the tab menu: long-press a tab).
+  wrap.draggable = true;
+  wrap.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", tab.login); e.dataTransfer.effectAllowed = "move"; });
+  wrap.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+  wrap.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const from = tabs.get(e.dataTransfer.getData("text/plain"));
+    if (from && from !== tab) moveTab(from, [...tabs.keys()].indexOf(tab.login));
+  });
   $("tabs").appendChild(wrap);
   tab.tabEl = { wrap, name, mod, unread, live, pin };
   updateTabEl(tab);
+}
+
+/** Puts a tab at a position in the bar (and in the saved order). */
+function moveTab(tab, index) {
+  const order = [...tabs.keys()].filter((l) => l !== tab.login);
+  order.splice(Math.max(0, Math.min(index, order.length)), 0, tab.login);
+  const all = new Map(tabs);
+  tabs.clear();
+  for (const l of order) tabs.set(l, all.get(l));
+  for (const t of tabs.values()) $("tabs").appendChild(t.tabEl.wrap);
+  saveTabs();
 }
 
 function updateTabEl(tab) {
@@ -2704,7 +2732,7 @@ function canPlaySound() {
 }
 
 async function renderVideo() {
-  try { await renderVideoNow(); } finally { renderQuality(); }
+  try { await renderVideoNow(); } finally { renderQuality(); window.toolsVideoChanged?.(); }
 }
 
 // ---------- pinned stream ----------
@@ -4197,6 +4225,66 @@ $("profile-btn").addEventListener("click", toggleAccountMenu);
 document.addEventListener("pointerdown", (e) => { if (!$("account-menu").hidden && !e.target.closest("#account-menu, #profile-btn")) closeAccountMenu(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("account-menu").hidden) closeAccountMenu(); });
 
+// ---------- settings backup ----------
+
+const BACKUP_APP = "yappa-settings";
+
+function backupFile() {
+  let tabList = [];
+  try { tabList = JSON.parse(safeGet("tabs") || "[]"); } catch {}
+  return JSON.stringify({ app: BACKUP_APP, version: 1, exported: new Date().toISOString(), settings, tabs: tabList, pinned: safeGet("pinnedVideo") || null }, null, 2);
+}
+
+/** Checks a backup file and returns what to apply, or a reason it can't be used. */
+function parseBackup(text) {
+  if (typeof text !== "string" || text.length > 400000) return "That file is too large to be a Yappa backup.";
+  let b;
+  try { b = JSON.parse(text); } catch { return "That isn't a Yappa backup (it isn't valid JSON)."; }
+  if (!b || b.app !== BACKUP_APP || !b.settings || typeof b.settings !== "object" || Array.isArray(b.settings)) return "That isn't a Yappa backup.";
+  const next = {};
+  for (const [k, def] of Object.entries(DEFAULT_SETTINGS)) {
+    if (!(k in b.settings)) continue;
+    const v = b.settings[k];
+    const ok = Array.isArray(def) ? Array.isArray(v) : def && typeof def === "object" ? v && typeof v === "object" && !Array.isArray(v) : def === null ? true : typeof v === typeof def;
+    if (ok) next[k] = v;
+  }
+  const tabList = Array.isArray(b.tabs) ? b.tabs.filter((t) => typeof t === "string" && /^[a-z0-9_]{1,25}$/.test(t)).slice(0, MAX_TABS) : [];
+  const pinned = typeof b.pinned === "string" && /^[a-z0-9_]{1,25}$/.test(b.pinned) ? b.pinned : null;
+  return { settings: next, tabs: tabList, pinned };
+}
+
+function backupControls() {
+  const box = el("div", "seg");
+  const file = document.createElement("input");
+  file.type = "file";
+  file.accept = "application/json,.json";
+  file.hidden = true;
+  file.addEventListener("change", async () => {
+    const f = file.files && file.files[0];
+    file.value = "";
+    if (!f) return;
+    const parsed = parseBackup(await f.text());
+    if (typeof parsed === "string") { alert(parsed); return; }
+    if (!confirm("Replace your settings, notes, bookmarks and tabs with this backup?")) return;
+    settings = { ...structuredClone(DEFAULT_SETTINGS), ...parsed.settings };
+    safeSet("settings", JSON.stringify(settings));
+    safeSet("tabs", JSON.stringify(parsed.tabs));
+    if (parsed.pinned) safeSet("pinnedVideo", parsed.pinned); else { try { localStorage.removeItem("pinnedVideo"); } catch {} }
+    syncChanged();
+    nav.reload();
+  });
+  box.append(btn("Save file", () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([backupFile()], { type: "application/json" }));
+    a.download = "yappa-settings-" + new Date().toISOString().slice(0, 10) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }), btn("Restore…", () => file.click()), file);
+  return box;
+}
+
 function openSettings() {
   const row = (labelText, control, hint) => {
     const r = el("div", "row");
@@ -4399,6 +4487,12 @@ function openSettings() {
     themeSeg,
     el("h3", null, "Chat text size"),
     seg,
+    el("h3", null, "Chat layout"),
+    row("Compact", checkbox(!!settings.compact, (c) => { settings.compact = c.checked; saveSettings(); }), "Tighter spacing between messages."),
+    row("Alternate row shading", checkbox(!!settings.zebra, (c) => { settings.zebra = c.checked; saveSettings(); }), "Every other line gets a faint background, which helps on fast chats."),
+    row("Show times", checkbox(settings.showTime !== false, (c) => { settings.showTime = c.checked; saveSettings(); })),
+    row("Show badges", checkbox(settings.showBadges !== false, (c) => { settings.showBadges = c.checked; saveSettings(); })),
+    row("Font", dropdown([["default", "Default"], ["mono", "Monospace"], ["serif", "Serif"]], settings.chatFont || "default", (v) => { settings.chatFont = v; saveSettings(); }), "These layout choices are saved per device."),
     el("h3", null, "Clips"),
     row("Post new clips in chat", checkbox(settings.postClips !== false, (c) => { settings.postClips = c.checked; saveSettings(); }),
       "When you create a clip with Yappa (the clapper button in the info bar), send its link to the channel's chat as you."),
@@ -4420,6 +4514,8 @@ function openSettings() {
       saveSettings();
       if (c.checked) syncPull(false);
     }), "Keep settings, open tabs and the pinned stream the same on every device you sign in on (the newest change wins). Video player, theme, text size and notifications stay per device."),
+    el("h3", null, "Backup"),
+    row("Settings file", backupControls(), "Save everything (settings, tabs, notes, bookmarks, quick messages) to a file, or restore from one. Restoring replaces what's here."),
     el("h3", null, "Ignored users"),
     hiddenList,
   );

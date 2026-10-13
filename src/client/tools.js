@@ -1140,4 +1140,83 @@ window.toolsTranslate = async (tab, ev, li) => {
   if (body) body.after(out); else li.appendChild(out);
 };
 
+// ---------- tab menu (right-click or long-press a tab) ----------
+
+let tabMenu = null;
+function closeTabMenu() { if (tabMenu) tabMenu.remove(); tabMenu = null; }
+
+function openTabMenu(tab, anchor) {
+  closeTabMenu();
+  const keys = [...tabs.keys()];
+  const i = keys.indexOf(tab.login);
+  const name = tab.broadcaster ? tab.broadcaster.name : tab.login;
+  const menu = el("div", "tab-menu");
+  menu.setAttribute("role", "menu");
+  const item = (label, fn, cls) => {
+    const b = el("button", cls, label);
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.addEventListener("click", () => { closeTabMenu(); fn(); });
+    menu.appendChild(b);
+  };
+  if (i > 0) item("Move left", () => moveTab(tab, i - 1));
+  if (i < keys.length - 1) item("Move right", () => moveTab(tab, i + 1));
+  if (keys.length > 1) item("Live channels first", () => {
+    const live = keys.filter((l) => tabs.get(l).stream), rest = keys.filter((l) => !tabs.get(l).stream);
+    [...live, ...rest].forEach((l, n) => moveTab(tabs.get(l), n));
+  });
+  item(pinnedLogin === tab.login ? "Unpin stream" : "Pin stream", () => setPinned(pinnedLogin === tab.login ? null : tab.login));
+  if (wide.matches) item(secondLogin === tab.login ? "Stop watching alongside" : "Watch alongside", () => setSecond(secondLogin === tab.login ? null : tab.login));
+  item("Settings for #" + name, () => openChannelSettings(tab));
+  if (keys.length > 1) item("Close other tabs", () => { for (const t of [...tabs.values()]) if (t !== tab) closeTab(t); });
+  item("Close", () => closeTab(tab), "danger");
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8) + "px";
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + "px";
+  tabMenu = menu;
+}
+
+$("tabs").addEventListener("contextmenu", (e) => {
+  const w = e.target.closest(".tab");
+  const tab = w && [...tabs.values()].find((t) => t.tabEl && t.tabEl.wrap === w);
+  if (!tab) return;
+  e.preventDefault();
+  openTabMenu(tab, w);
+});
+document.addEventListener("pointerdown", (e) => { if (tabMenu && !e.target.closest(".tab-menu")) closeTabMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeTabMenu(); });
+
+// ---------- a second stream beside the first (wide windows) ----------
+
+let secondLogin = safeGet("secondVideo") || null;
+const wide = matchMedia("(min-width: 1000px)");
+
+function setSecond(login) {
+  secondLogin = login;
+  if (login) safeSet("secondVideo", login); else { try { localStorage.removeItem("secondVideo"); } catch {} }
+  renderSecond();
+}
+
+function renderSecond() {
+  const box = $("video2"), frame = $("v2-frame");
+  const on = !!(secondLogin && settings.video && wide.matches && !$("video").hidden);
+  document.querySelector(".app").classList.toggle("dual", on);
+  box.hidden = !on;
+  if (!on) { frame.replaceChildren(); delete frame.dataset.channel; return; }
+  $("v2-name").textContent = "#" + secondLogin;
+  if (frame.dataset.channel === secondLogin) return;
+  frame.dataset.channel = secondLogin;
+  const f = document.createElement("iframe");
+  f.src = "https://player.twitch.tv/?channel=" + encodeURIComponent(secondLogin) + "&parent=" + encodeURIComponent(location.hostname) + "&muted=true&autoplay=true";
+  f.allow = "autoplay; fullscreen; picture-in-picture";
+  f.allowFullscreen = true;
+  f.title = secondLogin + "'s stream";
+  frame.replaceChildren(f);
+}
+
+window.toolsVideoChanged = renderSecond;
+wide.addEventListener("change", renderSecond);
+$("v2-close").addEventListener("click", () => setSecond(null));
+
 })();

@@ -101,6 +101,7 @@ export function renderPage(): string {
   </div>
 
   <div class="video" id="video" data-hls-src="${versioned("/hls.js")}" hidden></div>
+  <div class="video2" id="video2" hidden><div class="v2-bar"><span id="v2-name"></span><button type="button" class="ghost small" id="v2-close">Close</button></div><div class="v2-frame" id="v2-frame"></div></div>
   <div class="chat" id="chat" hidden>
     <div class="infobar" id="infobar" hidden>
       <span class="live" id="live"></span>

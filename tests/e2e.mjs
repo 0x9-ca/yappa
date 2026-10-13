@@ -2737,6 +2737,87 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { delete self.LanguageDetector; delete self.Translator; });
 }
 
+
+// =============== chat layout options, tab menu, second stream, backup ===============
+{
+  // ---- chat layout ----
+  await openSettingsUI();
+  await page.waitForSelector("#sheet");
+  check("Settings has chat layout options", /Chat layout/.test(await page.textContent("#sheet")) && /Alternate row shading/.test(await page.textContent("#sheet")));
+  await page.evaluate(() => { settings.compact = true; settings.zebra = true; settings.showTime = false; settings.showBadges = false; settings.chatFont = "mono"; saveSettings(); });
+  const lay = await page.evaluate(() => { const a = document.querySelector(".app").classList; return ["compact", "zebra", "no-time", "no-badges", "font-mono"].every((c) => a.contains(c)); });
+  const timeHidden = await page.$eval(".messages:not([hidden]) .msg .time", (t) => getComputedStyle(t).display === "none");
+  check("compact, shading, hidden times/badges and the font take effect", lay && timeHidden);
+  check("layout choices stay out of sync (they're per device)", await page.evaluate(() => { const b = syncBlob().settings; return !("compact" in b) && !("zebra" in b) && !("chatFont" in b); }));
+  await page.keyboard.press("Escape");
+  await shot("chat-layout");
+  await page.evaluate(() => { settings.compact = false; settings.zebra = false; settings.showTime = true; settings.showBadges = true; settings.chatFont = "default"; saveSettings(); });
+
+  // ---- tab menu and reordering ----
+  const order0 = await page.evaluate(() => [...tabs.keys()]);
+  await page.click(".tab >> nth=0", { button: "right" });
+  await page.waitForSelector(".tab-menu");
+  const items = await page.$$eval(".tab-menu button", (b) => b.map((x) => x.textContent));
+  check("right-clicking a tab opens its menu", ["Move right", "Pin stream", "Close"].every((x) => items.includes(x)) && items.some((x) => x.startsWith("Settings for #")), JSON.stringify(items));
+  await shot("tab-menu");
+  await page.click('.tab-menu button:has-text("Move right")');
+  const order1 = await page.evaluate(() => [...tabs.keys()]);
+  check("Move right reorders the tabs, the bar and the saved order", order1[1] === order0[0] && order1[0] === order0[1] && (await page.$$eval(".tab .tab-name", (n) => n[1].textContent.toLowerCase())) === order0[0].toLowerCase() && (await page.evaluate(() => localStorage.getItem("tabs"))) === JSON.stringify(order1), JSON.stringify([order0, order1]));
+  await page.dragAndDrop(".tab >> nth=1", ".tab >> nth=0");
+  const order2 = await page.evaluate(() => [...tabs.keys()]);
+  check("a tab can be dragged to a new place", JSON.stringify(order2) === JSON.stringify(order0), JSON.stringify(order2));
+  await page.click(".tab >> nth=0", { button: "right" });
+  await page.click('.tab-menu button:has-text("Live channels first")');
+  const liveFirst = await page.evaluate(() => [...tabs.values()].map((t) => !!t.stream));
+  check("Live channels first puts live tabs ahead of the rest", liveFirst.every((v, i) => i === 0 || !(v && !liveFirst[i - 1])), JSON.stringify(liveFirst));
+
+  // ---- a second stream (wide windows) ----
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.evaluate(() => { settings.video = true; saveSettings(); activate(tabs.get("uwoslab")); });
+  await page.waitForSelector("#video:not([hidden])");
+  const other2 = await page.evaluate(() => [...tabs.keys()].find((n) => n !== "uwoslab"));
+  await page.click(`.tab:has(.tab-name:text-is("${other2}")), .tab >> nth=1`, { button: "right" });
+  await page.click('.tab-menu button:has-text("Watch alongside")');
+  await page.waitForSelector("#video2:not([hidden]) iframe");
+  const two = await page.evaluate(() => ({ src: document.querySelector("#v2-frame iframe").src, dual: document.querySelector(".app").classList.contains("dual"), w1: document.getElementById("video").getBoundingClientRect().width, w2: document.getElementById("video2").getBoundingClientRect().width, saved: localStorage.getItem("secondVideo") }));
+  check("Watch alongside shows a second player next to the first", /player\.twitch\.tv\/\?channel=\w+&parent=yappa\.test&muted=true/.test(two.src) && two.dual && two.w1 > 300 && two.w2 > 300 && !!two.saved, JSON.stringify(two));
+  await shot("watch-alongside");
+  await page.click("#v2-close");
+  check("Close puts the layout back", await page.evaluate(() => document.getElementById("video2").hidden && !document.querySelector(".app").classList.contains("dual") && !localStorage.getItem("secondVideo")));
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.evaluate(() => closeSheet());
+
+  // ---- backup ----
+  await page.evaluate(() => { settings.snippets = [{ label: "x", text: "backup me" }]; saveSettings(); });
+  await openSettingsUI();
+  await page.waitForSelector("#sheet");
+  const [dlb] = await Promise.all([page.waitForEvent("download"), page.click('#sheet button:has-text("Save file")')]);
+  const backup = JSON.parse(readFileSync(await dlb.path(), "utf8"));
+  check("Save file downloads settings, tabs and notes as JSON", /^yappa-settings-\d{4}-\d\d-\d\d\.json$/.test(dlb.suggestedFilename()) && backup.app === "yappa-settings" && backup.settings.snippets[0].text === "backup me" && Array.isArray(backup.tabs));
+  await page.evaluate(() => { window.__reloads = 0; nav.reload = () => { window.__reloads++; }; });
+  const fileMk = (name, text) => ({ name, mimeType: "application/json", buffer: Buffer.from(text) });
+  let dialogMsg = "";
+  const grab = (d) => { dialogMsg = d.message(); };
+  page.on("dialog", grab);
+  await page.setInputFiles('#sheet input[type=file]', fileMk("bad.json", "not json"));
+  await sleep(300);
+  check("a file that isn't a backup is refused with a message", /isn't a Yappa backup/.test(dialogMsg), dialogMsg);
+  check("...and changes nothing", (await page.evaluate(() => window.__reloads)) === 0);
+  const restored = { app: "yappa-settings", version: 1, settings: { snippets: [{ label: "r", text: "restored" }], fontSize: "huge", rules: [{ phrase: "back", user: "" }], bogus: 1 }, tabs: ["alphachan", "bad name!"], pinned: null };
+  page.off("dialog", grab);
+  const msgs = [];
+  const grab2 = (d) => { msgs.push(d.message()); };
+  page.on("dialog", grab2);
+  await page.setInputFiles('#sheet input[type=file]', fileMk("good.json", JSON.stringify(restored)));
+  await sleep(400);
+  const after = await page.evaluate(() => ({ snippets: settings.snippets, fontSize: settings.fontSize, rules: settings.rules, bogus: settings.bogus, tabs: localStorage.getItem("tabs"), reloads: window.__reloads }));
+  check("restoring asks first, then applies valid parts only, and reloads", /Replace your settings/.test(msgs[0] || "") && after.snippets[0].text === "restored" && after.rules[0].phrase === "back" && after.fontSize === 14 && after.bogus === undefined && after.tabs === '["alphachan"]' && after.reloads === 1, JSON.stringify(after));
+  page.off("dialog", grab2);
+  // Put the run back as it was.
+  await page.evaluate((o) => { settings.snippets = []; settings.rules = []; saveSettings(); localStorage.setItem("tabs", JSON.stringify(o)); }, order0);
+  await page.keyboard.press("Escape");
+}
+
 // =============== moving to a new address ===============
 {
   const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });

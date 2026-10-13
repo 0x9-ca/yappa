@@ -878,6 +878,17 @@ function placeHistoryDivider(tab) {
   if (d.nextElementSibling !== first) tab.list.insertBefore(d, first);
 }
 
+// The open channel's newest history is requested as soon as the script runs, in parallel with
+// signing in and joining (the history service is the slowest step of opening the app). It only
+// needs the channel name. Joining then fills the short gap between that request and the join.
+let prefetched = null; // { login, at, promise }
+function prefetchHistory() {
+  if (settings.history !== true) return;
+  const login = normalizeChannel(location.hash.slice(1)) || normalizeChannel(safeGet("lastChannel"));
+  if (!/^[a-z0-9_]{1,25}$/.test(login)) return;
+  prefetched = { login, at: Date.now(), promise: fetchHistory({ login }, {}) };
+}
+
 async function backfill(tab, { since, until, marker }) {
   if (settings.history !== true) return;
   if (since) {
@@ -897,11 +908,18 @@ async function backfill(tab, { since, until, marker }) {
     return;
   }
   // First load: the newest page; scrolling up loads more.
-  const lines = await fetchHistory(tab, {});
+  const early = prefetched && prefetched.login === tab.login && Date.now() - prefetched.at < 120000 ? prefetched : null;
+  if (early) prefetched = null;
+  const lines = (early && (await early.promise)) || (await fetchHistory(tab, {}));
   if (!lines || !tabs.has(tab.login) || settings.history !== true) return;
   const stick = sticking(tab);
   if (tab === active) startupMark("history");
   mergeHistory(tab, lines, { until, historical: true });
+  // What was said between that early request and joining.
+  if (early) {
+    const newest = Math.max(0, ...lines.map((l) => (ircToEvent(l) || {}).ts || 0));
+    if (newest) backfill(tab, { since: newest, until });
+  }
   tab.historyBefore = Math.min(...lines.map(receivedAt).filter(Boolean)) || 0;
   tab.historyDone = lines.length < HISTORY_PAGE || !tab.historyBefore;
   placeHistoryDivider(tab);
@@ -4591,6 +4609,7 @@ if (vv) {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 applySettings();
+prefetchHistory();
 loadExtGlobal();
 refreshStatus();
 // Everything that changes the status from here refreshes it (sending, the cycle toggle,

@@ -2883,13 +2883,15 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("the tab you're looking at is joined first", subs[0] === "uwoslab", JSON.stringify(subs));
   check("the first status call also fetches the synced settings (one round trip)", statusUrls[0] && statusUrls[0].includes("sync=1"), JSON.stringify(statusUrls));
   check("Twitch emotes are fetched for the open tab only at first", JSON.stringify(log.emotes) === '["999"]', JSON.stringify(log.emotes));
-  check("...and so is the history", log.history.length === histBefore + 1 && /^uwoslab\?/.test(log.history.at(-1)), JSON.stringify(log.history.slice(histBefore)));
+  const h = log.history.slice(histBefore);
+  check("...and so is the history: asked for early, then just the gap up to the join", h.length === 2 && h[0] === "uwoslab?limit=100" && /^uwoslab\?limit=100&after=\d+$/.test(h[1]), JSON.stringify(h));
+  check("the early history shows once, without duplicates", await page.evaluate(() => { const ids = [...document.querySelectorAll(".messages:not([hidden]) li.msg")].map((l) => l.dataset.id).filter(Boolean); return ids.length > 0 && new Set(ids).size === ids.length; }));
   const marks = await page.evaluate(() => startup);
   check("startup timings are recorded in order", marks.status > 0 && marks.socket >= 0 && marks.firstJoin >= marks.socket && marks.allJoined >= marks.firstJoin, JSON.stringify(marks));
   await page.click('.tab:has(.tab-name:text-is("OtherChan"))');
   await page.waitForFunction(() => document.querySelector(".messages:not([hidden]) li.historical") || true);
   await sleep(400);
-  check("a background tab fetches its emotes and history when first opened", JSON.stringify(log.emotes) === '["999","888"]' && log.history.length === histBefore + 2 && /^otherchan\?/.test(log.history.at(-1)), JSON.stringify([log.emotes, log.history.slice(histBefore)]));
+  check("a background tab fetches its emotes and history when first opened", JSON.stringify(log.emotes) === '["999","888"]' && log.history.length === histBefore + 3 && /^otherchan\?/.test(log.history.at(-1)), JSON.stringify([log.emotes, log.history.slice(histBefore)]));
   await openSettingsUI();
   check("Settings shows where startup time went", /Startup timings/.test(await page.textContent("#sheet")) && /signed in \d/.test(await page.textContent("#sheet")));
   await page.keyboard.press("Escape");

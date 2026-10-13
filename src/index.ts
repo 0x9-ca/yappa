@@ -157,14 +157,19 @@ async function handle(request: Request, env: Env): Promise<Response> {
     }
   }
 
-  const stub = await currentStub(env, session.uid, url.pathname === "/");
+  if (request.method === "GET" && url.pathname === "/") {
+    // Renewing the cookie on every page load keeps a regularly used sign-in from ever expiring.
+    // The page itself needs nothing from the user's Durable Object, so it isn't kept waiting for it.
+    return new Response(renderPage(), {
+      headers: { ...HTML_HEADERS, "Set-Cookie": sessionCookie(await signSession(env, session.uid, session.login)) },
+    });
+  }
+
+  // The first status call of a page load (it carries ?sync) makes sure the Durable Object runs this
+  // deploy's code before anything else is asked of it.
+  const stub = await currentStub(env, session.uid, url.pathname === "/api/status" && url.searchParams.has("sync"));
 
   switch (`${request.method} ${url.pathname}`) {
-    case "GET /":
-      // Renewing the cookie on every page load keeps a regularly used sign-in from ever expiring.
-      return new Response(renderPage(), {
-        headers: { ...HTML_HEADERS, "Set-Cookie": sessionCookie(await signSession(env, session.uid, session.login)) },
-      });
 
     case "GET /api/following":
       return json(await stub.followed(url.searchParams.has("fresh")));

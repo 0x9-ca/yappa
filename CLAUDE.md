@@ -6,7 +6,7 @@ A previous hostname can keep routing to the Worker (an extra entry under `routes
 Its page (`src/moved.ts`) forwards to `APP_HOST`, carrying the browser's localStorage in the URL
 fragment; `app.js` imports it into a fresh browser. API routes still answer there, so copies of the
 app that are already open keep working.
-The Worker is still named `yappa` (the project started as a chat-color prank).
+The deployed Worker keeps the `name` it was first created with (set in the gitignored `wrangler.jsonc`; the project started life as a chat-color prank). Its Durable Object data is tied to that name, so never change it.
 
 ## Commands
 

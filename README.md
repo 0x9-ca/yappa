@@ -1,6 +1,10 @@
-# Yappa
+<p align="center">
+  <img src="src/client/icons/icon-512.png" width="128" alt="Yappa logo">
+</p>
 
-A Twitch chat client that runs as a Cloudflare Worker (deployed as the `yappa` Worker).
+<h1 align="center">Yappa</h1>
+
+<p align="center"><b>A personal Twitch chat client that runs on your own Cloudflare Worker.</b></p>
 
 Built on EventSub WebSocket + Helix. It can also change your chat color to a random hex color
 every time you send a message. Private: only the Twitch accounts on an allowlist can sign in.

@@ -15,7 +15,32 @@ const browser = await chromium.launch({
 });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true, deviceScaleFactor: process.env.SHOTS ? 2 : 1 }); // 2x only for the README gallery
 // Shorten the app's own waits (color-bump grace, raid countdown, sync delay) so tests don't sit through them.
-await ctx.addInitScript(() => { window.__timing = { bump: 100, raidTick: 100, sync: 60 }; });
+await ctx.addInitScript(() => { window.__timing = { bump: 100, raidTick: 60, sync: 60, clipRetry: 150, sayMs: 300, watchdog: 250, find: 60 }; });
+// Lets the tests wait for "the page has stopped reacting" instead of sleeping a fixed time (see settle()).
+// Anything that can still change the page counts as activity: requests, socket traffic, DOM changes,
+// scrolling and resizing, and short timers that haven't fired yet.
+await ctx.addInitScript(() => {
+  const act = (window.__act = { last: performance.now(), inflight: 0, timers: 0 });
+  const touch = () => { act.last = performance.now(); };
+  const nativeFetch = window.fetch;
+  window.fetch = function (...a) { act.inflight++; touch(); return nativeFetch.apply(this, a).finally(() => { act.inflight--; touch(); }); };
+  const NativeWS = window.WebSocket;
+  window.WebSocket = class extends NativeWS {
+    constructor(...a) { super(...a); for (const t of ["open", "message", "close", "error"]) this.addEventListener(t, touch); }
+  };
+  new MutationObserver(touch).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  addEventListener("scroll", touch, true);
+  addEventListener("resize", touch);
+  const live = new Set();
+  const st = window.setTimeout, ct = window.clearTimeout;
+  window.setTimeout = function (fn, d, ...r) {
+    if (typeof fn !== "function" || (d || 0) > 1500) return st.call(this, fn, d, ...r);
+    const id = st.call(this, function () { live.delete(id); act.timers = live.size; touch(); return fn.apply(this, arguments); }, d, ...r);
+    live.add(id); act.timers = live.size;
+    return id;
+  };
+  window.clearTimeout = function (id) { if (live.delete(id)) { act.timers = live.size; } return ct.call(this, id); };
+});
 const page = await ctx.newPage();
 // The README screenshots should look like a phone, not like this machine's fallback font: with
 // SHOTS_FONTS=<dir holding Roboto-Regular/Medium/Bold .woff2> the page renders in Roboto, Android's system font.
@@ -42,10 +67,10 @@ async function shot(name) {
   mkdirSync(galleryDir, { recursive: true });
   await page.screenshot({ path: galleryDir + "/" + name + "-mobile.png" });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await sleep(350);
+  await settle(350);
   await page.screenshot({ path: galleryDir + "/" + name + "-desktop.png" });
   await page.setViewportSize({ width: 390, height: 760 });
-  await sleep(350);
+  await settle(350);
 }
 
 await page.addInitScript(() => {
@@ -329,6 +354,16 @@ const chat = (bid, id, user, uid, text, extra = {}) => msg("notification", { sub
   broadcaster_user_id: bid, message_id: id, chatter_user_id: uid, chatter_user_name: user, chatter_user_login: user.toLowerCase(), color: "#1E90FF", badges: [],
   message: { text, fragments: extra.fragments || [{ type: "text", text }] }, ...extra } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/**
+ * Waits for the page to go quiet (no requests in flight, no socket traffic, DOM changes or short timers
+ * pending for a moment), but never longer than `max`: it's a faster `sleep(max)`, not a different wait.
+ * The first 35ms always pass so anything already on its way (a socket message from this process) arrives.
+ */
+const settle = async (max = 300) => {
+  await sleep(35);
+  if (max <= 35) return;
+  await page.waitForFunction(() => { const a = window.__act; return !a || (a.inflight === 0 && a.timers === 0 && performance.now() - a.last >= 25); }, null, { timeout: max - 35, polling: "raf" }).catch(() => {});
+};
 const state = () => page.evaluate(() => ({
   tabs: [...document.querySelectorAll(".tab")].map((t) => t.querySelector(".tab-name").textContent + (t.classList.contains("active") ? "*" : "") + (t.querySelector(".mod-pill").hidden ? "" : "[MOD]") + (t.querySelector(".unread").hidden ? "" : "(" + t.querySelector(".unread").textContent + (t.classList.contains("mentioned") ? "!" : "") + ")")).join(" | "),
   hash: location.hash, input: composer.getText(), placeholder: document.getElementById("message").dataset.placeholder,
@@ -368,7 +403,7 @@ check("not a mod in otherchan → no mod hint", !s.placeholder.includes("mod"), 
 sockets[0].send(chat("999", "u1", "SomeViewer", "222", "hey @testuser", { fragments: [{ type: "text", text: "hey " }, { type: "mention", text: "@testuser", mention: { user_id: "111" } }] }));
 sockets[0].send(chat("999", "u2", "Spammer", "333", "buy followers"));
 sockets[0].send(chat("888", "o1", "OtherPerson", "444", "hello other chan catJAM"));
-await sleep(200);
+await settle(200);
 s = await state();
 check("unread + mention badge on background tab", s.tabs === "UwoSlab[MOD](2!) | OtherChan*", s.tabs);
 check("active tab shows only its own messages", s.visibleMsgs.some((t) => t.includes("hello other chan")) && !s.visibleMsgs.some((t) => t.includes("buy followers")));
@@ -383,18 +418,18 @@ const modBtns = await page.$$eval('li[data-id="u2"] .actions button', (bs) => bs
 check("mod actions on others' messages", modBtns.join(",") === "Reply,Save,Translate,Delete,Timeout,Ban", modBtns.join(","));
 
 await page.tap('li[data-id="u2"] .body');
-await sleep(100);
+await settle(100);
 await page.screenshot({ path: dir + "/t2-actions.png" });
 await shot("mod-actions");
 await page.click('li[data-id="u2"] .actions button:has-text("Timeout")');
 await page.tap('li[data-id="u2"] .body'); await page.click('li[data-id="u2"] .actions button:has-text("Ban")');
-await sleep(150);
+await settle(150);
 check("timeout + ban buttons call mod API", JSON.stringify(log.mods.map((m) => m.action + ":" + (m.user_id || m.login) + ":" + (m.duration || "") + ":" + m.broadcaster_id)) === '["timeout:333:600:999","ban:333::999"]', JSON.stringify(log.mods));
 
 await page.click("#message");
 await page.keyboard.type("/timeout baduser 10m being rude");
 await page.keyboard.press("Enter");
-await sleep(150);
+await settle(150);
 const last = log.mods.at(-1);
 check("/timeout command", last.action === "timeout" && last.login === "baduser" && last.duration === 600 && last.reason === "being rude", JSON.stringify(last));
 check("command not sent as chat", log.sent.length === 0);
@@ -503,7 +538,7 @@ await page.evaluate(() => composer.setText(""));
     { type: "text", text: " " }, { type: "emote", text: "uwoHype", emote: { id: "777", emote_set_id: "5", owner_id: "999", format: ["static"] } },
     { type: "text", text: " catJAM" }] }));
   await page.waitForSelector('li[data-id="emotetip1"] .emote-wrap img');
-  const tip = async (sel) => { await page.evaluate((sel) => document.querySelector(sel).click(), sel); await sleep(50); return page.evaluate(() => { const t = document.querySelector(".emote-tip"); return t && { name: t.querySelector(".et-name").textContent, src: t.querySelector(".et-src").textContent, add: !!t.querySelector("button"), inView: (() => { const r = t.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() }; }); };
+  const tip = async (sel) => { await page.evaluate((sel) => document.querySelector(sel).click(), sel); await settle(50); return page.evaluate(() => { const t = document.querySelector(".emote-tip"); return t && { name: t.querySelector(".et-name").textContent, src: t.querySelector(".et-src").textContent, add: !!t.querySelector("button"), inView: (() => { const r = t.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() }; }); };
   let t1 = await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
   check("tapping a Twitch global emote names it and says so", t1 && t1.name === "Kappa" && t1.src === "Twitch · Twitch global emote" && t1.inView, JSON.stringify(t1));
   await page.screenshot({ path: dir + "/t64-emote-tip.png" });
@@ -526,7 +561,7 @@ await page.evaluate(() => composer.setText(""));
   check("Escape closes it", !(await page.$(".emote-tip")));
   await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
   await page.mouse.click(5, 400);
-  await sleep(100);
+  await settle(100);
   check("tapping elsewhere closes it", !(await page.$(".emote-tip")));
   // A very long name, with both buttons showing, must wrap sensibly instead of one letter per line.
   const longName = "ThisIsAnExtremelyLongEmoteNameThatKeepsGoingAndGoingForeverAndEver";
@@ -548,10 +583,10 @@ await page.evaluate(() => composer.setText(""));
   // Following the chat: scrolled out of view, the tip goes away; otherwise it stays with its emote.
   await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
   await page.evaluate(() => { const l = document.querySelector(".messages:not([hidden])"); l.scrollTop += 3; });
-  await sleep(100);
+  await settle(100);
   check("a small scroll keeps the tip with its emote", !!(await page.$(".emote-tip")));
   await page.evaluate(() => { const l = document.querySelector(".messages:not([hidden])"); l.scrollTop = 0; });
-  await sleep(100);
+  await settle(100);
   check("scrolling it out of view closes it", !(await page.$(".emote-tip")));
   await page.evaluate(() => scrollToBottom(active));
 }
@@ -560,12 +595,12 @@ await page.evaluate(() => composer.setText(""));
 {
   const L = () => log.tools.at(-1);
   await page.evaluate(() => activate(tabs.get("uwoslab")));
-  await sleep(300);
+  await settle(300);
 
   // Subscription chip
   check("subscription chip shows your tier on a channel you're subscribed to", await page.$eval("#sub-chip", (c) => !c.hidden && c.textContent === "Sub · T2" && /Tier 2/.test(c.title) && /KindPerson/.test(c.title)));
   await page.evaluate(() => activate(tabs.get("otherchan")));
-  await sleep(300);
+  await settle(300);
   check("no chip where you're not subscribed", await page.$eval("#sub-chip", (c) => c.hidden));
   await page.evaluate(() => activate(tabs.get("uwoslab")));
 
@@ -642,34 +677,34 @@ await page.evaluate(() => composer.setText(""));
   const cardBtns = await page.$$eval("#sheet .card-actions button", (b) => b.map((x) => x.textContent));
   check("the user card offers Warn, Monitor/Restrict/Clear, Shout out, Whisper and Block", ["Warn", "Monitor", "Restrict", "Clear mark", "Shout out", "Whisper", "Block"].every((x) => cardBtns.includes(x)), JSON.stringify(cardBtns));
   await page.click('#sheet .card-actions button:has-text("Warn")');
-  await sleep(200);
+  await settle(200);
   check("Warn sends the reason", log.tools.some((x) => x === 'POST /api/mod/warn {"broadcaster_id":"999","user_id":"7001","reason":"Please stop that"}'), JSON.stringify(log.tools.slice(-3)));
   await page.evaluate(() => document.querySelector('li[data-id="toolmsg1"] .name').click());
   await page.waitForSelector("#sheet .card-actions");
   await page.click('#sheet .card-actions button:has-text("Restrict")');
-  await sleep(200);
+  await settle(200);
   check("Restrict marks them as a suspicious user", log.tools.some((x) => x === 'POST /api/mod/suspicious {"broadcaster_id":"999","user_id":"7001","status":"RESTRICTED"}'));
   await page.evaluate(() => document.querySelector('li[data-id="toolmsg1"] .name').click());
   await page.waitForSelector("#sheet .card-actions");
   await page.click('#sheet .card-actions button:has-text("Block")');
-  await sleep(200);
+  await settle(200);
   check("Block blocks them on Twitch and hides their messages", log.tools.some((x) => x === 'POST /api/blocks {"user_id":"7001","block":true}') && await page.$eval('li[data-id="toolmsg1"]', (l) => l.classList.contains("ignored")));
   await page.evaluate(() => document.querySelector('li[data-id="toolmsg1"] .name').click());
   await page.waitForSelector("#sheet .card-actions");
   await page.click('#sheet .card-actions button:has-text("Unblock")');
-  await sleep(200);
+  await settle(200);
   check("Unblock undoes it", log.tools.some((x) => x === 'POST /api/blocks {"user_id":"7001","block":false}') && await page.$eval('li[data-id="toolmsg1"]', (l) => !l.classList.contains("ignored")));
   // Your Twitch block list is applied when you connect.
   sockets[0].send(chat("999", "blockedmsg", "BlockedGuy", "7777", "you can't see me"));
   await page.waitForSelector('li[data-id="blockedmsg"]', { state: "attached" });
   await page.evaluate(() => toolsReloadBlocks());
-  await sleep(300);
+  await settle(300);
   check("messages from people on your Twitch block list are hidden", await page.$eval('li[data-id="blockedmsg"]', (l) => l.classList.contains("ignored")));
   await page.evaluate(() => { settings.syncBlocks = false; saveSettings(); toolsReloadBlocks(); });
-  await sleep(200);
+  await settle(200);
   check("unless you turn that off", await page.$eval('li[data-id="blockedmsg"]', (l) => !l.classList.contains("ignored")));
   await page.evaluate(() => { settings.syncBlocks = true; saveSettings(); toolsReloadBlocks(); });
-  await sleep(200);
+  await settle(200);
 
   // Feeds
   sockets[0].send(chat("999", "susp1", "Shady", "7002", "buy my stuff"));
@@ -683,14 +718,14 @@ await page.evaluate(() => composer.setText(""));
   check("the flag also lands when the flagged event arrives before the message", /monitored, possible ban evader/.test(await page.textContent('li[data-id="susp2"] .flag.suspicious')));
   const ev2 = (extra) => msg("notification", { subscription: { type: "channel.moderate" }, event: { broadcaster_user_id: "999", moderator_user_id: "50", moderator_user_login: "modbot", moderator_user_name: "ModBot", ...extra } });
   sockets[0].send(ev2({ action: "ban", ban: { user_name: "Troll", reason: "spam" } }));
-  await sleep(200);
+  await settle(200);
   check("moderator actions aren't shown unless you turn the log on", !(await page.$$eval("li.modlog", (l) => l.some((x) => /banned Troll/.test(x.textContent)))));
   await page.evaluate(() => { settings.modLog = true; saveSettings(); });
   sockets[0].send(ev2({ action: "ban", ban: { user_name: "Troll", reason: "spam" } }));
   sockets[0].send(ev2({ action: "timeout", timeout: { user_name: "Mouthy", reason: "rude", expires_at: new Date(Date.now() + 600e3).toISOString() } }));
   sockets[0].send(ev2({ action: "delete", delete: { user_name: "Mouthy", message_body: "bad words" } }));
   sockets[0].send(ev2({ action: "slow", slow: { wait_time_seconds: 30 } }));
-  await sleep(300);
+  await settle(300);
   const logLines = await page.$$eval("li.modlog", (l) => l.map((x) => x.textContent));
   check("with the log on, bans, timeouts, deletions and chat modes appear as lines", ["ModBot banned Troll: spam", "ModBot timed out Mouthy for 10m: rude", "ModBot deleted a message from Mouthy: \u201cbad words\u201d", "ModBot turned on slow mode (30s)"].every((t) => logLines.includes(t)), JSON.stringify(logLines.slice(-5)));
   await page.evaluate(() => { settings.modLog = false; saveSettings(); });
@@ -727,13 +762,13 @@ await page.evaluate(() => composer.setText(""));
 
   // Go-live alerts and stream changes
   await page.evaluate(() => { settings.liveAlerts = true; saveSettings(); toolsLiveSettingChanged(); });
-  await sleep(300);
+  await settle(300);
   const before = await page.$$eval("li.live-note", (l) => l.length);
   await page.evaluate(() => { following = null; });
   await page.evaluate(async () => { await toolsPollLive(); });
   check("the first look only learns who is live (no alerts for existing streams)", (await page.$$eval("li.live-note", (l) => l.length)) === before);
   await page.evaluate(() => { toolsLiveSettingChanged(); });
-  await sleep(300);
+  await settle(300);
   log.followingMode = 1;
   followingMode = "newlive";
   await page.evaluate(async () => { await toolsPollLive(); });
@@ -743,7 +778,7 @@ await page.evaluate(() => composer.setText(""));
   await page.evaluate(() => { settings.liveAlerts = false; saveSettings(); });
   await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "old title", game_name: "Old Game", viewer_count: 1, started_at: new Date().toISOString() }; });
   await page.evaluate(async () => { await refreshStreams(); });
-  await sleep(200);
+  await settle(200);
   const lines = await page.$$eval("li.sys", (l) => l.map((x) => x.textContent));
   check("a title and category change in a channel you have open is noted in its chat", lines.some((x) => x === "Stream title changed: Building a chat app") && lines.some((x) => x === "Category changed: Old Game → Software and Game Development"), JSON.stringify(lines.slice(-4)));
 
@@ -774,7 +809,7 @@ await page.evaluate(() => composer.setText(""));
   await page.waitForFunction(() => location.hash === "#findable");
   await page.evaluate(() => closeTab(tabs.get("findable")));
   await page.evaluate(() => activate(tabs.get("uwoslab")));
-  await sleep(300);
+  await settle(300);
   log.unsubs.length = 0; // (the tabs opened just above)
   // Schedule
   await page.click("#clips-btn");
@@ -804,14 +839,14 @@ await page.evaluate(() => composer.setText(""));
 
 // close tab
 await page.click(".tab:nth-child(2) .tab-close");
-await sleep(150);
+await settle(150);
 s = await state();
 check("closing tab unsubscribes it", JSON.stringify(log.unsubs) === '["otherchan-s1","otherchan-s2"]' && s.tabs === "UwoSlab*[MOD]", s.tabs + " " + JSON.stringify(log.unsubs));
 check("tabs persisted", (await page.evaluate(() => localStorage.getItem("tabs"))) === '["uwoslab"]');
 
 // session migration then hard drop
 sockets[0].send(msg("session_reconnect", { session: { reconnect_url: "wss://eventsub.wss.twitch.tv/ws?r=1" } }));
-await sleep(300);
+await settle(300);
 const subsBefore = log.subs.length;
 check("migration does not resubscribe", log.subs.length === subsBefore);
 sockets[1].close();
@@ -839,7 +874,7 @@ await shot("color-cycling");
 await page.click("#sheet-close");
 await page.fill("#message", "colorful message");
 await page.press("#message", "Enter");
-await sleep(300);
+await settle(300);
 await openSettingsUI();
 await page.waitForFunction(() => document.getElementById("color").textContent.endsWith(" - 2"), null, { timeout: 3000 });
 check("sending a message updates the color (seen in Settings)", (await page.textContent("#color")).endsWith(" - 2"), await page.textContent("#color"));
@@ -859,24 +894,24 @@ check("anon IRC joined channels", ircSockets.length >= 1 && /JOIN #uwoslab/.test
 const cur = () => sockets.at(-1);
 // live message, IRC says it's a first message (IRC arrives after EventSub)
 cur().send(chat("999", "live-first", "FreshFace", "601", "hello!!"));
-await sleep(100);
+await settle(100);
 ircSockets.at(-1).send("@badges=;first-msg=1;id=live-first;room-id=999 :freshface!freshface@x PRIVMSG #uwoslab :hello!!\r\n");
-await sleep(100);
+await settle(100);
 check("first-time flag from IRC (arriving after EventSub)", await page.$eval('li[data-id="live-first"]', (l) => l.classList.contains("first")));
 // IRC first, then EventSub
 ircSockets.at(-1).send("@first-msg=1;id=live-first2 :a!a@x PRIVMSG #uwoslab :yo\r\n");
-await sleep(50);
+await settle(50);
 cur().send(chat("999", "live-first2", "Another", "602", "yo"));
-await sleep(100);
+await settle(100);
 check("first-time flag from IRC (arriving before EventSub)", await page.$eval('li[data-id="live-first2"]', (l) => l.classList.contains("first")));
 // deletion keeps content
 cur().send(chat("999", "del1", "Rude", "603", "something rude"));
-await sleep(50);
+await settle(50);
 cur().send(msg("notification", { subscription: { type: "channel.chat.message_delete" }, event: { broadcaster_user_id: "999", message_id: "del1" } }));
 cur().send(chat("999", "ban1", "Banned", "604", "spam spam"));
-await sleep(50);
+await settle(50);
 cur().send(msg("notification", { subscription: { type: "channel.chat.clear_user_messages" }, event: { broadcaster_user_id: "999", target_user_id: "604", target_user_name: "Banned" } }));
-await sleep(100);
+await settle(100);
 check("deleted message keeps its content + flag", await page.$eval('li[data-id="del1"]', (l) => l.classList.contains("deleted") && l.querySelector(".body").textContent === "something rude" && l.textContent.includes("Deleted by a moderator")));
 check("banned user's message keeps content + flag", await page.$eval('li[data-id="ban1"]', (l) => l.classList.contains("deleted") && l.querySelector(".body").textContent === "spam spam" && l.textContent.includes("timed out or banned")));
 await page.evaluate(() => document.querySelector('.messages:not([hidden])').scrollTop = 1e9);
@@ -887,19 +922,20 @@ await shot("message-flags");
 await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); });
 cur().send(chat("999", "bg1", "Someone", "605", "while you were away"));
 cur().send(chat("888", "bg2", "Else", "606", "other tab too"));
-await sleep(150);
+await settle(150);
 check("title shows unread while hidden", (await page.title()) === "(2) Yappa", await page.title());
 await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); document.dispatchEvent(new Event("visibilitychange")); });
-await sleep(50);
+await settle(50);
 check("title resets when visible", (await page.title()) === "Yappa", await page.title());
 
 // ---- dead socket: watchdog notices silence, reconnects, backfills the gap ----
 const subsBeforeDeath = log.subs.length;
 const socketsBefore = sockets.length;
-await page.evaluate(() => { keepaliveMs = 1000; resumedAt = 0; });   // speed up the watchdog for the test
+await page.evaluate(() => { keepaliveMs = 1000; silenceGraceMs = 300; resumedAt = 0; });   // speed up the watchdog for the test
 gapMode = true; gapTs = Date.now() + 200;                              // messages sent "while dead"
 await page.waitForFunction(() => document.body.innerText.includes("Caught up on"), null, { timeout: 15000 });
-await sleep(400);
+await settle(400);
+await page.evaluate(() => { silenceGraceMs = 5000; });
 check("silent socket detected and replaced", sockets.length > socketsBefore && log.subs.length > subsBeforeDeath, sockets.length + " sockets");
 const gap = await page.$$eval('.messages:not([hidden]) li', (ls) => ls.map((l) => l.textContent));
 const iG1 = gap.findIndex((t) => t.includes("you missed this one")), iRe = gap.findIndex((t) => t.includes("Caught up on"));
@@ -931,12 +967,12 @@ await shot("chat-modes");
 await page.keyboard.press("Escape");
 // live settings event
 cur().send(msg("notification", { subscription: { type: "channel.chat_settings.update" }, event: { broadcaster_user_id: "999", emote_mode: false, follower_mode: true, follower_mode_duration_minutes: 10, slow_mode: false, slow_mode_wait_time_seconds: null, subscriber_mode: true, unique_chat_mode: false } }));
-await sleep(150);
+await settle(150);
 check("chat_settings.update event updates chips", (await page.textContent("#modes")) === "Followers 10mSub-only", await page.textContent("#modes"));
 // BTTV / FFZ / cheers
 cur().send(chat("999", "ext1", "EmoteFan", "701", "OMEGALUL uwuDance sharedOne ZrehplaR"));
 cur().send(chat("999", "cheer1", "Cheerer", "702", "Cheer100 nice", { fragments: [{ type: "cheermote", text: "Cheer100", cheermote: { prefix: "Cheer", bits: 100, tier: 100 } }, { type: "text", text: " nice" }] }));
-await sleep(150);
+await settle(150);
 const extImgs = await page.$$eval('li[data-id="ext1"] img', (is) => is.map((i) => i.title));
 check("BTTV global/channel/shared + FFZ emotes render", extImgs.join("|") === "OMEGALUL (BTTV, global emote)|uwuDance (BTTV, this channel's emote)|sharedOne (BTTV, this channel's emote)|ZrehplaR (FFZ, global emote)", extImgs.join("|"));
 check("cheermote renders tier image + bits", await page.$eval('li[data-id="cheer1"]', (l) => l.querySelector("img").src.endsWith("cheer100.gif") && l.querySelector(".cheer-bits").textContent === "100"));
@@ -945,10 +981,10 @@ cur().send(msg("notification", { subscription: { type: "automod.message.hold" },
 await page.waitForSelector('.automod[data-automod-id="held1"]');
 check("AutoMod held message shown with reason", (await page.textContent('.automod[data-automod-id="held1"]')).includes("Held by AutoMod · aggressive (level 2)"));
 await page.click('.automod[data-automod-id="held1"] button.allow');
-await sleep(100);
+await settle(100);
 check("Allow calls API", JSON.stringify(log.automod.at(-1)) === '{"msg_id":"held1","allow":true}', JSON.stringify(log.automod));
 cur().send(msg("notification", { subscription: { type: "automod.message.update" }, event: { broadcaster_user_id: "999", moderator_user_name: "testuser", user_id: "703", message_id: "held1", status: "approved", message: { text: "", fragments: [] } } }));
-await sleep(100);
+await settle(100);
 check("AutoMod resolution shown", (await page.textContent('.automod[data-automod-id="held1"] .am-actions')) === "Allowed by testuser");
 await page.screenshot({ path: dir + "/t8-automod.png" });
 await shot("automod");
@@ -968,7 +1004,7 @@ await page.click('li[data-id="card1"] .name');
 await page.click('#sheet-body button:has-text("Ignore")');
 check("hide user hides their messages", await page.$eval('li[data-id="card1"]', (l) => getComputedStyle(l).display === "none"));
 cur().send(chat("999", "u2b", "Spammer", "333", "more spam"));
-await sleep(100);
+await settle(100);
 check("new messages from hidden user are hidden too", await page.$eval('li[data-id="u2b"]', (l) => getComputedStyle(l).display === "none"));
 await openSettingsUI();
 check("settings lists the ignored user, with Unignore", (await page.textContent("#sheet-body")).includes("Ignored users") && (await page.textContent("#sheet-body")).includes("Spammer") && !!(await page.$('#sheet-body button:has-text("Unignore")')));
@@ -979,11 +1015,11 @@ check("unhide restores messages", await page.$eval('li[data-id="u2b"]', (l) => g
 // Search
 await page.click("#search-btn");
 await page.fill("#search", "from:spam");
-await sleep(50);
+await settle(50);
 const vis = await page.$$eval(".messages:not([hidden]) > li", (ls) => ls.filter((l) => getComputedStyle(l).display !== "none").map((l) => l.dataset.id));
 check("search from:user filters", vis.join(",") === "card1,u2b" && (await page.textContent("#search-count")) === "2 matches", vis.join(",") + " / " + (await page.textContent("#search-count")));
 await page.fill("#search", "spicy");
-await sleep(50);
+await settle(50);
 check("search by text includes AutoMod items", (await page.textContent("#search-count")) === "1 match");
 await page.click("#search-close");
 check("closing search restores all", await page.$$eval(".messages:not([hidden]) > li.filtered", (ls) => ls.length) === 0);
@@ -1001,15 +1037,15 @@ await shot("settings");
 await page.click("#sheet-close");
 cur().send(chat("999", "hl1", "Host", "704", "GIVEAWAY starts now"));
 cur().send(chat("999", "hl2", "Host", "704", "giveaways are fun")); // not a whole-word match
-await sleep(100);
+await settle(100);
 cur().send(chat("999", "hl3", "Host2", "705", "time to DEPLOY   now folks"));
 cur().send(chat("999", "hl4", "Random", "706", "deploy now please"));
-await sleep(100);
+await settle(100);
 check("user-scoped rule: phrase only from that user", await page.$eval('li[data-id="hl3"]', (l) => l.classList.contains("highlighted")) && !(await page.$eval('li[data-id="hl4"]', (l) => l.classList.contains("highlighted"))));
 await page.click('li[data-id="hl4"] .name');
 await page.click('#sheet-body button:has-text("Highlight")');
 cur().send(chat("999", "hl5", "Random", "706", "anything at all"));
-await sleep(100);
+await settle(100);
 check("user-only rule from the user card", await page.$eval('li[data-id="hl5"]', (l) => l.classList.contains("highlighted")));
 check("old comma-separated words migrate to rules", await page.evaluate(() => { localStorage.setItem("settings", JSON.stringify({ highlights: "foo, bar baz" })); const r = loadSettings().rules; localStorage.setItem("settings", JSON.stringify(settings)); return JSON.stringify(r); }) === '[{"phrase":"foo","user":""},{"phrase":"bar baz","user":""}]');
 check("highlight words (whole word, case-insensitive)", await page.$eval('li[data-id="hl1"]', (l) => l.classList.contains("highlighted")) && !(await page.$eval('li[data-id="hl2"]', (l) => l.classList.contains("highlighted"))));
@@ -1017,15 +1053,15 @@ check("font size XL applied", (await page.$eval(".messages:not([hidden]) .msg .b
 // Color cycling from other apps
 cycle.enabled = true;
 await page.evaluate(() => refreshStatus());
-await sleep(100);
+await settle(100);
 cur().send(chat("999", "official-app-msg", "testuser", "111", "sent from the official app"));
-await sleep(400);
+await settle(400);
 check("own message from another app bumps color (with its id, so other devices don't double it)", log.bumps === 1 && log.bumpIds[0] === "official-app-msg", JSON.stringify(log.bumpIds));
 await page.fill("#message", "sent from here");
 await page.press("#message", "Enter");
-await sleep(150);
+await settle(150);
 cur().send(chat("999", "sent-" + sendCounter, "testuser", "111", "sent from here"));
-await sleep(400);
+await settle(400);
 check("own message sent from this app does not double-bump", log.bumps === 1, String(log.bumps));
 cycle.enabled = false;
 
@@ -1042,13 +1078,13 @@ await shot("video");
 const vbox = await page.$eval("#video", (v) => { const r = v.getBoundingClientRect(); return { w: r.width, h: r.height }; });
 check("phone: video full width and exactly 16:9, so no letterbox bars", vbox.w >= 388 && Math.abs(vbox.w / vbox.h - 16 / 9) < 0.02, JSON.stringify(vbox));
 await page.setViewportSize({ width: 430, height: 932 });
-await sleep(200);
+await settle(200);
 const vbig = await page.$eval("#video iframe", (v) => { const r = v.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
 check("430px-wide phone: the player fills a 16:9 box too", vbig.w >= 400 && Math.abs(vbig.w / vbig.h - 16 / 9) < 0.02, JSON.stringify(vbig));
 await page.setViewportSize({ width: 390, height: 760 });
-await sleep(200);
+await settle(200);
 await page.click(".tab:nth-child(2) .tab-name");
-await sleep(100);
+await settle(100);
 check("offline tab: player hidden and paused", await page.$eval("#video", (v) => v.hidden) && (await page.evaluate(() => __player.calls.at(-1)[0])) === "pause");
 await page.click(".tab:first-child .tab-name");
 await page.waitForSelector("#video:not([hidden]) iframe");
@@ -1065,7 +1101,7 @@ check("starts muted only if the page hasn't been interacted with yet", typeof ca
 // another live tab: same player, setChannel (keeps unmuted state)
 await page.evaluate(() => { tabs.get("otherchan").stream = { user_id: "888", title: "x", game_name: "y", viewer_count: 5, started_at: new Date().toISOString() }; });
 await page.click(".tab:nth-child(2) .tab-name");
-await sleep(150);
+await settle(150);
 calls = await pc();
 check("switching live tabs reuses the player via setChannel", calls.filter((c) => c[0] === "new").length === 1 && JSON.stringify(calls.slice(-2)) === '[["setChannel","otherchan"],["play"]]', JSON.stringify(calls.slice(-3)));
 // autoplay with sound blocked → muted fallback
@@ -1074,7 +1110,7 @@ calls = await pc();
 check("playback blocked → mute and play", JSON.stringify(calls.slice(-2)) === '[["setMuted",true],["play"]]', JSON.stringify(calls.slice(-2)));
 await page.evaluate(() => { tabs.get("otherchan").stream = null; });
 await page.click(".tab:first-child .tab-name");
-await sleep(150);
+await settle(150);
 calls = await pc();
 check("back to first tab: setChannel back", JSON.stringify(calls.slice(-2)) === '[["setChannel","uwoslab"],["play"]]', JSON.stringify(calls.slice(-2)));
 // ---- picture-in-picture ----
@@ -1092,11 +1128,11 @@ check("PiP: player fills the PiP window", pipBox.w === 480 && pipBox.h === 270, 
 await pip.screenshot({ path: dir + "/t15-pip.png" });
 check("PiP: setChannel still reaches the player", await page.evaluate(() => { tabs.get("otherchan").stream = { user_id: "888", title: "x", game_name: "y", viewer_count: 5, started_at: new Date().toISOString() }; return true; }));
 await page.click(".tab:nth-child(2) .tab-name");
-await sleep(150);
+await settle(150);
 check("PiP: switching tabs switches the PiP stream", JSON.stringify((await pc()).slice(-2)) === '[["setChannel","otherchan"],["play"]]' && (await pip.$$("#video iframe")).length === 1);
 await page.evaluate(() => { tabs.get("otherchan").stream = null; });
 await page.click(".tab:first-child .tab-name");
-await sleep(150);
+await settle(150);
 await pip.close();
 await sleep(300);
 check("closing PiP brings the player back", await page.$eval("#video", (v) => !v.hidden && !v.classList.contains("in-pip") && !!v.querySelector("iframe")) && await page.$eval(".app", (a) => a.classList.contains("with-video")) && (await page.getAttribute("#pip-btn", "aria-pressed")) === "false");
@@ -1112,7 +1148,7 @@ await page.screenshot({ path: dir + "/t12-video-wide.png" });
 // =============== pinned stream ===============
 {
   await page.setViewportSize({ width: 390, height: 760 });
-  await sleep(200);
+  await settle(200);
   const live = () => ({ user_id: "1", title: "other title", game_name: "g", viewer_count: 5, started_at: new Date().toISOString() });
   await page.evaluate(() => { settings.video = true; saveSettings(); activate(tabs.get("uwoslab")); });
   await page.waitForSelector("#video:not([hidden]) iframe");
@@ -1125,13 +1161,13 @@ await page.screenshot({ path: dir + "/t12-video-wide.png" });
   await shot("pinned-stream");
   // Switch to a channel that isn't live: the pinned stream keeps playing, untouched.
   await page.evaluate(() => { tabs.get("otherchan").stream = null; activate(tabs.get("otherchan")); });
-  await sleep(200);
+  await settle(200);
   check("switching tabs keeps the pinned video (same player, no channel change, layout unchanged)",
     (await calls()).length === before && await page.$eval("#video", (v) => !v.hidden && !!v.querySelector("iframe")) && await page.$eval(".app", (a) => a.classList.contains("with-video")) && await page.evaluate(() => playerChannel === "uwoslab"));
   check("the pin button still shows (pressed) on the other tab, offering to unpin", await page.$eval("#pin-btn", (b) => !b.hidden && b.getAttribute("aria-pressed") === "true" && /Tap to unpin/.test(b.title)));
   // Another channel going live doesn't take the video over.
   await page.evaluate((st) => { tabs.get("otherchan").stream = st; renderInfo(); renderVideo(); }, live());
-  await sleep(200);
+  await settle(200);
   check("another live channel doesn't take over while pinned", (await calls()).length === before && await page.evaluate(() => playerChannel === "uwoslab"));
   // Unpin: the video follows the open tab again.
   await page.click("#pin-btn");
@@ -1155,7 +1191,7 @@ await page.screenshot({ path: dir + "/t12-video-wide.png" });
 // A phone turned sideways: video on the left, chat on the right (not stacked).
 for (const [w, h] of [[844, 390], [740, 360], [932, 430]]) {
   await page.setViewportSize({ width: w, height: h });
-  await sleep(250);
+  await settle(250);
   const side = await page.evaluate(() => {
     const r = (sel) => document.querySelector(sel).getBoundingClientRect();
     const v = r("#video"), c = r("#chat"), t = r("header"), f = r("footer"), i = r("#video iframe");
@@ -1170,7 +1206,7 @@ for (const [w, h] of [[844, 390], [740, 360], [932, 430]]) {
 }
 // ...and upright it's stacked again.
 await page.setViewportSize({ width: 390, height: 760 });
-await sleep(250);
+await settle(250);
 check("upright phone: video on top of the chat again", await page.evaluate(() => document.getElementById("video").getBoundingClientRect().bottom <= document.getElementById("chat").getBoundingClientRect().top + 1));
 
 // =============== native (HLS) player, opt-in ===============
@@ -1271,13 +1307,13 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   // Phone: the app first, then the website if this page is still in front.
   await page.tap("#twitch-btn");
   check("phone: tries the Twitch app first", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]');
-  await sleep(400);
+  await settle(400);
   check("phone: app didn't take over → opens twitch.tv", JSON.stringify((await page.evaluate(() => __calls)).slice(1)) === '[["window","https://www.twitch.tv/uwoslab","_blank",""]]', JSON.stringify(await page.evaluate(() => __calls)));
   // The app opening (page loses focus) cancels the website fallback.
   await page.evaluate(() => { __calls.length = 0; });
   await page.tap("#twitch-btn");
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-  await sleep(400);
+  await settle(400);
   check("phone: app opened (page blurred) → no website fallback", JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]');
   // A blocked fallback leaves a link in chat instead.
   await page.evaluate(() => { __calls.length = 0; window.__popupBlocked = true; });
@@ -1301,7 +1337,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   await page.evaluate(() => { launchers.app = (u) => __calls.push(["app", u]); });
   await page.tap("#twitch-btn");
   check("default: gem button does not open the embed", await page.$eval("#embed-modal", (m) => m.hidden) && (await page.evaluate(() => __calls.length)) === 1);
-  await sleep(400); // let that tap's website-fallback timer run out
+  await settle(400); // let that tap's website-fallback timer run out
   await page.evaluate(() => { __calls.length = 0; });
   await openSettingsUI();
   check("Settings has the Bits and channel points option", (await page.textContent("#sheet-body")).includes("Bits and channel points") && (await page.textContent("#sheet-body")).includes("Chat embed (experimental)"));
@@ -1313,7 +1349,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   const emb = await page.evaluate(() => { const f = document.querySelector("#embed-modal .chat-embed:not([hidden])"); const r = f.getBoundingClientRect(); return { src: f.src, h: Math.round(r.height), w: Math.round(r.width), title: document.getElementById("embed-title").textContent }; });
   check("embed window: Twitch's official chat embed, parent= this site, dark", emb.src === "https://www.twitch.tv/embed/uwoslab/chat?parent=yappa.test&darkpopout" && emb.title === "Twitch chat: UwoSlab", JSON.stringify(emb));
   check("embed window is big enough to use on a phone", emb.h >= 300 && emb.w >= 330, JSON.stringify(emb));
-  await sleep(300);
+  await settle(300);
   check("the embed page actually loaded", log.chatEmbeds.includes("/embed/uwoslab/chat?parent=yappa.test&darkpopout"), JSON.stringify(log.chatEmbeds));
   await page.screenshot({ path: dir + "/t27-chat-embed.png" });
   check("light theme: no darkpopout", await page.evaluate(() => { document.documentElement.dataset.theme = "light"; const u = chatEmbedUrl("x"); document.documentElement.dataset.theme = "dark"; return u === "https://www.twitch.tv/embed/x/chat?parent=yappa.test"; }));
@@ -1325,7 +1361,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   check("× minimizes: window hidden, iframe still in the page", await page.$eval("#embed-modal", (m) => m.hidden) && (await page.$$("#embed-frames iframe")).length === 1);
   await page.tap("#twitch-btn");
   await page.waitForSelector("#embed-modal:not([hidden])");
-  await sleep(300);
+  await settle(300);
   check("reopening shows the same loaded iframe (no reload)", await page.evaluate(() => document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker === "loaded-once") && log.chatEmbeds.length === loadsBefore, String(log.chatEmbeds.length - loadsBefore));
   await page.keyboard.press("Escape");
   check("Escape also just minimizes", await page.$eval("#embed-modal", (m) => m.hidden) && (await page.$$("#embed-frames iframe")).length === 1);
@@ -1344,7 +1380,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   await page.evaluate(() => { dropChatEmbed("fakea"); dropChatEmbed("fakeb"); dropChatEmbed("fakec"); openChatEmbed({ login: "uwoslab" }); });
   await page.evaluate(() => { document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker = "old"; });
   await page.click("#embed-reload");
-  await sleep(200);
+  await settle(200);
   check("Reload makes a fresh frame", await page.evaluate(() => document.querySelector("#embed-modal .chat-embed:not([hidden])").__marker === undefined && embedFrames.size === 1));
   check("the embed window has no disclaimer text, just title, chat and buttons", await page.evaluate(() => !document.getElementById("embed-note") && /^× Twitch chat: \w+ ReloadOpen the app$/i.test(document.querySelector("#embed-modal .sheet").textContent.replace(/\s+/g, " ").trim())), await page.evaluate(() => document.querySelector("#embed-modal .sheet").textContent.replace(/\s+/g, " ").trim()));
   // The Firefox tip lives in Settings (and only shows on Firefox).
@@ -1360,7 +1396,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   // The escape hatch to the real thing.
   await page.tap("#embed-go");
   check("'Open the app' minimizes and hands off to Twitch", await page.$eval("#embed-modal", (m) => m.hidden) && JSON.stringify(await page.evaluate(() => __calls)) === '[["app","twitch://stream/uwoslab"]]', JSON.stringify(await page.evaluate(() => __calls)));
-  await sleep(400); // the pending website-fallback timer
+  await settle(400); // the pending website-fallback timer
   await page.evaluate(() => { for (const l of [...embedFrames.keys()]) dropChatEmbed(l); settings.bitsButton = "twitch"; saveSettings(); __calls.length = 0; });
 }
 
@@ -1376,7 +1412,7 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
     ve.includes("Twitch's player couldn't load") && ve.includes("tracking protection") && ve.includes("Try again") && ve.includes("Use native player") && !(await page.$("#video iframe")), ve);
   await page.screenshot({ path: dir + "/t25-player-blocked.png" });
   await page.evaluate(() => { renderVideo(); renderVideo(); });
-  await sleep(300);
+  await settle(300);
   check("no retry loop or duplicate panels on refresh", await page.evaluate(() => document.querySelectorAll("#video .video-error").length === 1));
   embedScriptFails = false;
   await page.click('#video button:has-text("Try again")');
@@ -1401,24 +1437,24 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   await page.waitForSelector('li[data-id="fill29"]');
   check("at the bottom: new messages follow", await page.evaluate(() => atBottom(active)));
   await page.evaluate(() => { active.list.scrollTop -= 10; });   // the smallest scroll up
-  await sleep(100);
+  await settle(100);
   const topBefore = await page.evaluate(() => active.list.scrollTop);
   cur().send(chat("999", "hold1", "Viewer", "701", "arrives while scrolled up a little"));
   await page.waitForSelector('li[data-id="hold1"]');
-  await sleep(100);
+  await settle(100);
   check("scrolled up even 10px: chat stays put, 'More messages below' shown", (await page.evaluate(() => active.list.scrollTop)) === topBefore && !(await page.$eval("#more", (b) => b.hidden)), String(topBefore));
   await page.click("#more");
-  await sleep(100);
+  await settle(100);
   cur().send(chat("999", "hold2", "Viewer", "701", "after returning to the bottom"));
   await page.waitForSelector('li[data-id="hold2"]');
-  await sleep(100);
+  await settle(100);
   check("'More messages below' resumes following", await page.evaluate(() => atBottom(active)));
   // Text selected in chat (copying an error, say) also holds it still.
   await page.evaluate(() => { const r = document.createRange(); r.selectNodeContents(document.querySelector('li[data-id="hold2"] .body')); getSelection().removeAllRanges(); getSelection().addRange(r); });
   const selTop = await page.evaluate(() => active.list.scrollTop);
   cur().send(chat("999", "hold3", "Viewer", "701", "arrives while text is selected"));
   await page.waitForSelector('li[data-id="hold3"]');
-  await sleep(100);
+  await settle(100);
   check("selected text: chat holds still", (await page.evaluate(() => active.list.scrollTop)) === selTop && (await page.evaluate(() => getSelection().toString())) === "after returning to the bottom");
   await page.evaluate(() => getSelection().removeAllRanges());
   // A finger on the chat holds it too.
@@ -1427,12 +1463,12 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
   const holdTop = await page.evaluate(() => active.list.scrollTop);
   cur().send(chat("999", "hold4", "Viewer", "701", "arrives under a finger"));
   await page.waitForSelector('li[data-id="hold4"]');
-  await sleep(100);
+  await settle(100);
   check("finger on the chat: holds still", (await page.evaluate(() => active.list.scrollTop)) === holdTop);
   await page.evaluate(() => window.dispatchEvent(new Event("pointerup")));
   cur().send(chat("999", "hold5", "Viewer", "701", "after lifting the finger"));
   await page.waitForSelector('li[data-id="hold5"]');
-  await sleep(100);
+  await settle(100);
   check("finger lifted: follows again", await page.evaluate(() => atBottom(active)));
 }
 
@@ -1451,23 +1487,23 @@ check("upright phone: video on top of the chat again", await page.evaluate(() =>
     nativeWatchdog();
   }, [secs, paused]);
   await freeze(60, true);
-  await sleep(300);
+  await settle(300);
   check("a paused video isn't treated as stalled", log.gql.length === tokens0 && (await stopped()).length === 0);
   await freeze(3, false);
-  await sleep(300);
+  await settle(300);
   check("briefly slow isn't a stall either", log.gql.length === tokens0 && (await stopped()).length === 0);
   await freeze(12, false);
-  await sleep(500);
+  await settle(500);
   let msgs = await stopped();
   check("frozen for 12s → fresh playback token, playlist reloaded, said in chat with what the video did",
     log.gql.length === tokens0 + 1 && msgs.length === 1 && msgs[0].includes("no video for 12s") && msgs[0].includes("waiting") && msgs[0].includes("stalled") && msgs[0].includes("Reconnecting"), JSON.stringify(msgs));
   check("still the native player after recovering", await page.evaluate(() => !!document.querySelector("#video video") && !document.querySelector("#video iframe") && (document.querySelector("#video video").getAttribute("src") || "").includes("usher.ttvnw.net")));
   await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("ended")));
-  await sleep(500);
+  await settle(500);
   msgs = await stopped();
   check("a live stream 'ending' reconnects", log.gql.length === tokens0 + 2 && msgs.at(-1).includes("the stream ended"), JSON.stringify(msgs.at(-1)));
   await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("error")));
-  await sleep(500);
+  await settle(500);
   check("an error after it was playing reconnects instead of giving up", log.gql.length === tokens0 + 3 && !(await page.$("#video iframe")), String(log.gql.length - tokens0));
   await page.evaluate(() => document.querySelector("#video video").dispatchEvent(new Event("ended")));
   await page.waitForSelector("#video iframe", { timeout: 5000 });
@@ -1576,7 +1612,7 @@ check("finished emote names become images, including the last one once fully typ
 await page.keyboard.type(" and more");
 ce = await page.evaluate(() => ({ text: composer.getText(), imgs: [...document.querySelectorAll("#message .ce-emote")].map((i) => i.dataset.name), caretAtEnd: composer.caret() === composer.getText().length }));
 check("typing continues normally after conversion (caret stays at end)", ce.imgs.join(",") === "Kappa,catJAM,OMEGALUL" && ce.text === "hi Kappa catJAM OMEGALUL and more" && ce.caretAtEnd, JSON.stringify(ce));
-await sleep(400);
+await settle(400);
 await page.screenshot({ path: dir + "/t14-composer.png" });
 await shot("composer");
 check("emotes stay real text in the box (what phone keyboards read for predictions)", await page.evaluate(() => {
@@ -1600,7 +1636,7 @@ check("editing in the middle keeps the caret in place", ce === "so hi Kappa catJ
 const sentBefore = log.sent.length;
 await page.keyboard.press("End");
 await page.keyboard.press("Enter");
-await sleep(200);
+await settle(200);
 check("sends plain text with emote names", log.sent.at(-1) === "so hi Kappa catJAM OMEGALUL and more" && log.sent.length === sentBefore + 1 && (await page.evaluate(() => composer.getText())) === "", log.sent.at(-1));
 await page.click("#emote-btn");
 await page.click('#picker-list button[data-name="uwoHype"]');
@@ -1633,7 +1669,7 @@ check("clip cards: both URL styles, thumbnail + duration + metadata",
   cards[0].href === "https://clips.twitch.tv/FunnyClipSlug-AbC123" && cards[0].target === "_blank" && cards[0].img.endsWith("clip-FunnyClipSlug-AbC123.jpg") &&
   cards[0].text.includes("0:27") && cards[0].text.includes("UwoSlab · Just Chatting") && cards[0].text.includes("Clipped by Clipper · 12.3k views · 3d ago") &&
   cards[1].text.includes("Second clip"), JSON.stringify(cards));
-await sleep(200);
+await settle(200);
 check("repeated clip fetched once; missing clip shows no card",
   log.clips.filter((x) => x === "FunnyClipSlug-AbC123").length === 1 && (await page.$$('li[data-id="clip2"] .clip-card')).length === 1 && (await page.$$('li[data-id="clip3"] .clip-card')).length === 0,
   JSON.stringify(log.clips));
@@ -1652,7 +1688,7 @@ await page.evaluate(() => {
   const ev = ircToEvent("@id=hist-clip2;tmi-sent-ts=" + (Date.now() - 80000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #" + t.login + " :bg https://clips.twitch.tv/FunnyClipSlug-AbC123");
   renderMessage(t, ev, { merge: true, historical: true });
 });
-await sleep(300);
+await settle(300);
 check("clip card also appears in a background tab's history", (await page.$$('li[data-id="hist-clip2"] .clip-card')).length === 1);
 await page.evaluate(() => {
   const ev = ircToEvent("@id=hist-flaky;tmi-sent-ts=" + (Date.now() - 70000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #uwoslab :try https://clips.twitch.tv/FlakySlug");
@@ -1679,16 +1715,16 @@ await page.click(".tab:first-child .tab-name");
 cur().send(raid("999", "UwoSlab", "targetchan", 50));
 await page.waitForSelector('.messages:not([hidden]) .notice.raid:last-of-type button:has-text("Stay here")');
 await page.click('.messages:not([hidden]) .notice.raid:last-of-type button:has-text("Stay here")');
-await sleep(900);
+await sleep(500);
 check("Stay here cancels following", (await page.evaluate(() => location.hash)) === "#uwoslab");
 // background tab raids: no switch, red badge
 cur().send(raid("888", "OtherChan", "targetchan", 3));
-await sleep(200);
+await settle(200);
 check("background tab raid: no switch, badge flagged", (await page.evaluate(() => location.hash)) === "#uwoslab" && (await page.$eval(".tab:nth-child(2)", (t) => t.classList.contains("mentioned"))));
 // setting off
 await page.evaluate(() => { settings.followRaids = false; });
 cur().send(raid("999", "UwoSlab", "targetchan", 9));
-await sleep(900);
+await sleep(500);
 check("follow-raids off: notice only", (await page.evaluate(() => location.hash)) === "#uwoslab" && !(await page.textContent(".messages:not([hidden]) .notice.raid:last-of-type")).includes("Following"));
 await page.evaluate(() => { settings.followRaids = true; });
 
@@ -1702,7 +1738,7 @@ check("CSP blocks injected inline script", await page.evaluate(() => {
 // A failed status request (mid-deploy, offline) must not swap the chat for "Connect Twitch".
 statusDown = true;
 await page.evaluate(() => refreshStatus());
-await sleep(150);
+await settle(150);
 check("status error keeps chat visible", await page.evaluate(() => !document.getElementById("chat").hidden && document.getElementById("connect").hidden));
 statusDown = false;
 const net = await page.evaluate(() => api("/api/netfail"));
@@ -1712,9 +1748,9 @@ slowSend = 400;
 const sendsBefore = log.sent.length;
 await page.fill("#message", "only once please");
 await page.evaluate(() => { document.getElementById("send-form").requestSubmit(); document.getElementById("send-form").requestSubmit(); });
-await sleep(100);
+await settle(100);
 await page.evaluate(() => composer.setText("next message"));
-await sleep(600);
+await settle(600);
 slowSend = 0;
 check("no double send on repeated Enter", log.sent.length === sendsBefore + 1, JSON.stringify(log.sent.slice(sendsBefore)));
 check("text typed during a send is kept", (await page.evaluate(() => composer.getText())) === "next message");
@@ -1723,13 +1759,13 @@ await page.evaluate(() => composer.setText(""));
 cur().send(chat("999", "kanji1", "テスト", "601", "こんにちは", { chatter_user_login: "tesuto_jp" }));
 await page.waitForSelector('li[data-id="kanji1"]');
 await page.fill("#message", "@tes");
-await sleep(100);
+await settle(100);
 check("@ autocomplete uses login for localized names", ((await state()).suggest || "").includes("@tesuto_jp"), (await state()).suggest);
 await page.evaluate(() => composer.setText(""));
 // The periodic live-status refresh must not resume a stream you paused.
 await page.evaluate(() => { __player.calls.length = 0; });
 await page.evaluate(() => refreshStreams());
-await sleep(200);
+await settle(200);
 check("stream refresh doesn't call play() again", !(await page.evaluate(() => __player.calls.some((c) => c[0] === "play"))), JSON.stringify(await page.evaluate(() => __player.calls)));
 
 // =============== followed channels (channel box dropdown) ===============
@@ -1825,7 +1861,7 @@ followingMode = "ok";
   await page.evaluate(() => closeTab(tabs.get("alphachan")));
   await page.evaluate(() => openTab("alphachan"));
   await page.waitForFunction(() => document.body.innerText.includes("Joined #AlphaChan"));
-  await sleep(300);
+  await settle(300);
   check("opted out: no fetch and no prompt", log.history.length === n && !(await page.$(".history-ask")));
   // "No thanks" from the prompt.
   await page.evaluate(() => { settings.history = null; closeTab(tabs.get("alphachan")); openTab("alphachan"); });
@@ -1840,12 +1876,12 @@ followingMode = "ok";
   const n0 = log.history.length;
   await page.evaluate(() => openTab("deepchan"));
   await page.waitForSelector('li[data-id="deep249"]');
-  await sleep(300);
+  await settle(300);
   const first = await page.evaluate(() => ({ msgs: active.list.querySelectorAll(".msg").length, divider: active.list.querySelector(".history-divider").textContent, atBottom: atBottom(active) }));
   check("first load: newest 100, divider invites scrolling up, scrolled to the bottom", first.msgs === 100 && first.divider.includes("scroll up for older messages") && first.atBottom && log.history[n0] === "deepchan?limit=100", JSON.stringify(first));
   const anchorTop = await page.evaluate(() => { const l = active.list; l.scrollTop = 0; return null; });
   await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 200, null, { timeout: 5000 });
-  await sleep(200);
+  await settle(200);
   const second = await page.evaluate(() => {
     const l = active.list, d150 = l.querySelector('[data-id="deep150"]');
     const ts = [...l.children].map((n) => Number(n.dataset.ts));
@@ -1854,12 +1890,12 @@ followingMode = "ok";
   check("scrolling to the top loads the next 100 older, in order, without jumping to them", second.sorted && second.firstId === "deep50" && second.top > 400 && /^deepchan\?limit=100&before=\d+$/.test(log.history.at(-1)), JSON.stringify(second) + " " + log.history.at(-1));
   await page.evaluate(() => { active.list.scrollTop = 0; });
   await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 250, null, { timeout: 5000 });
-  await sleep(200);
+  await settle(200);
   const done = await page.evaluate(() => ({ div: active.list.querySelector(".history-divider").textContent, firstAfterDivider: active.list.querySelector(".history-divider").nextElementSibling.dataset.id, dividers: active.list.querySelectorAll(".history-divider").length }));
   check("runs out cleanly: start-of-history divider above the oldest message", done.div.includes("start of chat history") && done.firstAfterDivider === "deep0" && done.dividers === 1, JSON.stringify(done));
   const reqs = log.history.length;
   await page.evaluate(() => { active.list.scrollTop = 0; });
-  await sleep(300);
+  await settle(300);
   check("no more requests once history is exhausted", log.history.length === reqs);
   await page.screenshot({ path: dir + "/t22-history-top.png" });
   await page.evaluate(() => closeTab(tabs.get("deepchan")));
@@ -1892,7 +1928,7 @@ followingMode = "ok";
   await page.evaluate(() => { settings.theme = "system"; saveSettings(); });
   const sysDark = await page.evaluate(() => document.documentElement.dataset.theme);
   await page.emulateMedia({ colorScheme: "light" });
-  await sleep(100);
+  await settle(100);
   check("Match device follows the system setting live", sysDark === "dark" && (await page.evaluate(() => document.documentElement.dataset.theme)) === "light");
   await page.emulateMedia({ colorScheme: null });
   await page.evaluate(() => { settings.theme = "dark"; saveSettings(); });
@@ -1921,7 +1957,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { tabs.get("uwoslab").stream = { user_id: "999", title: "t", game_name: "g", viewer_count: 1, started_at: new Date().toISOString() }; });
   streamsFail = true;
   await page.evaluate(() => refreshStreams());
-  await sleep(200);
+  await settle(200);
   check("failed live-status lookup keeps the previous state", await page.evaluate(() => !!tabs.get("uwoslab").stream));
   streamsFail = false;
 
@@ -1946,7 +1982,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const before2 = log.subs.length;
   subFailures.push("No Twitch channel named nopechan.");
   await page.evaluate(() => openTab("nopechan", false));
-  await sleep(800);
+  await sleep(400);
   check("a permanent join failure ('No Twitch channel…') is not retried", log.subs.slice(before2).length === 1 && !(await page.evaluate(() => tabs.get("nopechan").joined)), JSON.stringify(log.subs.slice(before2)));
   await page.evaluate(() => closeTab(tabs.get("nopechan")));
 
@@ -2071,7 +2107,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   cur().send(chat("999", "giga2", "Spender", "951", "Kappa PogChamp", { message_type: "text", fragments: [emote("25", "Kappa"), text(" "), emote("88", "PogChamp")] }));
   cur().send(chat("999", "giga3", "Spender", "951", "no emote here", { message_type: "power_ups_gigantified_emote" }));
   await page.waitForSelector('li[data-id="giga3"]');
-  await sleep(300);
+  await settle(300);
   const look = (id) => page.$$eval('li[data-id="' + id + '"] .body img', (imgs) => imgs.map((i) => ({ alt: i.alt, giant: i.classList.contains("giant"), h: Math.round(i.getBoundingClientRect().height), scale: i.src.split("/").pop() })));
   const g1 = await look("giga1");
   check("gigantified message: only the LAST emote is enlarged (bigger image, larger height)", JSON.stringify(g1.map((x) => [x.alt, x.giant, x.scale])) === '[["Kappa",false,"2.0"],["PogChamp",true,"4.0"]]' && g1[0].h <= 40 && g1[1].h >= 90, JSON.stringify(g1));
@@ -2276,7 +2312,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { window.__realConfirm = window.confirm; window.confirm = (m) => { window.__asked = m; return false; }; });
   await page.click("#profile-btn");
   await page.click('#account-menu button:has-text("Log out")');
-  await sleep(200);
+  await settle(200);
   const asked = await page.evaluate(() => { window.confirm = window.__realConfirm; return window.__asked; });
   check("Log out asks for confirmation, and cancelling does nothing", /Log out/.test(asked || "") && !(log.logouts || 0) && await page.evaluate(() => !!me));
   // No picture (or it can't load): your initial instead.
@@ -2317,7 +2353,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.waitForFunction(() => document.querySelectorAll("#browse-body .bshare")[1].textContent === "Share", null, { timeout: 4000 });
   await page.evaluate(() => { navigator.share = () => Promise.reject(new DOMException("closed", "AbortError")); window.__copied = []; });
   await page.click("#browse-body .brow >> nth=1 >> .bshare");
-  await sleep(150);
+  await settle(150);
   check("closing the share sheet is silent (no copy, label unchanged)", (await page.evaluate(() => window.__copied.length)) === 0 && (await page.textContent("#browse-body .brow >> nth=1 >> .bshare")) === "Share");
   await page.waitForFunction(() => document.querySelectorAll("#browse-body .bshare")[1].textContent === "Share", null, { timeout: 4000 });
   // ...otherwise it copies the link.
@@ -2356,7 +2392,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
 {
   // ---- sync between devices ----
   await page.evaluate(() => { settings.sync = true; settings.liveAlerts = !settings.liveAlerts; saveSettings(); });
-  await sleep(350);
+  await settle(350);
   const pushed = (log.sync || []).at(-1);
   check("a changed setting is pushed to the account, with the tabs", !!pushed && typeof pushed.at === "number" && Array.isArray(pushed.tabs) && pushed.tabs.length > 0 && "liveAlerts" in pushed.settings, JSON.stringify(pushed).slice(0, 200));
   check("per-device settings stay out of the sync", !!pushed && ["player", "theme", "fontSize", "history", "notify", "sound", "nativeQuality", "bitsButton", "sync"].every((k) => !(k in pushed.settings)), Object.keys(pushed.settings).join());
@@ -2375,12 +2411,12 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { setPinned(null); settings.rules = []; settings.mute = { words: [], bots: false, commands: false }; saveSettings(); saveTabs(); });
   const pushesBefore = (log.sync || []).length;
   await page.evaluate(() => { syncedJson = JSON.stringify(syncBlob()); syncChanged(); });
-  await sleep(350);
+  await settle(350);
   check("an unchanged copy isn't pushed again", (log.sync || []).length === pushesBefore);
   await page.evaluate(() => { settings.sync = false; saveSettings(); });
   const off = (log.sync || []).length;
   await page.evaluate(() => { settings.liveAlerts = !settings.liveAlerts; saveSettings(); });
-  await sleep(350);
+  await settle(350);
   check("with syncing switched off nothing is sent", (log.sync || []).length === off);
   await page.evaluate(() => { settings.sync = true; saveSettings(); });
   syncStore = null;
@@ -2408,13 +2444,13 @@ check("history marks messages deleted before they were loaded", await page.evalu
   cur().send(chat(bid, "mu4", "SomeoneElse", "9102", "ggggg"));
   cur().send(chat(bid, "mu5", "SomeoneElse", "9102", "a perfectly fine message"));
   cur().send(chat(bid, "mu6", "TestUser", "111", "!mine is never hidden"));
-  await sleep(500);
+  await settle(500);
   await page.waitForSelector('li[data-id="mu6"]', { state: "attached" });
   const muted = await page.evaluate(() => ["mu1", "mu2", "mu3", "mu4", "mu5", "mu6"].map((id) => document.querySelector('li[data-id="' + id + '"]').classList.contains("ignored")));
   check("bots, !commands and muted words/patterns are hidden; normal and own messages stay", JSON.stringify(muted) === "[true,true,true,true,false,false]", JSON.stringify(muted));
   check("an invalid pattern is refused and doesn't hide anything", await page.evaluate(() => muteMatcher("/(/") === null && !isMuted({ chatter_user_id: "1", chatter_user_login: "x", message: { text: "(" } })));
   await page.evaluate(() => toolsReloadBlocks());
-  await sleep(300);
+  await settle(300);
   check("reloading the block list doesn't bring muted messages back", await page.$eval('li[data-id="mu3"]', (l) => l.classList.contains("ignored")));
   await openSettingsUI();
   await page.waitForSelector("#sheet");
@@ -2469,9 +2505,9 @@ check("history marks messages deleted before they were loaded", await page.evalu
   // ---- stream stats ----
   await page.evaluate(() => activate(tabs.get("uwoslab")));
   await page.evaluate(() => refreshStreams());
-  await sleep(150);
+  await settle(150);
   await page.evaluate(() => refreshStreams());
-  await sleep(150);
+  await settle(150);
   check("the info bar shows how long the stream has been live", /^3h\d\d$/.test(await page.textContent("#live .uptime")), await page.textContent("#live"));
   await page.click("#live");
   await page.waitForSelector("#sheet [data-stats]");
@@ -2575,16 +2611,16 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(async () => { await toolsPollLive(); });
   followingMode = "newlive";
   await page.evaluate(async () => { await toolsPollLive(); });
-  await sleep(200);
+  await settle(200);
   check("a channel set to Always is announced even with go-live alerts off", (await page.$$eval("li.live-note", (l) => l.length)) === notes0 + 1);
   await page.evaluate(() => { settings.liveAlerts = true; settings.channels.newstreamer = { live: "off" }; saveSettings(); });
   followingMode = "ok";
   await page.evaluate(async () => { await toolsPollLive(); });
-  await sleep(200);
+  await settle(200);
   const notes1 = await page.$$eval("li.live-note", (l) => l.length);
   followingMode = "newlive";
   await page.evaluate(async () => { await toolsPollLive(); });
-  await sleep(200);
+  await settle(200);
   check("...and one set to Never is not, even with them on", (await page.$$eval("li.live-note", (l) => l.length)) === notes1);
   followingMode = "ok";
   await page.evaluate(() => { settings.liveAlerts = false; delete settings.channels.newstreamer; saveSettings(); });
@@ -2627,7 +2663,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#snip-btn");
   const sentBefore = log.sent.length;
   await page.click('#snippets button:has-text("Send")');
-  await sleep(400);
+  await settle(400);
   check("Send posts it straight away", log.sent.length === sentBefore + 1 && log.sent.at(-1) === "hello everyone!", JSON.stringify(log.sent.at(-1)));
   await page.evaluate(() => composer.setText("half a draft"));
   await page.click("#snip-btn");
@@ -2666,7 +2702,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { window.__opened = []; launchers.window = (url) => { window.__opened.push(url); }; });
   await page.evaluate(() => document.querySelector('li[data-id="nt1"]').click());
   await page.click('li[data-id="nt1"] .actions button:has-text("Translate")');
-  await sleep(200);
+  await settle(200);
   const opened = await page.evaluate(() => window.__opened);
   check("without a built-in translator, Translate opens Google Translate with the text", opened.length === 1 && /translate\.google\.com\/\?sl=auto&tl=\w+&op=translate&text=hello%20from%20a%20regular/.test(opened[0]), JSON.stringify(opened));
   await page.evaluate(() => {
@@ -2743,7 +2779,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const grab = (d) => { dialogMsg = d.message(); };
   page.on("dialog", grab);
   await page.setInputFiles('#sheet input[type=file]', fileMk("bad.json", "not json"));
-  await sleep(300);
+  await settle(300);
   check("a file that isn't a backup is refused with a message", /isn't a Yappa backup/.test(dialogMsg), dialogMsg);
   check("...and changes nothing", (await page.evaluate(() => window.__reloads)) === 0);
   const restored = { app: "yappa-settings", version: 1, settings: { snippets: [{ label: "r", text: "restored" }], fontSize: "huge", rules: [{ phrase: "back", user: "" }], bogus: 1 }, tabs: ["alphachan", "bad name!"], pinned: null };
@@ -2752,7 +2788,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const grab2 = (d) => { msgs.push(d.message()); };
   page.on("dialog", grab2);
   await page.setInputFiles('#sheet input[type=file]', fileMk("good.json", JSON.stringify(restored)));
-  await sleep(400);
+  await settle(400);
   const after = await page.evaluate(() => ({ snippets: settings.snippets, fontSize: settings.fontSize, rules: settings.rules, bogus: settings.bogus, tabs: localStorage.getItem("tabs"), reloads: window.__reloads }));
   check("restoring asks first, then applies valid parts only, and reloads", /Replace your settings/.test(msgs[0] || "") && after.snippets[0].text === "restored" && after.rules[0].phrase === "back" && after.fontSize === 14 && after.bogus === undefined && after.tabs === '["alphachan"]' && after.reloads === 1, JSON.stringify(after));
   page.off("dialog", grab2);
@@ -2802,7 +2838,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   page.on("request", onReq);
   await page.goto("https://yappa.test/?cold=1#uwoslab");
   await page.waitForFunction(() => document.querySelectorAll(".tab.joined").length >= 2, null, { timeout: 8000 });
-  await sleep(500);
+  await settle(500);
   page.off("request", onReq);
   const subs = log.subs.slice(subsBefore).map((x) => x.split("@")[0]);
   check("the tab you're looking at is joined first", subs[0] === "uwoslab", JSON.stringify(subs));
@@ -2817,7 +2853,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("startup timings are recorded in order", marks.status > 0 && marks.socket >= 0 && marks.firstJoin >= marks.socket && marks.allJoined >= marks.firstJoin, JSON.stringify(marks));
   await page.click('.tab:has(.tab-name:text-is("OtherChan"))');
   await page.waitForFunction(() => document.querySelector(".messages:not([hidden]) li.historical") || true);
-  await sleep(400);
+  await settle(400);
   check("a background tab fetches its emotes and history when first opened", JSON.stringify(log.emotes) === '["999","888"]' && log.history.length === histBefore + 3 && /^otherchan\?/.test(log.history.at(-1)), JSON.stringify([log.emotes, log.history.slice(histBefore)]));
   await openSettingsUI();
   check("Settings shows where startup time went", /Startup timings/.test(await page.textContent("#sheet")) && /signed in \d/.test(await page.textContent("#sheet")));

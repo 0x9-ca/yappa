@@ -721,10 +721,11 @@ function scheduleReconnect(gen, delay) {
 // Twitch sends a keepalive at least every keepaliveMs, so silence means the socket is dead
 // (common after a phone sleeps or a background tab is frozen). Wait a moment after the page
 // wakes up, because frames queued while frozen are delivered right after resuming.
+let silenceGraceMs = 5000;
 setInterval(() => {
   if (!sock || !sessionId) return;
   if (Date.now() - resumedAt < 3000) return;
-  if (Date.now() - lastSocketMsgAt > keepaliveMs + 5000) {
+  if (Date.now() - lastSocketMsgAt > keepaliveMs + silenceGraceMs) {
     // On a dead connection close() waits for a closing handshake that never comes, so
     // don't wait for onclose: retire the socket and reconnect now.
     const ws = sock;
@@ -732,7 +733,7 @@ setInterval(() => {
     ws.retired = true;
     ws.close();
   }
-}, 2000);
+}, TEST_TIMING.watchdog || 2000);
 
 function onResume() {
   resumedAt = Date.now();
@@ -1516,7 +1517,7 @@ function clipIdFrom(href) {
 }
 
 const clipCache = new Map(); // id -> { promise: Promise<clip | null>, expires }
-const CLIP_RETRY_MS = [2000, 6000, 15000]; // after a failed lookup (Twitch busy, server updating, offline)
+const CLIP_RETRY_MS = TEST_TIMING.clipRetry ? [TEST_TIMING.clipRetry, TEST_TIMING.clipRetry * 3] : [2000, 6000, 15000]; // after a failed lookup (Twitch busy, server updating, offline)
 const CLIP_MISSING_MS = 60000; // a clip Twitch doesn't know yet (brand new) or any more is looked up again after this
 let clipLookups = 0;
 const clipQueue = [];
@@ -3677,7 +3678,7 @@ async function shareItem(item, button) {
   try { await navigator.clipboard.writeText(item.url); said = "Copied!"; } catch { said = "Couldn't copy"; }
   button.textContent = said;
   clearTimeout(button.labelTimer);
-  button.labelTimer = setTimeout(() => { button.textContent = label; }, 1500);
+  button.labelTimer = setTimeout(() => { button.textContent = label; }, TEST_TIMING.sayMs || 1500);
 }
 
 /** One upcoming (or canceled) stream from a channel's schedule. */

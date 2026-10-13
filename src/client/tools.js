@@ -654,7 +654,7 @@ window.toolsFollowExtra = (q, box) => {
       b.addEventListener("click", () => { closeFollowList(); $("channel").value = ""; openTab(c.login); });
       box.appendChild(b);
     }
-  }, 350);
+  }, (window.__timing || {}).find || 350);
 };
 
 // ---------- mentions across channels ----------

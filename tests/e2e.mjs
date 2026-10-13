@@ -542,6 +542,23 @@ await page.evaluate(() => composer.setText(""));
   await page.mouse.click(5, 400);
   await sleep(100);
   check("tapping elsewhere closes it", !(await page.$(".emote-tip")));
+  // A very long name, with both buttons showing, must wrap sensibly instead of one letter per line.
+  const longName = "ThisIsAnExtremelyLongEmoteNameThatKeepsGoingAndGoingForeverAndEver";
+  await page.evaluate((n) => {
+    active.ext.set(n, { url: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", zeroWidth: false, source: "7TV" });
+    const img = emoteImg("data:image/gif;base64,R0lGODlhAQABAAAAACw=", n, "7TV", "this channel's emote");
+    img.id = "longemote";
+    const wrap = document.createElement("span");
+    wrap.className = "emote-wrap";
+    wrap.appendChild(img);
+    document.querySelector('li[data-id="emotetip1"] .body').appendChild(wrap);
+  }, longName);
+  await tip("#longemote");
+  const lt = await page.evaluate(() => { const t = document.querySelector(".emote-tip"), r = t.getBoundingClientRect(), x = t.querySelector(".et-text").getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), textW: Math.round(x.width), buttons: t.querySelectorAll("button").length, inView: r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }; });
+  check("a really long emote name wraps in a tidy tooltip", lt.w <= 330 && lt.h < 190 && lt.textW >= 100 && lt.buttons === 2 && lt.inView, JSON.stringify(lt));
+  await shot("emote-tooltip-long-name");
+  await page.mouse.click(8, 700);
+  await page.evaluate(() => document.getElementById("longemote").parentNode.remove());
   // Following the chat: scrolled out of view, the tip goes away; otherwise it stays with its emote.
   await tip('li[data-id="emotetip1"] img[data-emote="Kappa"]');
   await page.evaluate(() => { const l = document.querySelector(".messages:not([hidden])"); l.scrollTop += 3; });

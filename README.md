@@ -145,7 +145,7 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 
 | Phone | Desktop |
 |---|---|
-| <img src="docs/screenshots/giant-emotes-mobile.png" width="240" alt=""Gigantify an Emote" messages (phone)"> | <img src="docs/screenshots/giant-emotes-desktop.png" width="520" alt=""Gigantify an Emote" messages (desktop)"> |
+| <img src="docs/screenshots/giant-emotes-mobile.png" width="240" alt="Gigantify an Emote messages (phone)"> | <img src="docs/screenshots/giant-emotes-desktop.png" width="520" alt="Gigantify an Emote messages (desktop)"> |
 
 **Channel points redemptions that show in chat**
 

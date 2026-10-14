@@ -224,6 +224,9 @@ await ctx.route("**/*", async (route) => {
         case "/api/mod/shield": if (m === "POST") tools.shield = b.active; return j({ ok: true, active: tools.shield });
         case "/api/mod/suspicious": return j({ ok: true });
         case "/api/mod/unbans": if (m === "POST") { tools.unbans = tools.unbans.filter((r) => r.id !== b.id); return j({ ok: true }); } return j({ ok: true, requests: tools.unbans });
+        case "/api/mod/banned": return j(u.searchParams.get("after") ? { ok: true, bans: [{ userId: "6003", login: "latecomer", name: "Latecomer", bannedAt: "2026-02-03T00:00:00Z", expiresAt: null, reason: "", by: "OldMod" }], cursor: null } : { ok: true, bans: [
+          { userId: "6001", login: "troll", name: "Troll", bannedAt: "2026-01-01T00:00:00Z", expiresAt: null, reason: "spam links", by: "SomeMod" },
+          { userId: "6002", login: "heated", name: "Heated", bannedAt: "2026-10-01T00:00:00Z", expiresAt: "2099-01-01T00:00:00Z", reason: "", by: "OtherMod" }], cursor: "page2" });
         case "/api/mod/chatters": return j({ ok: true, total: 1500, names: ["Alice", "Bob", "Carol", "Dave"] });
         case "/api/sub": return j({ ok: true, sub: u.searchParams.get("broadcaster_id") === "999" ? { tier: "2000", isGift: true, gifter: "KindPerson" } : null });
         case "/api/blocks": if (m === "POST") return j({ ok: true }); return j({ ok: true, users: [{ id: "7777", login: "blockedguy", name: "BlockedGuy" }] });
@@ -647,7 +650,7 @@ await page.evaluate(() => composer.setText(""));
 
   await page.click("#modtools-btn");
   await page.waitForSelector(".modtools .modes-grid");
-  check("mod tools has Chat modes, Announce, Shoutout, Blocked terms, Shield Mode, Unbans, Chatters", JSON.stringify(await page.$$eval(".modtools .browse-tabs button", (b) => b.map((x) => x.textContent))) === '["Chat modes","Announce","Shoutout","Blocked terms","Shield Mode","Unbans","Chatters"]');
+  check("mod tools has Chat modes, Announce, Shoutout, Blocked terms, Banned, Shield Mode, Unbans, Chatters", JSON.stringify(await page.$$eval(".modtools .browse-tabs button", (b) => b.map((x) => x.textContent))) === '["Chat modes","Announce","Shoutout","Blocked terms","Banned","Shield Mode","Unbans","Chatters"]');
   await page.click('.modtools .browse-tabs button:has-text("Announce")');
   await page.waitForSelector(".modtools .tool-body input[type=text]");
   await page.fill(".modtools .tool-body input", "Giveaway at the top of the hour");
@@ -854,7 +857,7 @@ await page.evaluate(() => composer.setText(""));
   await page.fill(".modtools .tool-body input[type=text]", "hello");
   await page.click('.modtools button:has-text("Send announcement")');
   await page.waitForSelector('.modtools a[href="/auth/login"]');
-  check("a tool whose permission is missing shows a reconnect link, and the other tabs still work", (await page.textContent(".modtools")).includes("Reconnect Twitch") && (await page.$$(".modtools .browse-tabs button")).length === 7);
+  check("a tool whose permission is missing shows a reconnect link, and the other tabs still work", (await page.textContent(".modtools")).includes("Reconnect Twitch") && (await page.$$(".modtools .browse-tabs button")).length === 8);
   await page.click('.modtools .browse-tabs button:has-text("Chat modes")');
   await page.waitForSelector(".modtools .modes-grid");
   check("chat modes still work then", true);
@@ -2931,6 +2934,33 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await openSettingsUI();
   check("Settings has the link preview options", /Show X \/ Twitter posts/.test(await page.textContent("#sheet")) && /Show images from image links/.test(await page.textContent("#sheet")));
   await page.keyboard.press("Escape");
+}
+
+
+// =============== Mod tools: banned users ===============
+{
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  await page.click("#modtools-btn");
+  await page.waitForSelector("#sheet [data-modtools]");
+  await page.click('#sheet .browse-tabs button:has-text("Banned")');
+  await page.waitForSelector("#ban-list .ban-row");
+  const rows0 = await page.$$eval("#ban-list .ban-row", (r) => r.map((x) => x.textContent));
+  check("the Banned tab lists who is banned, saying who and why, and timeouts apart from bans", rows0.length === 2 && /Troll.*Banned by SomeMod.*spam links/.test(rows0[0]) && /Heated.*Timed out until.*by OtherMod/.test(rows0[1]), JSON.stringify(rows0));
+  check("a long list says there's more to load", /more to load/.test(await page.textContent("#sheet")) && !!(await page.$('#sheet button:has-text("Load more")')));
+  await shot("banned-users");
+  await page.fill("#ban-find", "@tro");
+  check("the list can be filtered by name", (await page.$$eval("#ban-list .ban-row", (r) => r.length)) === 1 && /Troll/.test(await page.textContent("#ban-list")));
+  await page.fill("#ban-find", "nobody-like-this");
+  check("and says when nothing matches", /Nobody in the list matches/.test(await page.textContent("#ban-list")));
+  await page.fill("#ban-find", "");
+  await page.click('#sheet button:has-text("Load more")');
+  await page.waitForFunction(() => document.querySelectorAll("#ban-list .ban-row").length === 3);
+  check("Load more adds the next page and the button goes", !(await page.$('#sheet button:has-text("Load more")')));
+  const modsBefore = log.mods.length;
+  await page.click('#ban-list .ban-row:has-text("Troll") button:has-text("Unban")');
+  await settle(300);
+  check("Unban sends the unban for that user and drops the row", log.mods.length === modsBefore + 1 && /unban/.test(JSON.stringify(log.mods.at(-1))) && /6001/.test(JSON.stringify(log.mods.at(-1))) && (await page.$$eval("#ban-list .ban-row", (r) => r.length)) === 2, JSON.stringify(log.mods.at(-1)));
+  await page.click("#sheet-close");
 }
 
 // =============== moving to a new address ===============

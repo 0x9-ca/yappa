@@ -63,7 +63,8 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
 - In channels you moderate: delete, timeout and ban from the message menu, plus `/ban`, `/unban`, `/timeout`,
   `/untimeout` and `/clear`.
 - The **Mod tools** sheet (shield icon): chat modes (slow, followers-only, subscribers-only, emote-only,
-  unique), announcements, shoutouts, blocked terms, Shield Mode, unban requests and the chatters list.
+  unique), announcements, shoutouts, blocked terms, the banned and timed-out users list (searchable, with Unban),
+  Shield Mode, unban requests and the chatters list.
 - AutoMod queue (allow or deny held messages), warnings, and monitoring or restricting suspicious users.
 - Messages Twitch flags as suspicious are marked in chat; an optional line shows other moderators' actions.
 
@@ -180,7 +181,7 @@ after signing in, Yappa offers to reconnect so you can grant the new ones.
 | `user:read:whispers`, `user:manage:whispers` | Whispers |
 | `clips:edit` | Creating clips |
 | `user:read:moderated_channels` | Knowing which channels you moderate |
-| `moderator:manage:chat_messages`, `moderator:manage:banned_users` | Delete, timeout and ban; the moderator log |
+| `moderator:manage:chat_messages`, `moderator:manage:banned_users` | Delete, timeout and ban; the banned users list; the moderator log |
 | `moderator:manage:chat_settings` | Chat modes |
 | `moderator:manage:automod` | The AutoMod queue |
 | `moderator:read:followers` | Follow age on user cards |

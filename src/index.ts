@@ -6,7 +6,7 @@ import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
 import { parseSync } from "./sync";
 import { fetchX, parseXId } from "./previews";
-import { parseAnnounce, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
+import { parseAnnounce, parseBanned, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
 import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
 import { authorizeUrl, exchangeCode, revokeToken, validateToken } from "./twitch";
 
@@ -328,6 +328,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
     case "POST /api/mod/warn": {
       const r = parseWarn((await request.json().catch(() => ({}))) as Record<string, unknown>);
       return typeof r === "string" ? json({ ok: false, error: r }, 400) : toolResult(await stub.warn(r.broadcasterId, r.userId, r.reason));
+    }
+    case "GET /api/mod/banned": {
+      const q = parseBanned(url.searchParams);
+      return typeof q === "string" ? json({ ok: false, error: q }, 400) : toolResult(await stub.bannedUsers(q.broadcasterId, q.after));
     }
     case "GET /api/mod/terms": {
       const id = parseBroadcaster(url.searchParams);

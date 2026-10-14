@@ -24,6 +24,7 @@ import {
   createWebSocketSubscription,
   deleteChatMessages,
   deleteSubscription,
+  getBannedUsers,
   getChatSettings,
   getFollowedAt,
   getUserById,
@@ -43,8 +44,8 @@ import {
   validateToken,
 } from "./twitch";
 import { clipFailure } from "./browse";
-import { slimTerm, slimUnban, toolFailure } from "./tools";
-import type { SubStatus, Term, UnbanRequest } from "./tools";
+import { slimBan, slimTerm, slimUnban, toolFailure } from "./tools";
+import type { Ban, SubStatus, Term, UnbanRequest } from "./tools";
 import type { SyncBlob } from "./sync";
 
 // Twitch requires apps to re-validate held tokens at least hourly.
@@ -560,6 +561,13 @@ export class ColorLoop extends DurableObject<Env> {
     return this.tool("warn them", "moderator:manage:warnings", async (t) => {
       await warnUser(this.env, t.accessToken, broadcasterId, t.userId, userId, reason);
       return {};
+    });
+  }
+
+  bannedUsers(broadcasterId: string, after?: string) {
+    return this.tool("load the banned users", "moderator:manage:banned_users", async (t): Promise<{ bans: Ban[]; cursor: string | null }> => {
+      const page = await getBannedUsers(this.env, t.accessToken, broadcasterId, after);
+      return { bans: page.data.map(slimBan), cursor: page.cursor };
     });
   }
 

@@ -144,6 +144,20 @@ export const slimUnban = (r: { id: string; user_id: string; user_login: string; 
   id: r.id, userId: r.user_id, login: r.user_login, name: r.user_name, text: r.text, createdAt: r.created_at, status: r.status,
 });
 
+export interface Ban { userId: string; login: string; name: string; bannedAt: string; expiresAt: string | null; reason: string; by: string }
+export const slimBan = (r: { user_id: string; user_login: string; user_name: string; created_at: string; expires_at: string; reason: string; moderator_login: string; moderator_name: string }): Ban => ({
+  userId: r.user_id, login: r.user_login, name: r.user_name, bannedAt: r.created_at, expiresAt: r.expires_at || null, reason: (r.reason || "").slice(0, 500), by: r.moderator_name || r.moderator_login || "",
+});
+
+/** The banned-users list query: a channel, and the cursor of the page after the one already shown. */
+export function parseBanned(p: URLSearchParams): { broadcasterId: string; after?: string } | string {
+  const broadcasterId = parseBroadcaster(p);
+  if (!broadcasterId) return "Bad broadcaster_id.";
+  const after = p.get("after");
+  if (after && !/^[A-Za-z0-9+/=_-]{1,400}$/.test(after)) return "Bad page cursor.";
+  return { broadcasterId, ...(after ? { after } : {}) };
+}
+
 export interface SubStatus { tier: string; isGift: boolean; gifter: string | null }
 
 // ---------- discovery (public lookups) ----------

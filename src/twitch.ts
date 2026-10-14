@@ -644,6 +644,19 @@ export async function getBlockedTerms(env: Env, accessToken: string, broadcaster
   return allPages(env, accessToken, url, "Get Blocked Terms", 5);
 }
 
+export interface BanRow { user_id: string; user_login: string; user_name: string; expires_at: string; created_at: string; reason: string; moderator_login: string; moderator_name: string }
+
+/** One page (100) of a channel's banned and timed-out users. Needs moderator:manage:banned_users (or moderation:read). */
+export async function getBannedUsers(env: Env, accessToken: string, broadcasterId: string, after?: string): Promise<{ data: BanRow[]; cursor: string | null }> {
+  const url = new URL(`${API_BASE}/moderation/banned`);
+  url.searchParams.set("broadcaster_id", broadcasterId);
+  url.searchParams.set("first", "100");
+  if (after) url.searchParams.set("after", after);
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Banned Users");
+  const body = (await res.json()) as { data: BanRow[]; pagination?: { cursor?: string } };
+  return { data: body.data, cursor: body.pagination?.cursor ?? null };
+}
+
 export async function addBlockedTerm(env: Env, accessToken: string, broadcasterId: string, moderatorId: string, text: string): Promise<{ id: string; text: string; created_at: string }> {
   const res = await check(
     await fetch(`${API_BASE}/moderation/blocked_terms?${modParams(broadcasterId, moderatorId)}`, { method: "POST", headers: withJson(env, accessToken), body: JSON.stringify({ text }) }),

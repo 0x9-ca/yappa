@@ -49,7 +49,7 @@ const FOLLOW_OPTIONS = [[-1, "Off"], [0, "Any follower"], [10, "10 min"], [30, "
 
 const mt = {
   channel: null, tab: "modes", err: "", note: "", busy: false, needs: {}, filter: "",
-  terms: null, shield: null, unbans: null, chatters: null,
+  terms: null, shield: null, unbans: null, chatters: null, banned: null,
   form: { announce: "", color: "primary", shout: "", term: "", unbanNote: "" },
 };
 
@@ -59,17 +59,18 @@ function openMod() {
   mt.channel = tab;
   mt.err = mt.note = "";
   mt.needs = {};
-  mt.terms = mt.shield = mt.unbans = mt.chatters = null;
+  mt.terms = mt.shield = mt.unbans = mt.chatters = mt.banned = null;
   renderMod();
   loadMod(mt.tab);
 }
 
-async function loadMod(which) {
-  const path = { terms: "/api/mod/terms", shield: "/api/mod/shield", unbans: "/api/mod/unbans", chatters: "/api/mod/chatters" }[which];
+async function loadMod(which, after) {
+  const path = { terms: "/api/mod/terms", shield: "/api/mod/shield", unbans: "/api/mod/unbans", chatters: "/api/mod/chatters", banned: "/api/mod/banned" }[which];
   if (!path || !mt.channel) return;
-  const r = await api(path + "?broadcaster_id=" + encodeURIComponent(mt.channel.broadcaster.id));
-  if (r.needsScope) mt.needs[which === "unbans" || which === "terms" || which === "shield" || which === "chatters" ? mt.tab : which] = true;
+  const r = await api(path + "?broadcaster_id=" + encodeURIComponent(mt.channel.broadcaster.id) + (after ? "&after=" + encodeURIComponent(after) : ""));
+  if (r.needsScope) mt.needs[which === "unbans" || which === "terms" || which === "shield" || which === "chatters" || which === "banned" ? mt.tab : which] = true;
   else if (!r.ok) mt.err = r.error;
+  else if (which === "banned") mt.banned = { list: [...(after && mt.banned ? mt.banned.list : []), ...r.bans], cursor: r.cursor, q: (mt.banned && mt.banned.q) || "" };
   else if (which === "terms") mt.terms = r.terms;
   else if (which === "shield") mt.shield = r.active;
   else if (which === "unbans") { mt.unbans = r.requests; mt.channel.unbanCount = r.requests.length; window.toolsRenderInfo(active); }
@@ -156,6 +157,32 @@ function modPanel(body) {
       list.appendChild(row);
     }
     body.appendChild(list);
+  } else if (mt.tab === "banned") {
+    if (mt.banned === null) { body.appendChild(el("div", "hint", "Loading…")); return; }
+    const b = mt.banned;
+    body.appendChild(el("p", "hint", b.list.length + " banned or timed out" + (b.cursor ? " so far (more to load)" : "") + ". Timeouts drop off by themselves when they run out."));
+    const find = textBox(b.q, 50, "Find someone in the list", (v) => { b.q = v; renderBanList(); });
+    find.id = "ban-find";
+    body.appendChild(find);
+    const list = el("div", "tool-list");
+    list.id = "ban-list";
+    body.appendChild(list);
+    const renderBanList = () => {
+      const qq = b.q.trim().toLowerCase().replace(/^@/, "");
+      const shown = b.list.filter((x) => !qq || x.login.includes(qq) || x.name.toLowerCase().includes(qq));
+      list.replaceChildren(...(shown.length ? shown.map((x) => {
+        const row = el("div", "tool-row ban-row");
+        const info = el("div", "ban-info");
+        info.appendChild(el("b", null, x.name));
+        const until = x.expiresAt ? "Timed out until " + new Date(x.expiresAt).toLocaleString() : "Banned";
+        info.appendChild(el("div", "hint", until + (x.by ? " by " + x.by : "") + " · " + new Date(x.bannedAt).toLocaleDateString()));
+        if (x.reason) info.appendChild(el("div", "hint", "“" + x.reason + "”"));
+        row.append(info, btn("Unban", () => modDo("/api/chat/mod", { broadcaster_id: id, action: "unban", user_id: x.userId, login: x.login }, () => { b.list = b.list.filter((y) => y.userId !== x.userId); mt.note = "Unbanned " + x.name + "."; }), "small"));
+        return row;
+      }) : [el("div", "hint", b.list.length ? "Nobody in the list matches." : "Nobody is banned.")]));
+    };
+    renderBanList();
+    if (b.cursor) body.appendChild(btn("Load more", () => loadMod("banned", b.cursor), "small ghost"));
   } else if (mt.tab === "shield") {
     if (mt.shield === null) { body.appendChild(el("div", "hint", "Loading…")); return; }
     body.append(
@@ -211,7 +238,7 @@ function renderMod() {
   root.appendChild(el("h2", null, "Mod tools: #" + mt.channel.broadcaster.name));
   const tabs = el("div", "browse-tabs");
   const unbanN = mt.channel.unbanCount || 0;
-  for (const [id, label] of [["modes", "Chat modes"], ["announce", "Announce"], ["shout", "Shoutout"], ["terms", "Blocked terms"], ["shield", "Shield Mode"], ["unbans", "Unbans" + (unbanN ? " (" + unbanN + ")" : "")], ["chatters", "Chatters"]]) {
+  for (const [id, label] of [["modes", "Chat modes"], ["announce", "Announce"], ["shout", "Shoutout"], ["terms", "Blocked terms"], ["banned", "Banned"], ["shield", "Shield Mode"], ["unbans", "Unbans" + (unbanN ? " (" + unbanN + ")" : "")], ["chatters", "Chatters"]]) {
     tabs.appendChild(btn(label, () => { mt.tab = id; mt.err = mt.note = ""; renderMod(); loadMod(id); }, mt.tab === id ? "on" : ""));
   }
   root.appendChild(tabs);

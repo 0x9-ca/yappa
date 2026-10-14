@@ -2732,6 +2732,21 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const lay = await page.evaluate(() => { const a = document.querySelector(".app").classList; return ["compact", "zebra", "no-time", "no-badges", "font-mono"].every((c) => a.contains(c)); });
   const timeHidden = await page.$eval(".messages:not([hidden]) .msg .time", (t) => getComputedStyle(t).display === "none");
   check("compact, shading, hidden times/badges and the font take effect", lay && timeHidden);
+  // Shading is fixed per row: new messages and trimming old ones must not flip the rows that stay.
+  const shades = () => page.evaluate(() => [...document.querySelectorAll(".messages:not([hidden]) > .msg")].map((m) => [m.dataset.id, getComputedStyle(m).backgroundImage !== "none"]));
+  const shadesBefore = await shades();
+  const cid = await page.evaluate(() => active.broadcaster.id);
+  cur().send(chat(cid, "zebra1", "Zed", "9701", "one more message"));
+  await page.waitForSelector('li[data-id="zebra1"]', { state: "attached" });
+  await page.evaluate(() => document.querySelector(".messages:not([hidden]) > .msg").remove()); // what trimming old messages does
+  cur().send(chat(cid, "zebra2", "Zed", "9701", "and another"));
+  await page.waitForSelector('li[data-id="zebra2"]', { state: "attached" });
+  const shadesAfter = new Map(await shades());
+  const kept = shadesBefore.slice(1);
+  check("alternate shading doesn't flip when messages are added or old ones trimmed", kept.length > 3 && kept.every(([id, on]) => shadesAfter.get(id) === on), JSON.stringify([kept.length, kept.filter(([id, on]) => shadesAfter.get(id) !== on).length]));
+  const alt = await page.evaluate(() => [...document.querySelectorAll(".messages:not([hidden]) > .msg:not(.ignored)")].slice(-6).map((m) => m.dataset.alt));
+  check("neighbouring messages take opposite shades", alt.every((a, i) => i === 0 || a !== alt[i - 1]), JSON.stringify(alt));
+  check("shading doesn't paint over a mention's own color", await page.evaluate(() => { const m = document.querySelector(".messages:not([hidden]) > .msg.mentioned"); if (!m) return true; const root = getComputedStyle(document.documentElement).getPropertyValue("--mention").trim(); const probe = document.createElement("div"); probe.style.background = root; document.body.appendChild(probe); const want = getComputedStyle(probe).backgroundColor; probe.remove(); return getComputedStyle(m).backgroundColor === want; }));
   check("layout choices stay out of sync (they're per device)", await page.evaluate(() => { const b = syncBlob().settings; return !("compact" in b) && !("zebra" in b) && !("chatFont" in b); }));
   await page.keyboard.press("Escape");
   await shot("chat-layout");

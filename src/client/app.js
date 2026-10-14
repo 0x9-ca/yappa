@@ -1346,11 +1346,26 @@ $("more").addEventListener("click", () => {
  * lists stay in time order, which is what lets history merge in around live chat.
  * The caller handles scrolling (history inserts many at once).
  */
+/**
+ * Alternate-row shading. The shade is fixed when a row is added (the opposite of its neighbour's) rather
+ * than worked out from its position, so trimming old messages off the top doesn't flip every row.
+ */
+function stripe(node) {
+  if (!node.classList.contains("msg") || node.classList.contains("ignored")) return;
+  const near = (dir) => {
+    for (let x = node[dir]; x; x = x[dir]) if (x.dataset.alt && x.classList.contains("msg") && !x.classList.contains("ignored")) return x;
+    return null;
+  };
+  const prev = near("previousElementSibling"), next = prev ? null : near("nextElementSibling");
+  node.dataset.alt = String(prev ? Number(prev.dataset.alt) ^ 1 : next ? Number(next.dataset.alt) ^ 1 : 0);
+}
+
 function insertByTime(tab, node, ts) {
   node.dataset.ts = String(ts);
   let ref = null;
   for (let n = tab.list.lastElementChild; n && Number(n.dataset.ts || 0) > ts; n = n.previousElementSibling) ref = n;
   tab.list.insertBefore(node, ref);
+  stripe(node);
   if (tab === active && filterText) filterNode(node);
 }
 
@@ -1379,6 +1394,7 @@ function append(tab, node, countsAsUnread) {
   const stick = sticking(tab);
   if (!node.dataset.ts) node.dataset.ts = String(Date.now());
   list.appendChild(node);
+  stripe(node);
   if (tab === active && filterText) filterNode(node);
   // Only trim at the bottom, so history you've scrolled up to load stays put while you read it.
   if (stick) trimList(tab);

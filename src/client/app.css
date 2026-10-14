@@ -483,7 +483,8 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 
 /* Chat layout options (per device) */
 .app.compact .msg { padding-top: 1px; padding-bottom: 1px; line-height: 1.25; }
-.app.zebra .messages > .msg:nth-child(even) { background: var(--hover); }
+/* An overlay (not a background color) so mention, first-chatter, highlight and deleted rows keep their own color. */
+.app.zebra .messages > .msg[data-alt="1"] { background-image: linear-gradient(var(--hover), var(--hover)); }
 .app.no-time .msg .time { display: none; }
 .app.no-badges .msg .badge { display: none; }
 .app.font-mono .chat { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }

@@ -429,7 +429,9 @@ await page.waitForFunction(() => document.body.innerText.includes("Joined #Yappa
   const inst = await cdp.send("Page.getInstallabilityErrors");
   const man = await cdp.send("Page.getAppManifest");
   check("manifest parsed without errors", man.errors.length === 0 && man.url.endsWith("/manifest.webmanifest"), JSON.stringify(man.errors));
-  check("installable (no installability errors)", inst.installabilityErrors.length === 0, JSON.stringify(inst.installabilityErrors));
+  // (Newer Chrome also reports the test setup itself: a throwaway context on a mocked origin.)
+  const instErrors = inst.installabilityErrors.filter((e) => !["in-incognito", "not-from-secure-origin"].includes(e.errorId));
+  check("installable (no installability errors)", instErrors.length === 0, JSON.stringify(instErrors));
   const sw = await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.scriptURL || null);
   check("manifest name/short_name", man.data && JSON.parse(man.data).name === "Yappa" && JSON.parse(man.data).short_name === "Yappa", man.data && man.data.slice(0, 80));
   check("service worker active", sw === "https://yappa.test/sw.js", String(sw));

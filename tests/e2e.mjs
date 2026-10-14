@@ -2338,7 +2338,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#profile-btn");
   const menu = await page.evaluate(() => ({ expanded: document.getElementById("profile-btn").getAttribute("aria-expanded"), name: document.querySelector("#account-menu .dn").textContent, login: document.querySelector("#account-menu .ln").textContent, items: [...document.querySelectorAll("#account-menu button")].map((b) => b.textContent), h: Math.round(document.querySelector("#account-menu button").getBoundingClientRect().height), pic: !!document.querySelector("#account-menu .who img") }));
   check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
-    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Settings for #Yappa","Whispers","Bookmarks","Mentions","All chats in one feed","Quick switcher","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
+    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Settings for #Yappa","Whispers","Bookmarks","Mentions","All chats in one feed","Focus mode","Quick switcher","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
   await page.screenshot({ path: dir + "/t35-account-menu.png" });
   await shot("account-menu");
   await page.keyboard.press("Escape");
@@ -3152,6 +3152,35 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("the account menu opens it too (for touch screens)", !!(await page.$(".switcher")));
   await shot("quick-switcher");
   await page.keyboard.press("Escape");
+}
+
+
+// =============== focus mode ===============
+{
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  const vis = () => page.evaluate(() => Object.fromEntries(["header", "#infobar", "#footer", ".tabs", ".messages:not([hidden])", "#focus-exit"].map((q) => { const n = document.querySelector(q); return [q, !!n && !n.hidden && getComputedStyle(n).display !== "none"]; })));
+  const before = await vis();
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.keyboard.press("Alt+f");
+  const on = await vis();
+  check("Alt+F hides the header, info bar and message box, leaving the tabs and the chat", before.header && before["#infobar"] && before["#footer"] && !on.header && !on["#infobar"] && !on["#footer"] && on[".tabs"] && on[".messages:not([hidden])"], JSON.stringify([before, on]));
+  check("a button to leave is shown", on["#focus-exit"]);
+  await shot("focus-mode");
+  await page.click("#focus-exit");
+  const off = await vis();
+  check("it brings everything back", off.header && off["#infobar"] && off["#footer"] && !off["#focus-exit"]);
+  await page.keyboard.press("Alt+f");
+  await page.keyboard.press("Escape");
+  check("Escape leaves it too", (await vis())["#footer"]);
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("focus");
+  await page.keyboard.press("Enter");
+  check("the quick switcher can turn it on", !(await vis())["#footer"]);
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("focus");
+  check("...and the entry then says Leave focus mode", /Leave focus mode/.test(await page.textContent(".switcher .sw-row.on .sw-label")));
+  await page.keyboard.press("Enter");
+  check("choosing it leaves focus mode", (await vis())["#footer"]);
 }
 
 // =============== moving to a new address ===============

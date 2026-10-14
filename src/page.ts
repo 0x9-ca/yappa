@@ -174,6 +174,7 @@ export function renderPage(): string {
     <div id="send-error" hidden></div>
   </footer>
 </div>
+<button type="button" class="focus-exit" id="focus-exit" hidden>Exit focus mode</button>
 <div class="sheet-backdrop" id="sheet" hidden>
   <div class="sheet" role="dialog" aria-modal="true">
     <button class="icon-btn sheet-close" id="sheet-close" type="button" aria-label="Close">×</button>

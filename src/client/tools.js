@@ -477,6 +477,7 @@ window.toolsAccountItems = (item) => {
   out.push(item("Bookmarks" + ((settings.bookmarks || []).length ? " (" + settings.bookmarks.length + ")" : ""), openBookmarks));
   out.push(item("Mentions" + (mentionsUnread ? " (" + Math.min(mentionsUnread, 99) + ")" : ""), openMentions));
   if (tabs.size > 1) out.push(item("All chats in one feed", openCombined));
+  out.push(item(document.querySelector(".app").classList.contains("focus") ? "Leave focus mode" : "Focus mode", () => setFocus(!document.querySelector(".app").classList.contains("focus"))));
   out.push(item("Quick switcher", openSwitcher));
   out.push(item("Discover streams", openDiscover));
   if (active && active.list.querySelector(".msg")) {
@@ -960,7 +961,7 @@ function openShortcuts() {
   const list = el("div", "shortcut-list");
   for (const [keys, what] of [
     ["Alt + 1 … 9", "Go to that tab"], ["Alt + ←  /  →", "Previous / next tab"], ["Alt + W", "Close this tab"],
-    ["Alt + V", "Show or hide the video"], ["Alt + M", "Mentions"], ["Alt + A", "All chats in one feed"],
+    ["Alt + V", "Show or hide the video"], ["Alt + F", "Focus mode: just the chat and tabs"], ["Alt + M", "Mentions"], ["Alt + A", "All chats in one feed"],
     ["Ctrl + K  (⌘ K)", "Quick switcher: tabs, channels, settings, actions"], ["/", "Jump to the message box"], ["?", "This list"], ["Esc", "Close a sheet or menu"],
   ]) {
     const r = el("div", "row");
@@ -981,6 +982,7 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "ArrowLeft" && list.length > 1) { activate(list[(i - 1 + list.length) % list.length]); e.preventDefault(); }
     else if (e.key === "ArrowRight" && list.length > 1) { activate(list[(i + 1) % list.length]); e.preventDefault(); }
     else if (e.code === "KeyV") { $("video-btn").click(); e.preventDefault(); }
+    else if (e.code === "KeyF") { setFocus(!document.querySelector(".app").classList.contains("focus")); e.preventDefault(); }
     else if (e.code === "KeyM") { openMentions(); e.preventDefault(); }
     else if (e.code === "KeyA") { openCombined(); e.preventDefault(); }
     return;
@@ -1518,6 +1520,7 @@ function switcherEntries() {
     if (active.isMod) act("Mod tools", openMod, "moderator ban timeout banned terms shield");
     if (active.list.querySelector(".msg")) { act("Save this chat (text)", () => exportChat("txt"), "export download"); act("Save this chat (JSON)", () => exportChat("json"), "export download"); }
   }
+  act(document.querySelector(".app").classList.contains("focus") ? "Leave focus mode" : "Focus mode", () => setFocus(!document.querySelector(".app").classList.contains("focus")), "reading hide composer info bar distraction free");
   act("Show or hide the video", () => $("video-btn").click(), "stream player");
   act("Keyboard shortcuts", openShortcuts, "keys help");
   return out;
@@ -1610,5 +1613,19 @@ document.addEventListener("keydown", (e) => {
     if (switcher) closeSwitcher(); else openSwitcher();
   }
 }, true);
+
+// ---------- focus mode: just the tabs and the chat ----------
+
+function setFocus(on) {
+  const app = document.querySelector(".app");
+  app.classList.toggle("focus", on);
+  $("focus-exit").hidden = !on;
+  if (on) { closePicker(); closeSuggest(); closeSnippets(); }
+  if (active) { scrollToBottom(active); }
+}
+$("focus-exit").addEventListener("click", () => setFocus(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.querySelector(".app").classList.contains("focus") && $("sheet").hidden && !switcher && $("account-menu").hidden) setFocus(false);
+});
 
 })();

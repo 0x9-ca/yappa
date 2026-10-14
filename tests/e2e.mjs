@@ -2967,6 +2967,12 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await settle(200);
   check("with it on: https image links show a picture, once it has loaded", (await page.$$('li[data-id="im2"] .img-preview')).length === 1 && await page.$eval('li[data-id="im2"] .img-preview', (a) => a.href === "https://pics.example.com/cat.png" && a.querySelector("img").referrerPolicy === "no-referrer"));
   check("...but not broken pictures, plain http, or non-images", !log.pics.slice(pics0).some((p) => p.url.startsWith("http://") || p.url.endsWith(".html")) && (await page.$$('li[data-id="im2"] .img-preview')).length === 1);
+  await say("im3", 'quoted "https://pics.example.com/cat.png" and (https://pics.example.com/cat.png) and “https://pics.example.com/cat.png”');
+  await page.waitForSelector('li[data-id="im3"] .img-preview');
+  await settle(200);
+  const q = await page.$eval('li[data-id="im3"]', (l) => ({ links: [...l.querySelectorAll("a.link")].map((a) => a.href + "|" + a.textContent), pics: l.querySelectorAll(".img-preview").length, text: l.querySelector(".body, .text")?.textContent || l.textContent }));
+  check("a link inside quotes or brackets still links and previews, with the quotes left as text",
+    q.links.length === 3 && q.links.every((x) => x === "https://pics.example.com/cat.png|https://pics.example.com/cat.png") && q.pics === 1 && q.text.includes('"https://') && q.text.includes("(https://") && q.text.includes("“https://"), JSON.stringify(q));
   await shot("image-preview");
   await page.evaluate(() => { settings.previews.images = false; saveSettings(); });
   await openSettingsUI();

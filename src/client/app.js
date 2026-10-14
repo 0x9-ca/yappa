@@ -1522,9 +1522,10 @@ const BARE_TLDS = new Set(("com net org io gg tv me co uk us ca de fr nl eu au n
   "app dev xyz info ly gl to fm sh ai live link gov edu club online site store shop news wiki art page blog games stream").split(" "));
 
 function parseLink(word) {
-  // Leave trailing punctuation out of the link, and a ")" unless the URL opened one.
-  let core = word, trail = "";
-  while (/[.,!?:;'"\])]$/.test(core)) {
+  // Leave quotes and brackets around the link, and trailing punctuation, out of it (a ")" stays only if the URL opened one).
+  let core = word, trail = "", lead = "";
+  while (/^["'“‘(\[<]/.test(core)) { lead += core[0]; core = core.slice(1); }
+  while (/[.,!?:;'"”’>\])]$/.test(core)) {
     const ch = core.slice(-1);
     if (ch === ")" && (core.match(/\(/g) || []).length >= (core.match(/\)/g) || []).length) break;
     trail = ch + trail;
@@ -1536,7 +1537,7 @@ function parseLink(word) {
     const u = new URL(bare ? "https://" + core : core);
     if (u.protocol !== "http:" && u.protocol !== "https:") return null;
     if (bare && !BARE_TLDS.has(u.hostname.split(".").pop().toLowerCase())) return null;
-    return { href: u.href, text: core, trail };
+    return { href: u.href, text: core, trail, lead };
   } catch { return null; }
 }
 
@@ -1545,6 +1546,7 @@ function appendLink(parent, link) {
   a.href = link.href;
   a.target = "_blank";
   a.rel = "noopener noreferrer nofollow";
+  if (link.lead) parent.appendChild(document.createTextNode(link.lead));
   parent.appendChild(a);
   if (link.trail) parent.appendChild(document.createTextNode(link.trail));
 }

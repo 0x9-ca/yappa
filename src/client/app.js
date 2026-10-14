@@ -1401,7 +1401,7 @@ function insertByTime(tab, node, ts) {
 /** Drops the oldest items past MAX_MESSAGES; scrolling up can load them again from history. */
 function trimList(tab) {
   const list = tab.list;
-  if (list.childElementCount <= MAX_MESSAGES) return;
+  if (list.childElementCount <= MAX_MESSAGES || filterText) return; // a search keeps what it can find
   while (list.childElementCount > MAX_MESSAGES) {
     const n = list.firstElementChild;
     if (n.dataset.id) tab.seen.delete(n.dataset.id); // so a reload from history isn't skipped
@@ -3989,13 +3989,21 @@ function filterNode(node) {
   node.classList.toggle("filtered", !ok);
 }
 
+/** "Search earlier" offers one more page of history while a search is open and there is more. */
+function updateSearchOlder() {
+  const t = active;
+  show("search-older", !!(filterText && t && settings.history === true && !t.historyDone && t.historyBefore));
+}
+
 function applyFilter() {
   // Only the visible list: another tab re-filters itself when it's activated.
   if (!active || !filterText) {
     if (active) for (const n of active.list.children) n.classList.remove("filtered");
     $("search-count").textContent = "";
+    updateSearchOlder();
     return;
   }
+  updateSearchOlder();
   let shown = 0;
   for (const n of active.list.children) { filterNode(n); if (!n.classList.contains("filtered")) shown++; }
   $("search-count").textContent = shown + " match" + (shown === 1 ? "" : "es");
@@ -4007,6 +4015,14 @@ $("search-btn").addEventListener("click", () => {
   bar.hidden = !bar.hidden;
   if (!bar.hidden) $("search").focus();
   else { $("search").value = ""; filterText = ""; applyFilter(); }
+});
+$("search-older").addEventListener("click", async () => {
+  const t = active;
+  if (!t) return;
+  $("search-older").disabled = true;
+  await loadOlder(t);
+  $("search-older").disabled = false;
+  applyFilter();
 });
 $("search").addEventListener("input", () => { filterText = $("search").value.trim(); applyFilter(); });
 $("search").addEventListener("keydown", (e) => { if (e.key === "Escape") $("search-close").click(); });

@@ -1941,6 +1941,28 @@ followingMode = "ok";
   await page.screenshot({ path: dir + "/t22-history-top.png" });
   await page.evaluate(() => closeTab(tabs.get("deepchan")));
 }
+// A search can fetch one more page of history, and keeps what it found while it's open.
+{
+  await page.evaluate(() => openTab("deepchan"));
+  await page.waitForSelector('li[data-id="deep249"]');
+  await settle(300);
+  await page.click("#search-btn");
+  await page.fill("#search", "history line 1");
+  await settle(100);
+  const c1 = await page.textContent("#search-count");
+  check("search offers earlier history while there is more", await page.isVisible("#search-older"), c1);
+  await page.click("#search-older");
+  await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 200, null, { timeout: 5000 });
+  await settle(100);
+  const c2 = await page.textContent("#search-count");
+  check("searching earlier history adds matches from the older page", parseInt(c2) > parseInt(c1), c1 + " -> " + c2);
+  await page.click("#search-older");
+  await page.waitForFunction(() => active.list.querySelectorAll(".msg").length === 250, null, { timeout: 5000 });
+  await settle(100);
+  check("button goes away once history is exhausted", !(await page.isVisible("#search-older")));
+  await page.click("#search-close");
+  await page.evaluate(() => closeTab(tabs.get("deepchan")));
+}
 // =============== light theme ===============
 {
   check("dark by default, applied before app.js", (await page.evaluate(() => document.documentElement.dataset.theme)) === "dark");

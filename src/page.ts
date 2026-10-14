@@ -135,6 +135,7 @@ export function renderPage(): string {
     <div class="searchbar" id="searchbar" hidden>
       <input id="search" placeholder="Filter: words, or from:name" autocomplete="off" spellcheck="false" aria-label="Filter chat">
       <span class="search-count" id="search-count"></span>
+      <button class="small ghost" id="search-older" type="button" hidden>Search earlier</button>
       <button class="icon-btn" id="search-close" type="button" aria-label="Close search">×</button>
     </div>
     <div class="empty-chat" id="empty-chat">Open a channel above to start chatting.</div>

@@ -770,7 +770,8 @@ function openCombined() {
   list.scrollTop = list.scrollHeight;
 }
 
-window.toolsMirror = (tab, li) => {
+window.toolsMirror = (tab, li, ev) => {
+  if (ev) autoTranslate(tab, li, ev);
   if (!sheetShows("combined") || !combinedList || !combinedList.isConnected) return;
   const stick = combinedList.scrollHeight - combinedList.scrollTop - combinedList.clientHeight < 40;
   const placeholder = combinedList.querySelector("li.sys");
@@ -1052,6 +1053,18 @@ function openChannelSettings(tab) {
     row("Notifications", "Mentions and highlights while you're elsewhere.", dropdown(CHAN_CHOICES, cs.notify || "default", (v) => setChan(login, { notify: v }))),
     row("Sound", "The chime for mentions and highlights.", dropdown(CHAN_CHOICES, cs.sound || "default", (v) => setChan(login, { sound: v }))),
     row("Go-live alert", "When this channel starts streaming (it must be one you follow).", dropdown(CHAN_CHOICES, cs.live || "default", (v) => { setChan(login, { live: v }); pollLive(); })),
+    row("Translate foreign messages",
+      hasTranslator()
+        ? "Messages in another language get a translation line under them, using your browser's built-in translator (nothing is sent anywhere). Short messages are skipped."
+        : "Your browser has no built-in translator (recent Chrome versions do), so this can't be turned on here. You can still translate a single message from its menu.",
+      (() => {
+        const c = document.createElement("input");
+        c.type = "checkbox";
+        c.checked = !!cs.autoTranslate && hasTranslator();
+        c.disabled = !hasTranslator();
+        c.addEventListener("change", () => setChan(login, { autoTranslate: c.checked ? true : undefined }));
+        return c;
+      })()),
     el("h3", null, "Muted only in this channel"),
     words, input, add, err,
     btn("Reset this channel", () => { delete settings.channels[login]; saveSettings(); openChannelSettings(tab); }, "ghost small"),
@@ -1198,15 +1211,47 @@ function openBookmarks() {
 
 const translateLang = () => (navigator.language || "en").split("-")[0].toLowerCase();
 
+const hasTranslator = () => "Translator" in self && "LanguageDetector" in self;
+let detectorP = null, detectorOf = null, translatorsOf = null;
+const translators = new Map(); // "fr>en" -> promise of a translator (creating one can download a language pack)
+
 /** Uses the browser's own on-device translator where it has one; otherwise null. */
 async function translateOnDevice(text, target) {
-  if (!("Translator" in self) || !("LanguageDetector" in self)) return null;
-  const det = await self.LanguageDetector.create();
-  const guess = (await det.detect(text))[0];
+  if (!hasTranslator()) return null;
+  if (detectorOf !== self.LanguageDetector) { detectorP = null; detectorOf = self.LanguageDetector; } // (kept for the page, unless the browser's API object changes)
+  if (translatorsOf !== self.Translator) { translators.clear(); translatorsOf = self.Translator; }
+  if (!detectorP) { detectorP = self.LanguageDetector.create(); detectorP.catch(() => { detectorP = null; }); } // (a failure isn't remembered)
+  const guess = (await (await detectorP).detect(text))[0];
   if (!guess || !guess.detectedLanguage || guess.detectedLanguage === "und") return null;
   if (guess.detectedLanguage === target) return { same: true };
-  const tr = await self.Translator.create({ sourceLanguage: guess.detectedLanguage, targetLanguage: target });
+  const key = guess.detectedLanguage + ">" + target;
+  if (!translators.has(key)) {
+    const made = self.Translator.create({ sourceLanguage: guess.detectedLanguage, targetLanguage: target });
+    translators.set(key, made);
+    made.catch(() => translators.delete(key));
+  }
+  const tr = await translators.get(key);
   return { text: await tr.translate(text), from: guess.detectedLanguage };
+}
+
+// A channel can have foreign-language messages translated as they arrive (one at a time, skipping short ones).
+let translateQueue = Promise.resolve(), translatePending = 0;
+function autoTranslate(tab, li, ev) {
+  if (!chanSetting(tab.login).autoTranslate || !hasTranslator() || ev.historical || (me && ev.chatter_user_id === me.userId)) return;
+  const text = (ev.message.fragments || []).filter((f) => f.type === "text").map((f) => f.text).join(" ").replace(/https?:\/\/\S+/g, " ").replace(/@\w+/g, " ").replace(/\s+/g, " ").trim();
+  if ((text.match(/\p{L}/gu) || []).length < 8 || translatePending >= 20) return;
+  translatePending++;
+  translateQueue = translateQueue.then(async () => {
+    try {
+      const r = await translateOnDevice(text, translateLang());
+      if (!r || r.same || !li.isConnected || li.querySelector(".translation")) return;
+      const out = el("div", "translation", "(" + r.from + " → " + translateLang() + ") " + r.text);
+      const body = li.querySelector(".body");
+      const stick = tab === active && sticking(tab);
+      const put = () => { if (body) body.after(out); else li.appendChild(out); };
+      if (stick) { put(); scrollToBottom(tab); } else keepScroll(tab, put);
+    } catch {} finally { translatePending--; }
+  });
 }
 
 window.toolsTranslate = async (tab, ev, li) => {

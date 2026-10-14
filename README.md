@@ -99,7 +99,8 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
 
 - **Settings sync** across your devices: settings, open tabs and the pinned stream (video player, theme, text
   size and notification choices stay per device).
-- Per-channel overrides for notifications, sound, go-live alerts and muted words.
+- Per-channel overrides for notifications, sound, go-live alerts and muted words, and (where the browser has a
+  built-in translator) automatic translation of foreign-language messages in that channel.
 - Private notes and colored labels on people; quick messages for things you type often; favorite emotes.
 - A Diagnostics section in Settings: server version, token and permission status (with what each missing
   permission is for and a reconnect link), recent failed requests and startup timings, with a copy button.

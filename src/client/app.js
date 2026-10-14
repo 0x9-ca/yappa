@@ -1831,7 +1831,7 @@ function renderMessage(tab, ev, opts = {}) {
     append(tab, li, !li.classList.contains("ignored") && !mine);
   }
   if (mentioned && tab !== active && !opts.historical && !li.classList.contains("ignored")) { tab.mentioned = true; updateTabEl(tab); }
-  if (!opts.historical && !opts.merge && !li.classList.contains("ignored")) window.toolsMirror?.(tab, li);
+  if (!opts.historical && !opts.merge && !li.classList.contains("ignored")) window.toolsMirror?.(tab, li, ev);
   return li;
 }
 

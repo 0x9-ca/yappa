@@ -3183,6 +3183,47 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("choosing it leaves focus mode", (await vis())["#footer"]);
 }
 
+
+// =============== auto-translate foreign messages (per channel) ===============
+{
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  const cid = await page.evaluate(() => active.broadcaster.id);
+  // No built-in translator (this Chromium has real ones; take them away): the option is there but can't be switched on.
+  await page.evaluate(() => { delete self.LanguageDetector; delete self.Translator; });
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Settings for #")');
+  await page.waitForSelector("#sheet [data-chansettings]");
+  check("without a built-in translator the option is off and explains why", await page.$eval('#sheet [data-chansettings] input[type=checkbox]', (c) => c.disabled && !c.checked) && /no built-in translator/.test(await page.textContent("#sheet [data-chansettings]")));
+  await page.keyboard.press("Escape");
+  // With one.
+  await page.evaluate(() => {
+    self.LanguageDetector = { create: async () => ({ detect: async (t) => [{ detectedLanguage: /bonjour|merci/i.test(t) ? "fr" : "en" }] }) };
+    self.Translator = { create: async (o) => ({ translate: async (t) => "[" + o.sourceLanguage + ">" + o.targetLanguage + "] " + t }) };
+  });
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Settings for #")');
+  await page.waitForSelector("#sheet [data-chansettings]");
+  check("with one the option can be turned on", await page.$eval('#sheet [data-chansettings] input[type=checkbox]', (c) => !c.disabled));
+  await page.check('#sheet [data-chansettings] input[type=checkbox]');
+  check("it's a per-channel setting", await page.evaluate(() => settings.channels.yappa && settings.channels.yappa.autoTranslate === true));
+  await shot("auto-translate");
+  await page.keyboard.press("Escape");
+  const say = async (id, user, uid, text) => { cur().send(chat(cid, id, user, uid, text)); await page.waitForSelector(`li[data-id="${id}"]`, { state: "attached" }); await settle(250); };
+  await say("tr1", "Pierre", "9901", "Bonjour tout le monde, merci d'être là");
+  await page.waitForSelector('li[data-id="tr1"] .translation');
+  check("a foreign message gets its translation under it", /\[fr>\w+\] Bonjour tout le monde/.test(await page.textContent('li[data-id="tr1"] .translation')));
+  await say("tr2", "Sam", "9902", "This is already in English, thanks");
+  check("a message in your own language is left alone", (await page.$$('li[data-id="tr2"] .translation')).length === 0);
+  await say("tr3", "Pierre", "9901", "Bonjour!");
+  check("short messages are skipped", (await page.$$('li[data-id="tr3"] .translation')).length === 0);
+  await say("tr4", "TestUser", "111", "Bonjour tout le monde, merci d'être là");
+  check("your own messages aren't translated", (await page.$$('li[data-id="tr4"] .translation')).length === 0);
+  await page.evaluate(() => { settings.channels.yappa.autoTranslate = undefined; saveSettings(); });
+  await say("tr5", "Pierre", "9901", "Bonjour tout le monde, merci d'être là");
+  check("with it off nothing is translated", (await page.$$('li[data-id="tr5"] .translation')).length === 0);
+  await page.evaluate(() => { delete settings.channels.yappa; saveSettings(); delete self.LanguageDetector; delete self.Translator; });
+}
+
 // =============== moving to a new address ===============
 {
   const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });

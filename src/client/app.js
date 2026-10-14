@@ -51,7 +51,7 @@ let sending = false;
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
 const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true, mute: { words: [], bots: false, commands: false }, channels: {}, notes: {}, snippets: [], favEmotes: [], bookmarks: [],
   showTime: true, showBadges: true, compact: false, zebra: false, chatFont: "default",
-  previews: { x: true, media: true, images: false },
+  previews: { x: true, media: true, images: false }, announce: true,
   modPresets: { timeouts: [60, 600, 3600, 86400], messageTimeout: 600, reasons: [] } };
 let settings = loadSettings();
 function loadSettings() {
@@ -75,6 +75,7 @@ function applySettings() {
   app.classList.toggle("no-badges", settings.showBadges === false);
   app.classList.toggle("font-mono", settings.chatFont === "mono");
   app.classList.toggle("font-serif", settings.chatFont === "serif");
+  for (const t of tabs.values()) t.list.setAttribute("aria-live", settings.announce === false ? "off" : "polite"); // what a screen reader reads out
   applyTheme();
 }
 
@@ -83,7 +84,7 @@ function applySettings() {
 // Settings, open tabs and the pinned stream follow the account (the Durable Object keeps one copy;
 // the newest change wins). What belongs to the device stays here: how video plays, the theme,
 // text size, notification permission, and whether the history service was agreed to.
-const DEVICE_SETTINGS = ["notify", "sound", "fontSize", "theme", "player", "nativeQuality", "bitsButton", "history", "sync", "showTime", "showBadges", "compact", "zebra", "chatFont"];
+const DEVICE_SETTINGS = ["notify", "sound", "fontSize", "theme", "player", "nativeQuality", "bitsButton", "history", "sync", "showTime", "showBadges", "compact", "zebra", "chatFont", "announce"];
 let syncTimer = null, syncedJson = "", lastPullAt = 0;
 const TEST_TIMING = window.__timing || {}; // set only by the tests, which can't sit through the real waits
 let syncDelayMs = TEST_TIMING.sync || 2000;
@@ -161,17 +162,19 @@ function startupMark(name) { if (!(name in startup)) startup[name] = Math.round(
 // ---------- theme ----------
 
 const prefersLight = matchMedia("(prefers-color-scheme: light)");
+const prefersContrast = matchMedia("(prefers-contrast: more)");
 const isLightTheme = () => document.documentElement.dataset.theme === "light";
 
 /** Sets <html data-theme> ("system" follows the device) and re-colors names for it. */
 function applyTheme() {
-  const want = settings.theme === "system" ? (prefersLight.matches ? "light" : "dark") : settings.theme === "light" ? "light" : "dark";
+  const want = settings.theme === "system" ? (prefersContrast.matches ? "contrast" : prefersLight.matches ? "light" : "dark") : settings.theme === "light" ? "light" : settings.theme === "contrast" ? "contrast" : "dark";
   const changed = document.documentElement.dataset.theme !== want; // theme.js set it at load
   document.documentElement.dataset.theme = want;
-  document.querySelector('meta[name="theme-color"]').content = want === "light" ? "#ffffff" : "#18181b";
+  document.querySelector('meta[name="theme-color"]').content = want === "light" ? "#ffffff" : want === "contrast" ? "#000000" : "#18181b";
   if (changed) for (const n of document.querySelectorAll(".name[data-color]")) paintName(n, n.dataset.color);
 }
 prefersLight.addEventListener("change", () => { if (settings.theme === "system") applyTheme(); });
+prefersContrast.addEventListener("change", () => { if (settings.theme === "system") applyTheme(); });
 
 // ---------- utilities ----------
 
@@ -345,7 +348,10 @@ function openTab(name, focus = true) {
       list: el("ul", "messages"), tabEl: null,
     };
     tab.list.hidden = true;
-    tab.list.setAttribute("aria-live", "polite");
+    tab.list.setAttribute("role", "log");
+    tab.list.setAttribute("aria-label", "Chat in #" + name);
+    tab.list.setAttribute("aria-relevant", "additions");
+    tab.list.setAttribute("aria-live", settings.announce === false ? "off" : "polite");
     tab.list.addEventListener("scroll", () => {
       const top = tab.list.scrollTop;
       // Our own scrolls only ever go down, so a decrease means the user scrolled up.
@@ -375,8 +381,10 @@ function openTab(name, focus = true) {
 
 function buildTabEl(tab) {
   const wrap = el("div", "tab");
+  wrap.setAttribute("role", "presentation");
   const btn = el("button");
   btn.type = "button";
+  btn.setAttribute("role", "tab");
   btn.title = "#" + tab.login;
   const dot = el("span", "dot");
   dot.title = "Connecting…";
@@ -407,7 +415,7 @@ function buildTabEl(tab) {
     if (from && from !== tab) moveTab(from, [...tabs.keys()].indexOf(tab.login));
   });
   $("tabs").appendChild(wrap);
-  tab.tabEl = { wrap, name, mod, unread, live, pin };
+  tab.tabEl = { wrap, btn, name, mod, unread, live, pin };
   updateTabEl(tab);
 }
 
@@ -436,6 +444,16 @@ function updateTabEl(tab) {
   t.wrap.title = tab.stream ? tab.stream.title + " — " + (tab.stream.game_name || "No category") + " · " + tab.stream.viewer_count.toLocaleString() + " viewers" : "";
   t.unread.hidden = tab.unread === 0;
   t.unread.textContent = tab.unread > 99 ? "99+" : String(tab.unread);
+  // A screen reader hears the whole state of the tab, not just its name.
+  t.btn.setAttribute("aria-selected", String(tab === active));
+  t.btn.setAttribute("aria-label", [
+    (tab.broadcaster ? tab.broadcaster.name : tab.login),
+    tab.stream ? "live, " + tab.stream.viewer_count.toLocaleString() + " viewers" : null,
+    tab.isMod ? "you moderate this channel" : null,
+    pinnedLogin === tab.login ? "pinned" : null,
+    tab.unread ? tab.unread + " unread" + (tab.mentioned ? ", you were mentioned" : "") : null,
+    tab.joined ? null : "connecting",
+  ].filter(Boolean).join(", "));
 }
 
 function activate(tab) {
@@ -4001,6 +4019,37 @@ function openSheet(...children) {
   show("sheet", true);
 }
 function closeSheet() { show("sheet", false); $("sheet-body").replaceChildren(); }
+
+// Keyboard and screen-reader behaviour for the sheet: focus moves into it when it opens, Tab stays
+// inside, it's named after its heading, and closing returns focus to where you were.
+(() => {
+  const sheet = $("sheet");
+  let opener = null;
+  // (the contents of a closed <details> still report layout boxes, but can't be tabbed to)
+  const inClosedDetails = (n) => { for (let p = n.parentElement; p && p !== sheet; p = p.parentElement) if (p.tagName === "DETAILS" && !p.open && !(n.tagName === "SUMMARY" && n.parentElement === p)) return true; return false; };
+  const focusables = () => [...sheet.querySelectorAll("button, a[href], input, select, textarea, summary, [tabindex]")]
+    .filter((n) => !n.disabled && (n.tabIndex >= 0 || n.tagName === "SUMMARY") && n.getClientRects().length && !n.closest("[hidden]") && !inClosedDetails(n));
+  new MutationObserver(() => {
+    if (!sheet.hidden) {
+      if (!sheet.contains(document.activeElement)) { opener = document.activeElement; $("sheet-close").focus(); }
+      const h = sheet.querySelector("h2");
+      sheet.querySelector(".sheet").setAttribute("aria-label", h ? h.textContent : "Panel");
+    } else if (opener) {
+      // (not into the message box on a phone: that would pop the keyboard up)
+      const back = opener !== document.body && opener.getClientRects().length ? opener : $("profile-btn"); // (a menu item that closed itself can't take it)
+      if (!(coarse && back.isContentEditable)) try { back.focus(); } catch {}
+      opener = null;
+    }
+  }).observe(sheet, { attributes: true, attributeFilter: ["hidden"] });
+  sheet.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const list = focusables();
+    if (!list.length) return;
+    const first = list[0], last = list[list.length - 1];
+    if (e.shiftKey && (document.activeElement === first || !sheet.contains(document.activeElement))) { last.focus(); e.preventDefault(); }
+    else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+  });
+})();
 $("sheet-close").addEventListener("click", closeSheet);
 $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet").hidden) closeSheet(); });
@@ -4453,14 +4502,19 @@ function backupControls() {
   return box;
 }
 
+let settingsRowIds = 0;
 let settingsGroup = null; // the section that was open last time, so Settings reopens where you were
 
 function openSettings(wantGroup) {
   const row = (labelText, control, hint) => {
     const r = el("div", "row");
     const l = el("label");
-    l.append(el("div", null, labelText));
+    const name = el("div", null, labelText);
+    name.id = "set-" + (++settingsRowIds);
+    l.append(name);
     if (hint) l.appendChild(el("div", "hint", hint));
+    // The label sits beside the control rather than around it, so tie them together for screen readers.
+    if (control.matches && control.matches("input, select")) control.setAttribute("aria-labelledby", name.id);
     r.append(l, control);
     return r;
   };
@@ -4578,7 +4632,7 @@ function openSettings(wantGroup) {
   }
 
   const themeSeg = el("div", "seg");
-  for (const [label, value] of [["Dark", "dark"], ["Light", "light"], ["Match device", "system"]]) {
+  for (const [label, value] of [["Dark", "dark"], ["Light", "light"], ["High contrast", "contrast"], ["Match device", "system"]]) {
     const b = btn(label, () => { settings.theme = value; saveSettings(); themeSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); });
     if ((settings.theme || "dark") === value) b.classList.add("on");
     themeSeg.appendChild(b);
@@ -4668,9 +4722,13 @@ function openSettings(wantGroup) {
 
   const historyRow = el("div", "row");
   const historyLabel = el("label");
-  historyLabel.append(el("div", null, "Load chat history"), el("div", "hint"));
+  const historyName = el("div", null, "Load chat history");
+  historyName.id = "set-history";
+  historyLabel.append(historyName, el("div", "hint"));
   historyLabel.lastChild.appendChild(historyInfo());
-  historyRow.append(historyLabel, checkbox(settings.history === true, (c) => setHistory(c.checked)));
+  const historyBox = checkbox(settings.history === true, (c) => setHistory(c.checked));
+  historyBox.setAttribute("aria-labelledby", historyName.id);
+  historyRow.append(historyLabel, historyBox);
 
   const color = el("div", "row");
   const colorLabel = el("label");
@@ -4762,6 +4820,8 @@ function openSettings(wantGroup) {
   group("look", "Appearance", "Theme, text size, layout", [
     item("Theme", themeSeg),
     item("Chat text size", seg),
+    item("Screen readers", row("Announce new chat messages", checkbox(settings.announce !== false, (c) => { settings.announce = c.checked; saveSettings(); }),
+      "Chat is a live region, so a screen reader reads new messages as they arrive. Turn this off to read the chat yourself (this choice is saved per device).")),
     item("Chat layout",
       row("Compact", checkbox(!!settings.compact, (c) => { settings.compact = c.checked; saveSettings(); }), "Tighter spacing between messages."),
       row("Alternate row shading", checkbox(!!settings.zebra, (c) => { settings.zebra = c.checked; saveSettings(); }), "Every other line gets a faint background, which helps on fast chats."),

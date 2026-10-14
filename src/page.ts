@@ -90,9 +90,9 @@ export function renderPage(): string {
       <div class="follow-list" id="follow-list" role="listbox" aria-label="Channels you follow" hidden></div>
       <div class="account-menu" id="account-menu" role="menu" aria-label="Account" hidden></div>
     </header>
-    <nav class="tabs" id="tabs" aria-label="Open channels" hidden></nav>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Open channels" hidden></nav>
     <div id="banners">
-      <div class="banner error" id="error" hidden></div>
+      <div class="banner error" id="error" role="alert" hidden></div>
       <div class="banner error" id="expired" hidden>Your sign-in has ended. <a href="/auth/login">Sign in again</a></div>
       <div class="banner info" id="reauth" hidden>Twitch needs extra permissions to read and send chat. <a href="/auth/login">Reconnect Twitch</a></div>
       <div class="banner info" id="reauth-optional" hidden><a href="/auth/login">Reconnect Twitch</a> to enable your Twitch emotes, followed channels, clipping, mod tools, whispers and more.</div>
@@ -170,8 +170,8 @@ export function renderPage(): string {
         data-placeholder="Open a channel to chat" autocapitalize="off" autocorrect="off" spellcheck="true" enterkeyhint="send"></div>
       <button type="submit" id="send" disabled>Chat</button>
     </form>
-    <div id="slow-note" hidden></div>
-    <div id="send-error" hidden></div>
+    <div id="slow-note" role="status" hidden></div>
+    <div id="send-error" role="alert" hidden></div>
   </footer>
 </div>
 <button type="button" class="focus-exit" id="focus-exit" hidden>Exit focus mode</button>

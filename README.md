@@ -104,7 +104,11 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
 - Private notes and colored labels on people; quick messages for things you type often; favorite emotes.
 - A Diagnostics section in Settings: server version, token and permission status (with what each missing
   permission is for and a reconnect link), recent failed requests and startup timings, with a copy button.
-- Light and dark themes, compact or shaded rows, hidden times or badges, monospace or serif font. Settings is a short list of collapsible sections with a search box.
+- Accessibility: a **high-contrast** theme (also picked by "Match device" when the device asks for more
+  contrast), tabs and chat exposed to screen readers as a tab list and labelled logs (with an option to stop them
+  announcing every message), sheets that take focus, keep it inside and give it back, and a test that every
+  control has a name.
+- Light, dark and high-contrast themes, compact or shaded rows, hidden times or badges, monospace or serif font. Settings is a short list of collapsible sections with a search box.
 - **Focus mode** (Alt+F, the account menu or the quick switcher) hides everything but the tabs and the chat for
   reading; a button (or Esc) brings it back.
 - A **quick switcher** (Ctrl/Cmd+K, or the account menu): type to jump to a tab, a followed channel, any channel

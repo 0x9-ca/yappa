@@ -4,10 +4,11 @@
 (function () {
   var theme = "dark";
   try { theme = JSON.parse(localStorage.getItem("settings") || "{}").theme || "dark"; } catch (e) {}
-  if (theme === "system") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  if (theme === "system") theme = matchMedia("(prefers-contrast: more)").matches ? "contrast" : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
   var meta = document.querySelector('meta[name="theme-color"]');
   if (meta && theme === "light") meta.content = "#ffffff";
+  if (meta && theme === "contrast") meta.content = "#000000";
   // On the app page (not the sign-in page), ask who's signed in right now: the answer is on its
   // way while the rest of the page and its scripts load. app.js picks it up (refreshStatus).
   if (document.documentElement.hasAttribute("data-app")) {

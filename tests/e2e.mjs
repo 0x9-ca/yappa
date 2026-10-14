@@ -3224,6 +3224,86 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { delete settings.channels.yappa; saveSettings(); delete self.LanguageDetector; delete self.Translator; });
 }
 
+
+// =============== accessibility: high-contrast theme, tabs, sheets, unnamed controls ===============
+{
+  const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+  const rgbOf = (css) => page.evaluate((c) => { const p = document.createElement("div"); p.style.color = c; document.body.appendChild(p); const v = getComputedStyle(p).color.match(/\d+/g).slice(0, 3).map(Number); p.remove(); return v; }, css);
+  // ---- high contrast ----
+  await page.evaluate(() => { settings.theme = "contrast"; saveSettings(); });
+  check("High contrast sets its own theme", await page.evaluate(() => document.documentElement.dataset.theme === "contrast" && getComputedStyle(document.body).backgroundColor === "rgb(0, 0, 0)" && document.querySelector('meta[name="theme-color"]').content === "#000000"));
+  const vars = Object.fromEntries(await Promise.all(["--bg", "--text", "--muted", "--link", "--accent", "--err-text", "--ok-text", "--live-text", "--mod"].map(async (v) => [v, await rgbOf(await page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), v))])));
+  const white = [255, 255, 255];
+  const r = { text: ratio(vars["--text"], vars["--bg"]), muted: ratio(vars["--muted"], vars["--bg"]), link: ratio(vars["--link"], vars["--bg"]), err: ratio(vars["--err-text"], vars["--bg"]), ok: ratio(vars["--ok-text"], vars["--bg"]), live: ratio(vars["--live-text"], vars["--bg"]), onAccent: ratio(white, vars["--accent"]), onMod: ratio(white, vars["--mod"]), accentOnBg: ratio(vars["--accent"], vars["--bg"]) };
+  check("its text colors are at least 7:1 on black, white-on-accent and white-on-MOD at least 4.5:1, the accent 3:1 on black", r.text >= 7 && r.muted >= 7 && r.link >= 7 && r.err >= 7 && r.ok >= 7 && r.live >= 7 && r.onAccent >= 4.5 && r.onMod >= 4.5 && r.accentOnBg >= 3, JSON.stringify(r));
+  await shot("high-contrast");
+  await page.evaluate(() => { settings.theme = "dark"; saveSettings(); });
+  // The device's own contrast preference with "Match device".
+  await page.emulateMedia({ contrast: "more" });
+  await page.evaluate(() => { settings.theme = "system"; saveSettings(); });
+  check("\"Match device\" follows the device's more-contrast setting", await page.evaluate(() => document.documentElement.dataset.theme) === "contrast");
+  await page.emulateMedia({ contrast: "no-preference" });
+  await settle(100);
+  check("...and goes back when it's switched off", await page.evaluate(() => document.documentElement.dataset.theme === (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")));
+  await page.evaluate(() => { settings.theme = "dark"; saveSettings(); });
+
+  // ---- tabs and chat as a screen reader sees them ----
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  const sem = await page.evaluate(() => ({
+    list: document.getElementById("tabs").getAttribute("role"),
+    roles: [...document.querySelectorAll("#tabs button[role=tab]")].map((b) => [b.getAttribute("aria-selected"), b.getAttribute("aria-label")]),
+    log: (() => { const l = document.querySelector(".messages:not([hidden])"); return [l.getAttribute("role"), l.getAttribute("aria-label"), l.getAttribute("aria-live"), l.getAttribute("aria-relevant")]; })(),
+  }));
+  check("the tab bar is a tab list; the open tab is the selected one", sem.list === "tablist" && sem.roles.filter(([sel]) => sel === "true").length === 1 && /^Yappa, live, [\d,]+ viewers, you moderate this channel/.test(sem.roles[0][1]), JSON.stringify(sem.roles));
+  check("each tab's name carries its state (unread, mentions, connecting)", await page.evaluate(() => { const t = tabs.get("otherchan"); const old = [t.unread, t.mentioned]; t.unread = 3; t.mentioned = true; updateTabEl(t); const label = t.tabEl.btn.getAttribute("aria-label"); t.unread = old[0]; t.mentioned = old[1]; updateTabEl(t); return /3 unread, you were mentioned/.test(label); }));
+  check("a chat is a labelled log that announces only additions", sem.log[0] === "log" && sem.log[1] === "Chat in #yappa" && sem.log[2] === "polite" && sem.log[3] === "additions", JSON.stringify(sem.log));
+  await page.evaluate(() => { settings.announce = false; saveSettings(); });
+  check("Settings can stop screen readers announcing every message (per device)", await page.evaluate(() => [...document.querySelectorAll(".messages")].every((l) => l.getAttribute("aria-live") === "off") && !("announce" in syncBlob().settings)));
+  await page.evaluate(() => { settings.announce = true; saveSettings(); });
+  check("announcing is back on", await page.evaluate(() => [...document.querySelectorAll(".messages")].every((l) => l.getAttribute("aria-live") === "polite")));
+  check("errors and the slow-mode note are live regions", await page.evaluate(() => document.getElementById("error").getAttribute("role") === "alert" && document.getElementById("send-error").getAttribute("role") === "alert" && document.getElementById("slow-note").getAttribute("role") === "status"));
+
+  // ---- the sheet takes focus, keeps it, and gives it back ----
+  await page.focus("#profile-btn");
+  await openSettingsUI({ expand: false });
+  check("opening a sheet moves focus into it and names it", await page.evaluate(() => document.getElementById("sheet").contains(document.activeElement) && document.querySelector("#sheet .sheet").getAttribute("aria-label") === "Settings"));
+  for (let i = 0; i < 30; i++) await page.keyboard.press("Tab");
+  check("Tab stays inside the sheet", await page.evaluate(() => document.getElementById("sheet").contains(document.activeElement)));
+  for (let i = 0; i < 5; i++) await page.keyboard.press("Shift+Tab");
+  check("so does Shift+Tab", await page.evaluate(() => document.getElementById("sheet").contains(document.activeElement)));
+  await page.keyboard.press("Escape");
+  check("closing it gives focus back", await page.evaluate(() => document.activeElement === document.getElementById("profile-btn")));
+
+  // ---- every control has a name ----
+  const unnamed = () => page.evaluate(() => {
+    const visible = (n) => n.getClientRects().length && getComputedStyle(n).visibility !== "hidden" && !n.closest("[hidden]");
+    const named = (n) => {
+      if (n.getAttribute("aria-label") || n.getAttribute("aria-labelledby") || n.title) return true;
+      if (n.matches("input, select, textarea")) return !!(n.labels && n.labels.length) || !!n.placeholder || !!n.closest("label");
+      return !!(n.textContent || "").trim() || !!n.querySelector("img[alt]:not([alt=''])");
+    };
+    return [...document.querySelectorAll("button, a[href], input:not([type=hidden]), select, textarea, summary, [role=button], [role=textbox], [role=tab]")]
+      .filter(visible).filter((n) => !named(n)).map((n) => n.tagName.toLowerCase() + (n.type ? "[" + n.type + "]" : "") + (n.id ? "#" + n.id : "") + (n.className ? "." + String(n.className).split(" ")[0] : "") + " in " + ((n.closest("[class*=set-item], .row, .rule-form") || {}).textContent || "").slice(0, 30));
+  });
+  const main = await unnamed();
+  check("every visible control on the main screen has a name", main.length === 0, JSON.stringify(main));
+  await openSettingsUI();
+  const inSettings = await unnamed();
+  check("...and in Settings", inSettings.length === 0, JSON.stringify(inSettings));
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.querySelector('li[data-id="mu5"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  const inCard = await unnamed();
+  check("...and on a user card", inCard.length === 0, JSON.stringify(inCard));
+  await page.keyboard.press("Escape");
+  await page.click("#modtools-btn");
+  await page.waitForSelector("#sheet [data-modtools]");
+  const inMod = await unnamed();
+  check("...and in the mod tools", inMod.length === 0, JSON.stringify(inMod));
+  await page.keyboard.press("Escape");
+}
+
 // =============== moving to a new address ===============
 {
   const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });

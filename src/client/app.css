@@ -585,3 +585,22 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .focus-exit { position: fixed; right: 12px; bottom: 12px; z-index: 30; padding: 8px 14px; border-radius: 999px; background: var(--raised); color: var(--text); border: 1px solid var(--line); box-shadow: 0 4px 16px var(--shadow); font-size: 13px; opacity: .85; }
 .focus-exit:hover { opacity: 1; background: var(--hover-strong); }
 .focus-exit[hidden] { display: none; }
+
+/* High contrast theme (Settings → Appearance → Theme, or "Match device" with the device's contrast setting on):
+   pure black, white text and lines, brighter accents and an unmissable focus ring. */
+:root[data-theme="contrast"] {
+  --bg: #000; --panel: #000; --raised: #0b0b0b; --line: #e0e0e0; --text: #fff; --muted: #e6e6e6;
+  --accent: #7c3aed; --accent-hover: #6d28d9; --danger: #ff4d4d; --mention: #7a0a0a; --notice: #14102a; --mod: #007a2f;
+  --points: #d2b8ff; --points-bg: #2a1d4a;
+  --ghost: #262626; --ghost-hover: #3a3a3a; --border: #fff; --hover: #ffffff1f; --hover-strong: #ffffff38;
+  --link: #d2b8ff; --link-hover: #fff; --err-text: #ff9d9d; --live-text: #ff9d9d; --ok-text: #8dff9d;
+  --err-bg: #4a0000; --err-fg: #fff; --info-bg: #1c1240; --am-bg: #2e2400; --am-border: #ffd24d; --am-head: #ffd24d;
+  --hl-bg: #5a3000; --raid-bg: #3a0f25; --clip-hover-border: #fff; --clip-hover-bg: #1a1a1a;
+  --shadow: #000;
+  color-scheme: dark;
+}
+:root[data-theme="contrast"] :focus-visible { outline: 3px solid #ffe600; outline-offset: 2px; }
+:root[data-theme="contrast"] button.ghost, :root[data-theme="contrast"] .seg button, :root[data-theme="contrast"] .tab-menu button { border: 1px solid #fff; }
+:root[data-theme="contrast"] a.link, :root[data-theme="contrast"] .hint a { text-decoration: underline; }
+:root[data-theme="contrast"] .tab.active { border-bottom-width: 4px; }
+:root[data-theme="contrast"] .msg .time { color: #e6e6e6; }

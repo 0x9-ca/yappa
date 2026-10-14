@@ -1007,6 +1007,7 @@ function setChan(login, patch) {
   saveSettings();
 }
 
+let chanRowIds = 0;
 function openChannelSettings(tab) {
   if (!tab) return;
   const login = tab.login;
@@ -1014,7 +1015,10 @@ function openChannelSettings(tab) {
   const row = (label, hint, control) => {
     const r = el("div", "row");
     const l = el("label");
-    l.append(el("div", null, label), el("div", "hint", hint));
+    const name = el("div", null, label);
+    name.id = "chan-set-" + (++chanRowIds);
+    l.append(name, el("div", "hint", hint));
+    if (control.matches && control.matches("input, select")) control.setAttribute("aria-labelledby", name.id);
     r.append(l, control);
     return r;
   };

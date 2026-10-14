@@ -104,6 +104,8 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
 - A Diagnostics section in Settings: server version, token and permission status (with what each missing
   permission is for and a reconnect link), recent failed requests and startup timings, with a copy button.
 - Light and dark themes, compact or shaded rows, hidden times or badges, monospace or serif font. Settings is a short list of collapsible sections with a search box.
+- A **quick switcher** (Ctrl/Cmd+K, or the account menu): type to jump to a tab, a followed channel, any channel
+  name, a settings section or an action.
 - Tab menu (move, live-first, pin, close others), desktop shortcuts (`?` lists them), save a chat as text or
   JSON, and a settings backup you can restore from a file.
 - Optional **chat color cycling**: a new random hex color every time you send a message (needs Twitch Turbo or

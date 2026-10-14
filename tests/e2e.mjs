@@ -2338,7 +2338,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.click("#profile-btn");
   const menu = await page.evaluate(() => ({ expanded: document.getElementById("profile-btn").getAttribute("aria-expanded"), name: document.querySelector("#account-menu .dn").textContent, login: document.querySelector("#account-menu .ln").textContent, items: [...document.querySelectorAll("#account-menu button")].map((b) => b.textContent), h: Math.round(document.querySelector("#account-menu button").getBoundingClientRect().height), pic: !!document.querySelector("#account-menu .who img") }));
   check("the menu shows who you are (picture, name, @username) and Settings / Your clips / Log out",
-    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Settings for #Yappa","Whispers","Bookmarks","Mentions","All chats in one feed","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
+    menu.expanded === "true" && menu.name === "TestUser" && menu.login === "@testuser" && JSON.stringify(menu.items.map((x) => x.replace(/ \(\d+\)$/, ""))) === '["Settings","Your clips","Settings for #Yappa","Whispers","Bookmarks","Mentions","All chats in one feed","Quick switcher","Discover streams","Save this chat (text)","Save this chat (JSON)","Log out"]' && menu.pic && menu.h >= 44, JSON.stringify(menu));
   await page.screenshot({ path: dir + "/t35-account-menu.png" });
   await shot("account-menu");
   await page.keyboard.press("Escape");
@@ -3096,6 +3096,62 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("...and uses that length", /"duration":3600/.test(JSON.stringify(log.mods.at(-1))), JSON.stringify(log.mods.at(-1)));
   await page.evaluate(() => { settings.modPresets = { timeouts: [60, 600, 3600, 86400], messageTimeout: 600, reasons: [] }; saveSettings(); });
   check("a damaged saved value falls back to the defaults", await page.evaluate(() => { settings.modPresets = { timeouts: "x", messageTimeout: -5, reasons: [1, "  ", "ok"] }; const p = modPresets(); settings.modPresets = { timeouts: [60, 600, 3600, 86400], messageTimeout: 600, reasons: [] }; return p.timeouts.length === 4 && p.messageTimeout === 600 && JSON.stringify(p.reasons) === '["ok"]'; }));
+}
+
+
+// =============== quick switcher ===============
+{
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  await page.evaluate(() => document.getElementById("message").focus());
+  await page.keyboard.press("Control+k");
+  await page.waitForSelector(".switcher input");
+  check("Ctrl+K opens the quick switcher with the search focused", await page.evaluate(() => document.activeElement === document.querySelector(".switcher input")));
+  await page.keyboard.type("oth");
+  const first = await page.textContent(".switcher .sw-row.on .sw-label");
+  check("typing finds an open tab", first === "#OtherChan", first);
+  await page.keyboard.press("Enter");
+  check("Enter goes there, closes the switcher and gives focus back", (await page.evaluate(() => active.login)) === "otherchan" && !(await page.$(".switcher")) && await page.evaluate(() => document.activeElement === document.getElementById("message")));
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("svid");
+  check("letters in order are enough (svid → Settings: Video)", (await page.textContent(".switcher .sw-row.on .sw-label")) === "Settings: Video");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector('#sheet details[data-group="video"][open]');
+  check("a settings entry opens that section", await page.isVisible('#sheet button:has-text("Native (HLS)")'));
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => { following = null; followingAt = 0; }); // (an earlier test left a different list cached)
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("zeta");
+  await page.waitForFunction(() => [...document.querySelectorAll(".switcher .sw-label")].some((l) => l.textContent === "#ZetaChan"));
+  check("followed channels you haven't opened are offered", (await page.$$eval(".switcher .sw-label", (l) => l.map((x) => x.textContent))).includes("#ZetaChan"));
+  await page.keyboard.press("Control+a");
+  ids.quickchan = "557";
+  await page.keyboard.type("quickchan");
+  const opts = await page.$$eval(".switcher .sw-label", (l) => l.map((x) => x.textContent));
+  check("any channel name can be opened, and anyone looked up", opts.includes("Open channel quickchan") && opts.includes("Look up @quickchan"), JSON.stringify(opts));
+  await page.keyboard.press("ArrowDown");
+  check("the arrow keys move the highlight", (await page.textContent(".switcher .sw-row.on .sw-label")) === "Look up @quickchan");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => tabs.has("quickchan"));
+  check("Enter on a channel opens it as a tab", await page.evaluate(() => active.login === "quickchan"));
+  await page.evaluate(() => closeTab(tabs.get("quickchan")));
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("mod to");
+  check("moderator actions show up in channels you moderate", (await page.$$eval(".switcher .sw-label", (l) => l.map((x) => x.textContent))).includes("Mod tools"));
+  await page.keyboard.press("Control+a");
+  await page.keyboard.type("zzzzqqq1");
+  check("a name that matches nothing still offers to open it as a channel", /Open channel zzzzqqq1/.test(await page.textContent(".switcher-list")));
+  await page.keyboard.press("Escape");
+  check("Escape closes it", !(await page.$(".switcher")));
+  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Control+k");
+  check("Ctrl+K again closes it", !(await page.$(".switcher")));
+  await page.click("#profile-btn");
+  await page.click('#account-menu button:has-text("Quick switcher")');
+  check("the account menu opens it too (for touch screens)", !!(await page.$(".switcher")));
+  await shot("quick-switcher");
+  await page.keyboard.press("Escape");
 }
 
 // =============== moving to a new address ===============

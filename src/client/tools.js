@@ -477,6 +477,7 @@ window.toolsAccountItems = (item) => {
   out.push(item("Bookmarks" + ((settings.bookmarks || []).length ? " (" + settings.bookmarks.length + ")" : ""), openBookmarks));
   out.push(item("Mentions" + (mentionsUnread ? " (" + Math.min(mentionsUnread, 99) + ")" : ""), openMentions));
   if (tabs.size > 1) out.push(item("All chats in one feed", openCombined));
+  out.push(item("Quick switcher", openSwitcher));
   out.push(item("Discover streams", openDiscover));
   if (active && active.list.querySelector(".msg")) {
     out.push(item("Save this chat (text)", () => exportChat("txt")));
@@ -960,7 +961,7 @@ function openShortcuts() {
   for (const [keys, what] of [
     ["Alt + 1 … 9", "Go to that tab"], ["Alt + ←  /  →", "Previous / next tab"], ["Alt + W", "Close this tab"],
     ["Alt + V", "Show or hide the video"], ["Alt + M", "Mentions"], ["Alt + A", "All chats in one feed"],
-    ["/", "Jump to the message box"], ["?", "This list"], ["Esc", "Close a sheet or menu"],
+    ["Ctrl + K  (⌘ K)", "Quick switcher: tabs, channels, settings, actions"], ["/", "Jump to the message box"], ["?", "This list"], ["Esc", "Close a sheet or menu"],
   ]) {
     const r = el("div", "row");
     r.append(el("kbd", null, keys), el("span", null, what));
@@ -1467,5 +1468,147 @@ window.toolsDiagnostics = () => {
   });
   return box;
 };
+
+// ---------- quick switcher (Ctrl/Cmd+K) ----------
+
+const SETTINGS_SECTIONS = [["color", "Chat color"], ["chat", "Chat"], ["alerts", "Alerts and highlights"], ["filters", "Filters and moderation"], ["video", "Video"], ["look", "Appearance"], ["account", "Account and devices"], ["diag", "Diagnostics"]];
+
+/** How well `q` matches `text` (letters in order, starts of words and early matches count more), or -1. */
+function fuzzyScore(q, text) {
+  if (!q) return 0;
+  const s = text.toLowerCase();
+  const direct = s.indexOf(q);
+  if (direct >= 0) return 100 - direct + (direct === 0 || /[\s#:@]/.test(s[direct - 1]) ? 40 : 0) - (s.length - q.length) * 0.1;
+  let at = -1, score = 0, last = -2;
+  for (const c of q) {
+    at = s.indexOf(c, at + 1);
+    if (at < 0) return -1;
+    score += (at === last + 1 ? 6 : 1) + (at === 0 || /[\s#:@]/.test(s[at - 1]) ? 4 : 0);
+    last = at;
+  }
+  return score;
+}
+
+function switcherEntries() {
+  const out = [];
+  const seen = new Set();
+  for (const t of tabs.values()) {
+    const name = t.broadcaster ? t.broadcaster.name : t.login;
+    seen.add(t.login);
+    out.push({ kind: "Tab", label: "#" + name, sub: t.stream ? "live · " + compactCount(t.stream.viewer_count) : t === active ? "current tab" : "open", run: () => activate(t), boost: 30 });
+  }
+  const fl = typeof following !== "undefined" && following && following.ok ? following : null;
+  if (fl) {
+    const live = new Set(fl.live.map((c) => c.login));
+    for (const c of fl.channels) if (!seen.has(c.login)) { seen.add(c.login); out.push({ kind: "Channel", label: "#" + c.name, sub: live.has(c.login) ? "live now · open it" : "open it", run: () => openTab(c.login), boost: live.has(c.login) ? 15 : 10 }); }
+  }
+  const act = (label, run, keywords = "") => out.push({ kind: "Action", label, sub: "", keywords, run, boost: 0 });
+  act("Settings", () => openSettings(), "preferences options");
+  for (const [id, title] of SETTINGS_SECTIONS) act("Settings: " + title, () => openSettings(id));
+  act("Mentions", openMentions, "highlights");
+  act("Bookmarks", openBookmarks, "saved messages");
+  if (tabs.size > 1) act("All chats in one feed", openCombined, "combined merged");
+  act("Discover streams", openDiscover, "browse top live categories search");
+  act("Your clips", () => openBrowse({ mine: true }));
+  if (hasScope("user:manage:whispers")) act("Whispers", openWhispers, "messages dm");
+  if (active && active.broadcaster) {
+    act("Channel info", openChannelInfo, "about tags uptime viewers stats");
+    act("Clips and VODs for #" + active.broadcaster.name, () => $("clips-btn").click(), "videos past broadcasts");
+    act("Settings for #" + active.broadcaster.name, () => openChannelSettings(active), "channel overrides mute");
+    if (active.isMod) act("Mod tools", openMod, "moderator ban timeout banned terms shield");
+    if (active.list.querySelector(".msg")) { act("Save this chat (text)", () => exportChat("txt"), "export download"); act("Save this chat (JSON)", () => exportChat("json"), "export download"); }
+  }
+  act("Show or hide the video", () => $("video-btn").click(), "stream player");
+  act("Keyboard shortcuts", openShortcuts, "keys help");
+  return out;
+}
+
+let switcher = null;
+
+function closeSwitcher() {
+  if (!switcher) return;
+  const { node, opener } = switcher;
+  node.remove();
+  switcher = null;
+  if (opener && opener.isConnected && opener !== document.body) try { opener.focus(); } catch {}
+}
+
+function openSwitcher() {
+  if (switcher || !me) return;
+  closeAccountMenu?.();
+  const node = el("div", "switcher-backdrop");
+  const box = el("div", "switcher");
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "Quick switcher");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Go to a tab, channel, setting or action…";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.setAttribute("aria-label", "Search tabs, channels, settings and actions");
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-expanded", "true");
+  input.setAttribute("aria-controls", "switcher-list");
+  const list = el("ul", "switcher-list");
+  list.id = "switcher-list";
+  list.setAttribute("role", "listbox");
+  box.append(input, list);
+  node.appendChild(box);
+  document.body.appendChild(node);
+  switcher = { node, opener: document.activeElement };
+  const entries = switcherEntries();
+  let shown = [], index = 0;
+  const render = () => {
+    const raw = input.value.trim();
+    const q = raw.toLowerCase();
+    shown = entries
+      .map((e) => ({ e, s: fuzzyScore(q.replace(/^#/, ""), (e.label + " " + (e.keywords || "")).toLowerCase().replace(/^#/, "")) }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => b.s + b.e.boost - (a.s + a.e.boost))
+      .slice(0, 9)
+      .map((x) => x.e);
+    const handle = raw.replace(/^[#@]/, "");
+    if (/^[A-Za-z0-9_]{1,25}$/.test(handle) && !tabs.has(handle.toLowerCase())) {
+      shown.push({ kind: "Channel", label: "Open channel " + handle.toLowerCase(), sub: "any Twitch channel", run: () => openTab(handle) });
+      shown.push({ kind: "User", label: "Look up @" + handle.toLowerCase(), sub: "profile and follow age", run: () => active && toolsLookupUser(active, handle) });
+    }
+    index = Math.min(index, Math.max(0, shown.length - 1));
+    list.replaceChildren(...shown.map((e, i) => {
+      const li = el("li", "sw-row" + (i === index ? " on" : ""));
+      li.id = "sw-" + i;
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === index));
+      li.append(el("span", "sw-kind", e.kind), el("span", "sw-label", e.label), el("span", "sw-sub hint", e.sub || ""));
+      li.addEventListener("pointerdown", (ev) => { ev.preventDefault(); run(i); });
+      return li;
+    }));
+    if (!shown.length) list.appendChild(el("li", "hint sw-none", "Nothing matches."));
+    input.setAttribute("aria-activedescendant", shown.length ? "sw-" + index : "");
+  };
+  const run = (i) => { const e = shown[i]; if (!e) return; closeSwitcher(); e.run(); };
+  input.addEventListener("input", () => { index = 0; render(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { index = Math.min(shown.length - 1, index + 1); render(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { index = Math.max(0, index - 1); render(); e.preventDefault(); }
+    else if (e.key === "Enter") { run(index); e.preventDefault(); }
+    else if (e.key === "Escape") { closeSwitcher(); e.preventDefault(); e.stopPropagation(); }
+  });
+  node.addEventListener("pointerdown", (e) => { if (e.target === node) closeSwitcher(); });
+  render();
+  input.focus();
+  // The followed channels may not be loaded yet; add them when they arrive.
+  loadFollowing().then(() => {
+    if (!switcher || switcher.node !== node) return;
+    entries.splice(0, entries.length, ...switcherEntries());
+    render();
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (switcher) closeSwitcher(); else openSwitcher();
+  }
+}, true);
 
 })();

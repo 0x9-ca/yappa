@@ -46,6 +46,8 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
   GIFs turns them into links). The composer shows finished emote names as images.
 - Emote picker (grouped by where each emote comes from, including one section per channel you're subscribed
   to, with favorites and recents) and autocomplete for `:name`, Tab and `@user`.
+- Tap the live chip (or "Offline") in the info bar for the channel's info: title, category, tags, language,
+  content labels, about text, and while live the uptime and a viewer graph. `/user <name>` opens anyone's user card.
 - Tap an emote for its name and source; tap a name for their user card (badges with a plain-language
   explanation of each, follow age, recent messages, quick timeouts).
 - Optional chat history (via [recent-messages.robotty.de](https://recent-messages.robotty.de/), only after

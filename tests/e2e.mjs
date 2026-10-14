@@ -189,6 +189,16 @@ await ctx.route("**/*", async (route) => {
       }
       return j({ ok: true, sync: syncMockOff ? null : syncStore });
     }
+    if (u.pathname === "/api/channel/info") {
+      log.chanInfo = [...(log.chanInfo || []), u.searchParams.get("broadcaster_id")];
+      return j({ ok: true, channel: { id: u.searchParams.get("broadcaster_id"), login: "yappa", name: "Yappa", avatar: "https://img.test/chan-avatar.png", about: "Building a chat app in public.\nCome say hi!", createdAt: "2018-04-02T00:00:00Z", type: "partner", title: "Building a chat app", game: "Software and Game Development", language: "en", tags: ["English", "Coding", "ChillVibes"], labels: ["MatureGame", "Gambling"], branded: true } });
+    }
+    if (u.pathname === "/api/lookup/user") {
+      const login = u.searchParams.get("login");
+      log.lookups = [...(log.lookups || []), login];
+      if (login === "nobodyhere") return j({ ok: false, error: "No Twitch user named nobodyhere." });
+      return j({ ok: true, user: { id: "5555", login, name: login[0].toUpperCase() + login.slice(1), avatar: null, about: "", createdAt: "2019-01-01T00:00:00Z", type: "" } });
+    }
     if (u.pathname === "/api/preview/x") {
       const id = u.searchParams.get("id");
       log.xPreviews = [...(log.xPreviews || []), id];
@@ -2961,6 +2971,46 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await settle(300);
   check("Unban sends the unban for that user and drops the row", log.mods.length === modsBefore + 1 && /unban/.test(JSON.stringify(log.mods.at(-1))) && /6001/.test(JSON.stringify(log.mods.at(-1))) && (await page.$$eval("#ban-list .ban-row", (r) => r.length)) === 2, JSON.stringify(log.mods.at(-1)));
   await page.click("#sheet-close");
+}
+
+
+// =============== channel info sheet and /user ===============
+{
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  await page.click("#live");
+  await page.waitForSelector("#sheet [data-chaninfo] .ci-tags");
+  const info = await page.evaluate(() => { const r = document.querySelector("#sheet [data-chaninfo]"); return { text: r.textContent, tags: [...r.querySelectorAll(".ci-tags .chip")].map((c) => c.textContent), flags: [...r.querySelectorAll(".ci-flags .chip")].map((c) => c.textContent), avatarShown: !r.querySelector(".ci-avatar").hidden, spark: !!r.querySelector("svg.sparkline") }; });
+  check("tapping the live chip opens the channel info: tags, language, account, about", JSON.stringify(info.tags) === '["English","Coding","ChillVibes"]' && /Language/.test(info.text) && /Partner/.test(info.text) && /On Twitch since/.test(info.text) && /Come say hi/.test(info.text) && info.avatarShown, JSON.stringify(info));
+  check("content labels and paid promotion are spelled out", JSON.stringify(info.flags) === '["Mature-rated game","Gambling","Paid promotion"]', JSON.stringify(info.flags));
+  check("while live it still has the stats and the viewer graph", /Live for\s*3h/.test(info.text) && info.spark);
+  check("it offers Clips and VODs and opening the channel on Twitch", !!(await page.$('#sheet button:has-text("Clips and VODs")')) && !!(await page.$('#sheet button:has-text("Open on Twitch")')));
+  await shot("channel-info");
+  await page.click('#sheet button:has-text("Clips and VODs")');
+  await page.waitForSelector("#browse-modal:not([hidden])");
+  check("Clips and VODs opens the browser for that channel", (await page.textContent("#browse-modal")).length > 0);
+  await page.keyboard.press("Escape");
+  // An offline channel has info too.
+  await page.evaluate(() => { const t = tabs.get("otherchan"); t.stream = null; activate(t); });
+  await page.click("#live");
+  await page.waitForSelector("#sheet [data-chaninfo] .ci-tags");
+  const off = await page.textContent("#sheet [data-chaninfo]");
+  check("an offline channel's info says so and has no live numbers", /Offline right now/.test(off) && !/Live for/.test(off) && /Last category/.test(off));
+  await page.keyboard.press("Escape");
+
+  // /user
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  await page.fill("#message", "/user @SomeBody");
+  await page.press("#message", "Enter");
+  await page.waitForSelector("#sheet .card-head");
+  check("/user opens that person's card without needing a message from them", /Somebody/.test(await page.textContent("#sheet .card-head")) && log.lookups.at(-1) === "somebody" && log.sent.at(-1) !== "/user @SomeBody");
+  await page.keyboard.press("Escape");
+  await page.fill("#message", "/whois nobodyhere");
+  await page.press("#message", "Enter");
+  await page.waitForFunction(() => document.querySelector(".messages:not([hidden])").textContent.includes("No Twitch user named nobodyhere"));
+  check("an unknown name is reported in chat", true);
+  await page.fill("#message", "/user");
+  await page.press("#message", "Enter");
+  check("without a name it shows the usage", (await page.textContent(".messages:not([hidden])")).includes("Usage: /user <name>"));
 }
 
 // =============== moving to a new address ===============

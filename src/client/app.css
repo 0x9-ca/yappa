@@ -543,3 +543,13 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .xc-foot { margin-top: 8px; font-size: 12px; color: var(--muted); }
 .img-preview { display: block; max-width: 320px; margin: 6px 0 2px; border-radius: 8px; overflow: hidden; background: var(--raised); }
 .img-preview img { display: block; max-width: 100%; max-height: 220px; object-fit: contain; }
+
+/* Channel info sheet */
+.infobar .live { cursor: pointer; }
+.ci-head { display: flex; align-items: center; gap: 12px; }
+.ci-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; flex: none; }
+.ci-names h2 { margin: 0; }
+.ci-title { margin: 10px 0; font-size: 14px; overflow-wrap: anywhere; }
+.ci-tags, .ci-flags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chip.warn { background: #4a2e12; color: #ffc76b; }
+.ci-about { margin: 4px 0; font-size: 13px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }

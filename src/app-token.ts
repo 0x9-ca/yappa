@@ -1,8 +1,8 @@
 import { PAGE_SIZE, slimClip, slimVideo } from "./browse";
 import type { ClipsQuery, VideosQuery } from "./browse";
-import { slimCategory, slimChannel, slimSegment, slimStreamRow } from "./tools";
+import { slimCategory, slimChannel, slimChannelDetails, slimSegment, slimStreamRow } from "./tools";
 import type { SearchQuery } from "./tools";
-import { TwitchError, getSchedule, getTopStreams, searchCategories, searchChannels, getBadges, getCheermotes, getClip, getClipsByIds, getClipsPage, getGameName, getGameNames, getStreamsByIds, getVideosPage } from "./twitch";
+import { TwitchError, getChannelInfo, getProfileByLogin, getUserById, getSchedule, getTopStreams, searchCategories, searchChannels, getBadges, getCheermotes, getClip, getClipsByIds, getClipsPage, getGameName, getGameNames, getStreamsByIds, getVideosPage } from "./twitch";
 
 /**
  * Public Twitch lookups (live status, clips, badges, cheermotes) don't need the user's own
@@ -141,3 +141,20 @@ export const topStreamsFor = (env: Env, origin: string, gameId?: string, after?:
 
 export const scheduleFor = (env: Env, origin: string, broadcasterId: string) =>
   lookup(env, origin, async (t) => ({ ok: true as const, segments: (await getSchedule(env, t, broadcasterId)).map(slimSegment) }));
+
+/** A channel's title, tags, language, content labels and profile, for the channel info sheet. */
+export const channelInfoFor = (env: Env, origin: string, broadcasterId: string) =>
+  lookup(env, origin, async (t) => {
+    const [info, user] = await Promise.all([getChannelInfo(env, t, broadcasterId), getUserById(env, t, broadcasterId)]);
+    const d = slimChannelDetails(info, user);
+    return d ? { ok: true as const, channel: d } : { ok: false as const, error: "No such channel." };
+  });
+
+/** Anyone's public profile by login (the /user command), or null if Twitch can't be reached. */
+export const userByLoginFor = (env: Env, origin: string, login: string) =>
+  lookup(env, origin, async (t) => {
+    const u = await getProfileByLogin(env, t, login);
+    return u
+      ? { ok: true as const, user: { id: u.id, login: u.login, name: u.display_name, avatar: u.profile_image_url || null, about: u.description.slice(0, 1000), createdAt: u.created_at, type: u.broadcaster_type } }
+      : { ok: false as const, error: `No Twitch user named ${login}.` };
+  });

@@ -144,6 +144,30 @@ export const slimUnban = (r: { id: string; user_id: string; user_login: string; 
   id: r.id, userId: r.user_id, login: r.user_login, name: r.user_name, text: r.text, createdAt: r.created_at, status: r.status,
 });
 
+/** A login from the query string (any case, optional @), or null. */
+export function parseLoginQuery(p: URLSearchParams): string | null {
+  const l = (p.get("login") ?? "").trim().replace(/^@/, "").toLowerCase();
+  return LOGIN.test(l) ? l : null;
+}
+
+export interface ChannelDetails {
+  id: string; login: string; name: string; avatar: string | null; about: string; createdAt: string | null; type: string;
+  title: string; game: string; language: string; tags: string[]; labels: string[]; branded: boolean;
+}
+/** What the channel info sheet shows, from Get Channel Information and Get Users (either may be missing). */
+export function slimChannelDetails(
+  c: { broadcaster_id: string; broadcaster_login: string; broadcaster_name: string; broadcaster_language: string; game_name: string; title: string; tags?: string[]; content_classification_labels?: string[]; is_branded_content?: boolean } | null,
+  u: { id: string; login: string; display_name: string; description: string; profile_image_url: string; broadcaster_type: string; created_at: string } | null,
+): ChannelDetails | null {
+  if (!c && !u) return null;
+  return {
+    id: c?.broadcaster_id ?? u!.id, login: c?.broadcaster_login ?? u!.login, name: c?.broadcaster_name ?? u!.display_name,
+    avatar: u?.profile_image_url || null, about: (u?.description ?? "").slice(0, 1000), createdAt: u?.created_at || null, type: u?.broadcaster_type ?? "",
+    title: c?.title ?? "", game: c?.game_name ?? "", language: c?.broadcaster_language ?? "", tags: (c?.tags ?? []).slice(0, 20),
+    labels: (c?.content_classification_labels ?? []).slice(0, 10), branded: !!c?.is_branded_content,
+  };
+}
+
 export interface Ban { userId: string; login: string; name: string; bannedAt: string; expiresAt: string | null; reason: string; by: string }
 export const slimBan = (r: { user_id: string; user_login: string; user_name: string; created_at: string; expires_at: string; reason: string; moderator_login: string; moderator_name: string }): Ban => ({
   userId: r.user_id, login: r.user_login, name: r.user_name, bannedAt: r.created_at, expiresAt: r.expires_at || null, reason: (r.reason || "").slice(0, 500), by: r.moderator_name || r.moderator_login || "",

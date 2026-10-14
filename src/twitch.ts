@@ -342,6 +342,31 @@ export interface TwitchUserProfile {
   created_at: string;
 }
 
+export interface ChannelInfo {
+  broadcaster_id: string;
+  broadcaster_login: string;
+  broadcaster_name: string;
+  broadcaster_language: string;
+  game_name: string;
+  title: string;
+  tags: string[];
+  content_classification_labels: string[];
+  is_branded_content: boolean;
+}
+
+/** A channel's current title, category, tags, language and content labels (public). */
+export async function getChannelInfo(env: Env, accessToken: string, broadcasterId: string): Promise<ChannelInfo | null> {
+  const url = `${API_BASE}/channels?broadcaster_id=${encodeURIComponent(broadcasterId)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Channel Information");
+  return ((await res.json()) as { data: ChannelInfo[] }).data[0] ?? null;
+}
+
+export async function getProfileByLogin(env: Env, accessToken: string, login: string): Promise<TwitchUserProfile | null> {
+  const url = `${API_BASE}/users?login=${encodeURIComponent(login)}`;
+  const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Users");
+  return ((await res.json()) as { data: TwitchUserProfile[] }).data[0] ?? null;
+}
+
 export async function getUserById(env: Env, accessToken: string, id: string): Promise<TwitchUserProfile | null> {
   const url = `${API_BASE}/users?id=${encodeURIComponent(id)}`;
   const res = await check(await fetch(url, { headers: helixHeaders(env, accessToken) }), "Get Users");

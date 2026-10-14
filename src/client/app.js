@@ -2039,8 +2039,12 @@ function runCommand(tab, text) {
     case "clear":
       if (confirm("Clear all of #" + tab.broadcaster.name + "'s chat?")) modAction(tab, { action: "clear" });
       return true;
+    case "user":
+    case "whois":
+      if (needUser("/user <name>")) window.toolsLookupUser?.(tab, user);
+      return true;
     case "help":
-      sysLine(tab, "Commands: /ban <user> [reason] · /unban <user> · /timeout <user> [10m] [reason] · /untimeout <user> · /clear");
+      sysLine(tab, "Commands: /user <name> · /ban <user> [reason] · /unban <user> · /timeout <user> [10m] [reason] · /untimeout <user> · /clear");
       return true;
     default:
       sysLine(tab, "Unknown command /" + cmd + ". Try /help.", "err");

@@ -6,7 +6,7 @@ import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
 import { parseSync } from "./sync";
 import { fetchX, parseXId } from "./previews";
-import { parseAnnounce, parseBanned, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
+import { parseAnnounce, parseBanned, parseLoginQuery, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
 import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
 import { authorizeUrl, exchangeCode, revokeToken, validateToken } from "./twitch";
 
@@ -149,6 +149,15 @@ async function handle(request: Request, env: Env): Promise<Response> {
     case "GET /api/schedule": {
       const id = url.searchParams.get("broadcaster_id") ?? "";
       return /^\d{1,20}$/.test(id) ? orFail(await publicApi.scheduleFor(env, url.origin, id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    // A channel's info sheet and anyone's profile by login: public data.
+    case "GET /api/channel/info": {
+      const id = parseBroadcaster(url.searchParams);
+      return id ? orFail(await publicApi.channelInfoFor(env, url.origin, id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    case "GET /api/lookup/user": {
+      const login = parseLoginQuery(url.searchParams);
+      return login ? orFail(await publicApi.userByLoginFor(env, url.origin, login)) : json({ ok: false, error: "Enter a Twitch username." }, 400);
     }
     // Preview card for an X/Twitter post linked in chat (see src/previews.ts).
     case "GET /api/preview/x": {

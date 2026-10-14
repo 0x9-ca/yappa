@@ -780,26 +780,81 @@ window.toolsMirror = (tab, li) => {
 
 // ---------- stream stats: uptime and viewers over time ----------
 
-function openStats() {
+const CONTENT_LABELS = {
+  DebatedSocialAndPoliticalIssuesAndCurrentEvents: "Politics and sensitive social issues",
+  DrugsIntoxication: "Drugs, intoxication or excessive tobacco use",
+  Gambling: "Gambling",
+  MatureGame: "Mature-rated game",
+  ProfanityVulgarity: "Significant profanity or vulgarity",
+  SexualThemes: "Sexual themes",
+  ViolentGraphic: "Violent and graphic depictions",
+};
+
+function languageName(code) {
+  try { return new Intl.DisplayNames([navigator.language || "en"], { type: "language" }).of(code) || code; } catch { return code; }
+}
+
+/** The channel info sheet: what the channel says about itself, plus live numbers while it's streaming. */
+function openChannelInfo() {
   const tab = active;
-  if (!tab || !tab.stream) return;
-  const root = el("div", "tools");
-  root.dataset.stats = "1";
+  if (!tab || !tab.broadcaster) return;
   const st = tab.stream;
-  root.append(el("h2", null, tab.broadcaster ? tab.broadcaster.name : tab.login), el("p", "hint", st.title));
-  const samples = tab.viewerSamples || [];
-  const peak = samples.reduce((m, s) => Math.max(m, s[1]), st.viewer_count);
-  const facts = el("div", "stat-facts");
-  for (const [k, v] of [["Live for", since(st.started_at)], ["Viewers now", st.viewer_count.toLocaleString()], ["Peak while you watched", peak.toLocaleString()], ["Category", st.game_name || "None"]]) {
-    const f = el("div", "stat");
-    f.append(el("div", "hint", k), el("b", null, v));
-    facts.appendChild(f);
+  const name = tab.broadcaster.name || tab.login;
+  const root = el("div", "tools chan-info");
+  root.dataset.stats = "1";
+  root.dataset.chaninfo = "1";
+  const head = el("div", "ci-head");
+  const avatar = document.createElement("img");
+  avatar.className = "ci-avatar";
+  avatar.alt = "";
+  avatar.hidden = true;
+  const names = el("div", "ci-names");
+  names.append(el("h2", null, name), el("div", "hint", "@" + tab.login));
+  head.append(avatar, names);
+  root.appendChild(head);
+  const actions = el("div", "card-actions");
+  actions.append(btn("Clips and VODs", () => { closeSheet(); $("clips-btn").click(); }, "small"), btn("Open on Twitch", () => launchers.window(twitchLinks(tab.login).web, "_blank"), "small ghost"));
+  root.appendChild(actions);
+  root.appendChild(el("p", "ci-title", st ? st.title : "Offline right now."));
+  const extra = el("div", "chan-extra");
+  extra.appendChild(el("div", "hint", "Loading channel info…"));
+  root.appendChild(extra);
+  if (st) {
+    const samples = tab.viewerSamples || [];
+    const peak = samples.reduce((m, s) => Math.max(m, s[1]), st.viewer_count);
+    const facts = el("div", "stat-facts");
+    for (const [k, v] of [["Live for", since(st.started_at)], ["Viewers now", st.viewer_count.toLocaleString()], ["Peak while you watched", peak.toLocaleString()], ["Category", st.game_name || "None"]]) {
+      const f = el("div", "stat");
+      f.append(el("div", "hint", k), el("b", null, v));
+      facts.appendChild(f);
+    }
+    root.appendChild(facts);
+    root.appendChild(el("h3", null, "Viewers since you opened this channel"));
+    root.appendChild(sparkline(samples));
   }
-  root.appendChild(facts);
-  root.appendChild(el("h3", null, "Viewers since you opened this channel"));
-  root.appendChild(sparkline(samples));
   $("sheet-body").replaceChildren(root);
   show("sheet", true);
+  api("/api/channel/info?broadcaster_id=" + encodeURIComponent(tab.broadcaster.id)).then((r) => {
+    if (!root.isConnected) return;
+    extra.replaceChildren();
+    if (!r || !r.ok) { extra.appendChild(el("div", "hint", r && r.error ? r.error : "Couldn't load the channel info.")); return; }
+    const c = r.channel;
+    if (c.avatar) { avatar.src = c.avatar; avatar.hidden = false; }
+    const facts = [];
+    if (!st && c.game) facts.push(["Last category", c.game]);
+    if (c.language) facts.push(["Language", languageName(c.language)]);
+    if (c.type) facts.push(["Account", c.type[0].toUpperCase() + c.type.slice(1)]);
+    if (c.createdAt) facts.push(["On Twitch since", new Date(c.createdAt).toLocaleDateString()]);
+    if (facts.length) {
+      const grid = el("div", "stat-facts");
+      for (const [k, v] of facts) { const f = el("div", "stat"); f.append(el("div", "hint", k), el("b", null, v)); grid.appendChild(f); }
+      extra.appendChild(grid);
+    }
+    if (c.tags.length) { const tags = el("div", "ci-tags"); for (const g of c.tags) tags.appendChild(el("span", "chip", g)); extra.appendChild(tags); }
+    const flags = [...c.labels.map((l) => CONTENT_LABELS[l] || l), ...(c.branded ? ["Paid promotion"] : [])];
+    if (flags.length) { const f = el("div", "ci-flags"); for (const x of flags) f.appendChild(el("span", "chip warn", x)); extra.appendChild(f); }
+    if (c.about) { extra.appendChild(el("h3", null, "About")); extra.appendChild(el("p", "ci-about", c.about)); }
+  });
 }
 
 function sparkline(samples) {
@@ -830,7 +885,7 @@ function sparkline(samples) {
   return svg;
 }
 
-$("live").addEventListener("click", () => { if (active && active.stream) openStats(); });
+$("live").addEventListener("click", () => { if (active && active.broadcaster) openChannelInfo(); });
 
 // ---------- slow mode countdown ----------
 
@@ -1338,6 +1393,14 @@ window.toolsLinkPreviews = (tab, li, body) => {
       box.appendChild(img);
     }
   }
+};
+
+// ---------- /user: look anyone up by name ----------
+
+window.toolsLookupUser = async (tab, name) => {
+  const r = await api("/api/lookup/user?login=" + encodeURIComponent(name.toLowerCase()));
+  if (!r || !r.ok) { sysLine(tab, "Couldn't look up " + name + ": " + ((r && r.error) || "try again"), "err"); return; }
+  openUserCard(tab, { id: r.user.id, login: r.user.login, name: r.user.name, color: "", badges: [] });
 };
 
 })();

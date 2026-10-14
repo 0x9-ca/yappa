@@ -83,12 +83,14 @@ await page.addInitScript(() => {
 });
 // Console errors the checks provoke on purpose: the CSP check, the 503 status, the aborted request.
 // The CSP one is allowed once, so a real violation by the app still fails the run.
-const expectedErrors = [/status of 403/, /status of 401/, /status of 503/, /status of 502/, /net::ERR_FAILED/];
+// (A 404 is only fine for the URLs listed in intended404; the console line for it is always accepted.)
+const intended404 = [/\/api\/preview\/x\?id=8003/, /pics\.example\.com\/missing/];
+const expectedErrors = [/status of 404/, /status of 403/, /status of 401/, /status of 503/, /status of 502/, /net::ERR_FAILED/];
 let allowedCspErrors = 1;
 const expected = (t) => expectedErrors.some((re) => re.test(t)) || (/Content Security Policy/.test(t) && allowedCspErrors-- > 0);
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && !expected(m.text()) && errors.push(m.text()));
 page.on("dialog", (d) => d.accept());
-page.on("response", (r) => { if (r.status() === 404) errors.push("404 " + r.url()); });
+page.on("response", (r) => { if (r.status() === 404 && !intended404.some((re) => re.test(r.url()))) errors.push("404 " + r.url()); });
 const log = { subs: [], unsubs: [], mods: [], sent: [], cycle: [], settings: [], automod: [], bumps: 0, player: [], clips: [] };
 const chatSettings = { slow_mode: true, slow_mode_wait_time: 10, follower_mode: false, follower_mode_duration: null, subscriber_mode: false, emote_mode: false, unique_chat_mode: false };
 let sendCounter = 0;
@@ -186,6 +188,17 @@ await ctx.route("**/*", async (route) => {
         return j({ ok: true, stored: true, current: b });
       }
       return j({ ok: true, sync: syncMockOff ? null : syncStore });
+    }
+    if (u.pathname === "/api/preview/x") {
+      const id = u.searchParams.get("id");
+      log.xPreviews = [...(log.xPreviews || []), id];
+      const author = { name: "Some One", handle: "someone", avatar: "https://pbs.twimg.com/profile_images/1/a.jpg", verified: true };
+      const base = { id, url: "https://x.com/someone/status/" + id, text: "hello from X, a post worth a card", createdAt: "2026-10-01T12:00:00.000Z", author, replies: 12, retweets: 340, likes: 1234, views: null, media: null, sensitive: false, moreMedia: 0 };
+      if (id === "8001") return j({ ok: true, card: { ...base, media: { kind: "photo", url: "https://pbs.twimg.com/media/photo.jpg", width: 600, height: 340 }, moreMedia: 1 } });
+      if (id === "8002") return j({ ok: true, card: { ...base, sensitive: true, media: { kind: "photo", url: "https://pbs.twimg.com/media/sensitive.jpg", width: 600, height: 340 } } });
+      if (id === "8003") return route.fulfill({ status: 404, json: { ok: false, error: "That post isn't available." } });
+      if (id === "8004") return j({ ok: true, card: { ...base, media: { kind: "video", url: "https://pbs.twimg.com/ext_tw_video_thumb/v.jpg", width: 600, height: 340 } } });
+      return j({ ok: true, card: base });
     }
     if (u.pathname === "/api/status" && statusDown) return route.fulfill({ status: 503, json: { ok: false, error: "The server is updating; try again in a minute.", retry: true } });
     if (u.pathname === "/api/status") { statusCalls++; return j({ ...(u.searchParams.has("sync") ? { sync: syncMockOff ? null : syncStore } : {}), twitch: { login: "testuser", userId: "111", displayName: "TestUser", avatar: noAvatar ? null : "https://img.test/avatar.png", missingScopes: [], missingOptionalScopes: noClipsScope ? ["clips:edit"] : [] }, cycle }); }
@@ -333,6 +346,12 @@ await ctx.route("**/*", async (route) => {
     const hue = [...u.pathname].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
     const wide = /clip-|vod|thumb/.test(u.pathname);
     return route.fulfill({ body: wide ? `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue},60%,45%)"/><stop offset="1" stop-color="hsl(${(hue + 60) % 360},60%,25%)"/></linearGradient></defs><rect width="320" height="180" fill="url(#g)"/></svg>` : svg(hue), contentType: "image/svg+xml" });
+  }
+  // X's picture CDN and a stand-in image-link host: recorded (referrer included), answered with a wide tile.
+  if (/(^|\.)twimg\.com$/.test(u.host) || u.host === "pics.example.com") {
+    log.pics = [...(log.pics || []), { url: u.href, referer: route.request().headers().referer || null }];
+    if (u.pathname.includes("missing")) return route.fulfill({ status: 404, body: "" });
+    return route.fulfill({ body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="340"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b6cb0"/><stop offset="1" stop-color="#6b46c1"/></linearGradient></defs><rect width="600" height="340" fill="url(#g)"/><circle cx="300" cy="170" r="70" fill="#ffffff33"/></svg>', contentType: "image/svg+xml" });
   }
   // A stand-in GIF host (the real ones are on giphy.com), 4:3 so the size caps are visible.
   if (/(^|\.)giphy\.com$/.test(u.host)) { log.gifs = [...(log.gifs || []), { url: u.href, referer: route.request().headers().referer || null }]; return route.fulfill({ body: '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360"><rect width="480" height="360" fill="#e0457b"/><text x="240" y="190" font-size="48" text-anchor="middle" fill="#fff">GIF</text></svg>', contentType: "image/svg+xml" }); }
@@ -2857,6 +2876,61 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const back = await page.$$eval("#sheet details.set-group:not([hidden])", (g) => g.length);
   check("clearing the search brings every section back", back === 7 && await page.$eval("#sheet .set-none", (n) => n.hidden) && (await page.$$eval("#sheet details.set-group[open]", (g) => g.length)) <= 1);
   await page.click("#sheet-close");
+}
+
+
+// =============== link previews: X/Twitter posts and image links ===============
+{
+  const cid = await page.evaluate(() => active.broadcaster.id);
+  const say = async (id, text) => { cur().send(chat(cid, id, "Linker", "9801", text)); await page.waitForSelector(`li[data-id="${id}"]`, { state: "attached" }); await settle(150); };
+  log.xPreviews = []; log.pics = [];
+  await say("lp1", "look at this https://x.com/someone/status/8001 wow");
+  await page.waitForSelector('li[data-id="lp1"] .x-card');
+  const c1 = await page.$eval('li[data-id="lp1"] .x-card', (a) => ({ href: a.href, who: a.querySelector(".xc-who").textContent, text: a.querySelector(".xc-text").textContent, foot: a.querySelector(".xc-foot").textContent, rel: a.rel, target: a.target, imgs: [...a.querySelectorAll("img")].map((i) => i.referrerPolicy), note: (a.querySelector(".xc-note") || {}).textContent || "" }));
+  check("a post link gets a card with author, text, picture and counts", c1.href === "https://x.com/someone/status/8001" && /Some One ✓@someone/.test(c1.who) && c1.text === "hello from X, a post worth a card" && /♥ 1.2k/.test(c1.foot) && /↻ 340/.test(c1.foot) && c1.imgs.length === 2 && c1.imgs.every((r) => r === "no-referrer") && /\+1 more/.test(c1.note), JSON.stringify(c1));
+  check("the card opens the post in a new tab, safely", c1.target === "_blank" && /noopener/.test(c1.rel) && /nofollow/.test(c1.rel));
+  check("its pictures load without a referrer", log.pics.length >= 2 && log.pics.every((p) => p.referer === null), JSON.stringify(log.pics));
+  await shot("x-card");
+  await say("lp2", "again https://twitter.com/someone/status/8001?s=20 and https://mobile.twitter.com/someone/statuses/8001");
+  check("the same post, however it's linked, is fetched once", log.xPreviews.filter((x) => x === "8001").length === 1, JSON.stringify(log.xPreviews));
+  check("...and each message still gets a card", (await page.$$('li[data-id="lp2"] .x-card')).length === 1);
+  await say("lp3", "risky https://x.com/someone/status/8002");
+  await page.waitForSelector('li[data-id="lp3"] .x-card');
+  check("a sensitive post's media is never loaded", (await page.$$('li[data-id="lp3"] .xc-media')).length === 0 && /Sensitive media hidden/.test(await page.textContent('li[data-id="lp3"] .x-card')) && !log.pics.some((p) => p.url.includes("sensitive")));
+  await say("lp4", "gone https://x.com/someone/status/8003");
+  check("a post that isn't available leaves just the link", (await page.$$('li[data-id="lp4"] .x-card')).length === 0 && (await page.$$('li[data-id="lp4"] a.link')).length === 1);
+  await say("lp5", "profile https://x.com/someone and https://x.com/home and https://example.com/someone/status/8001");
+  check("only post links are previewed (not profiles, other pages or other sites)", (await page.$$('li[data-id="lp5"] .x-card')).length === 0 && !log.xPreviews.includes("home"));
+  await say("lp6", "vid https://x.com/someone/status/8004");
+  await page.waitForSelector('li[data-id="lp6"] .x-card .xc-play');
+  check("a video shows its still frame with a play mark", (await page.textContent('li[data-id="lp6"] .xc-play')) === "▶");
+  // Settings
+  await page.evaluate(() => { settings.previews.media = false; saveSettings(); });
+  const picsBefore = log.pics.length;
+  await say("lp7", "textonly https://x.com/someone/status/8005");
+  await page.waitForSelector('li[data-id="lp7"] .x-card');
+  check("with pictures off the card is text only and nothing loads from X", (await page.$$('li[data-id="lp7"] .x-card img')).length === 0 && log.pics.length === picsBefore);
+  await page.evaluate(() => { settings.previews.x = false; saveSettings(); });
+  const reqs = log.xPreviews.length;
+  await say("lp8", "off https://x.com/someone/status/8006");
+  check("with X previews off no card shows and nothing is requested", (await page.$$('li[data-id="lp8"] .x-card')).length === 0 && log.xPreviews.length === reqs);
+  await page.evaluate(() => { settings.previews = { x: true, media: true, images: false }; saveSettings(); });
+
+  // Image links are opt-in.
+  const pics0 = log.pics.length;
+  await say("im1", "pic https://pics.example.com/cat.png");
+  check("an image link shows nothing by default (and loads nothing)", (await page.$$('li[data-id="im1"] .img-preview')).length === 0 && log.pics.length === pics0);
+  await page.evaluate(() => { settings.previews.images = true; saveSettings(); });
+  await say("im2", "pic https://pics.example.com/cat.png and https://pics.example.com/missing.png and http://pics.example.com/plain.png and https://pics.example.com/page.html");
+  await page.waitForSelector('li[data-id="im2"] .img-preview');
+  await settle(200);
+  check("with it on: https image links show a picture, once it has loaded", (await page.$$('li[data-id="im2"] .img-preview')).length === 1 && await page.$eval('li[data-id="im2"] .img-preview', (a) => a.href === "https://pics.example.com/cat.png" && a.querySelector("img").referrerPolicy === "no-referrer"));
+  check("...but not broken pictures, plain http, or non-images", !log.pics.slice(pics0).some((p) => p.url.startsWith("http://") || p.url.endsWith(".html")) && (await page.$$('li[data-id="im2"] .img-preview')).length === 1);
+  await shot("image-preview");
+  await page.evaluate(() => { settings.previews.images = false; saveSettings(); });
+  await openSettingsUI();
+  check("Settings has the link preview options", /Show X \/ Twitter posts/.test(await page.textContent("#sheet")) && /Show images from image links/.test(await page.textContent("#sheet")));
+  await page.keyboard.press("Escape");
 }
 
 // =============== moving to a new address ===============

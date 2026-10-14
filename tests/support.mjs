@@ -19,6 +19,7 @@ export async function loadBundles() {
         'export { relayMaster } from "./src/usher.ts";',
         'export { parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimClip, slimVideo, clipFailure } from "./src/browse.ts";',
         'export { staticFiles } from "./src/static.ts";',
+        'export { slimTweet, parseXId, twimgUrl } from "./src/previews.ts";',
       ].join("\n"),
       resolveDir: root, sourcefile: "entry.ts", loader: "ts",
     },

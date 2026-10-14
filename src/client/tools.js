@@ -1219,4 +1219,98 @@ window.toolsVideoChanged = renderSecond;
 wide.addEventListener("change", renderSecond);
 $("v2-close").addEventListener("click", () => setSecond(null));
 
+// ---------- link previews: X/Twitter posts, and (opt-in) pictures ----------
+
+const X_LINK = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]{1,15}\/status(?:es)?\/(\d{1,25})(?:[/?#]|$)/i;
+const IMAGE_LINK = /\.(?:png|jpe?g|gif|webp)$/i;
+const xCards = new Map(); // post id -> promise of its card (null when unavailable)
+
+function fetchXCard(id) {
+  let p = xCards.get(id);
+  if (!p) {
+    p = api("/api/preview/x?id=" + id).then((r) => (r && r.ok ? r.card : null));
+    if (xCards.size > 100) xCards.delete(xCards.keys().next().value);
+    xCards.set(id, p);
+    p.then((c) => { if (!c) setTimeout(() => xCards.delete(id), 60000); }); // a failure is tried again later
+  }
+  return p;
+}
+
+const onXCdn = (u) => { try { const x = new URL(u); return x.protocol === "https:" && /(^|\.)twimg\.com$/.test(x.hostname); } catch { return false; } };
+
+function xCardEl(card) {
+  const pv = settings.previews || {};
+  const pictures = pv.media !== false;
+  const a = el("a", "x-card");
+  a.href = card.url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer nofollow";
+  const head = el("div", "xc-head");
+  if (pictures && card.author.avatar && onXCdn(card.author.avatar)) {
+    const av = document.createElement("img");
+    av.src = card.author.avatar;
+    av.alt = "";
+    av.referrerPolicy = "no-referrer";
+    av.className = "xc-avatar";
+    head.appendChild(av);
+  }
+  const who = el("div", "xc-who");
+  who.append(el("b", null, card.author.name + (card.author.verified ? " ✓" : "")), el("span", null, "@" + card.author.handle));
+  head.append(who, el("span", "xc-x", "X"));
+  a.append(head, el("div", "xc-text", card.text));
+  if (card.media && card.sensitive) {
+    a.appendChild(el("div", "xc-note", "Sensitive media hidden."));
+  } else if (card.media && pictures && onXCdn(card.media.url)) {
+    const box = el("div", "xc-media");
+    const img = document.createElement("img");
+    img.src = card.media.url;
+    img.alt = card.media.kind === "photo" ? "Picture in the post" : "Still from the post's " + card.media.kind;
+    img.referrerPolicy = "no-referrer";
+    img.loading = "lazy";
+    img.addEventListener("error", () => box.remove());
+    box.appendChild(img);
+    if (card.media.kind !== "photo") box.appendChild(el("span", "xc-play", card.media.kind === "gif" ? "GIF" : "▶"));
+    a.appendChild(box);
+    if (card.moreMedia) a.appendChild(el("div", "xc-note", "+" + card.moreMedia + " more"));
+  }
+  const stats = [];
+  if (card.likes != null) stats.push("♥ " + compactCount(card.likes));
+  if (card.retweets != null) stats.push("↻ " + compactCount(card.retweets));
+  if (card.replies != null) stats.push("💬 " + compactCount(card.replies));
+  if (card.createdAt) stats.push(new Date(card.createdAt).toLocaleDateString());
+  if (stats.length) a.appendChild(el("div", "xc-foot", stats.join("  ·  ")));
+  return a;
+}
+
+function placePreview(tab, li, node) {
+  if (!li.isConnected) return;
+  const before = li.querySelector(".actions");
+  if (tab === active && sticking(tab)) { li.insertBefore(node, before); scrollToBottom(tab); }
+  else keepScroll(tab, () => li.insertBefore(node, before));
+}
+
+window.toolsLinkPreviews = (tab, li, body) => {
+  const pv = settings.previews || {};
+  const links = [...body.querySelectorAll("a.link")].map((a) => a.href);
+  if (pv.x !== false) {
+    const ids = [...new Set(links.map((h) => (X_LINK.exec(h) || [])[1]).filter(Boolean))].slice(0, 2);
+    for (const id of ids) fetchXCard(id).then((card) => { if (card && li.isConnected) placePreview(tab, li, xCardEl(card)); });
+  }
+  if (pv.images === true) {
+    const imgs = [...new Set(links.filter((h) => { try { const u = new URL(h); return u.protocol === "https:" && IMAGE_LINK.test(u.pathname) && !X_LINK.test(h); } catch { return false; } }))].slice(0, 2);
+    for (const src of imgs) {
+      const box = el("a", "img-preview");
+      box.href = src;
+      box.target = "_blank";
+      box.rel = "noopener noreferrer nofollow";
+      const img = document.createElement("img"); // (not lazy: it's loaded before it joins the page, so a broken one never shows)
+      img.referrerPolicy = "no-referrer";
+      img.alt = "Picture from the link";
+      img.addEventListener("load", () => placePreview(tab, li, box), { once: true }); // only shown once it has actually loaded
+      img.src = src;
+      box.appendChild(img);
+    }
+  }
+};
+
 })();

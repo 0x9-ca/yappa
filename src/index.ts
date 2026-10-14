@@ -5,6 +5,7 @@ import { clearSessionCookie, isAllowed, readSession, sessionCookie, signSession 
 import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
 import { parseSync } from "./sync";
+import { fetchX, parseXId } from "./previews";
 import { parseAnnounce, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
 import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
 import { authorizeUrl, exchangeCode, revokeToken, validateToken } from "./twitch";
@@ -148,6 +149,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
     case "GET /api/schedule": {
       const id = url.searchParams.get("broadcaster_id") ?? "";
       return /^\d{1,20}$/.test(id) ? orFail(await publicApi.scheduleFor(env, url.origin, id)) : json({ ok: false, error: "Bad broadcaster_id." }, 400);
+    }
+    // Preview card for an X/Twitter post linked in chat (see src/previews.ts).
+    case "GET /api/preview/x": {
+      const id = parseXId(url.searchParams.get("id"));
+      if (!id) return json({ ok: false, error: "Bad post id." }, 400);
+      const r = await fetchX(id);
+      return json(r, r.ok ? 200 : r.status);
     }
     // The native player's quality list (see src/usher.ts). No Durable Object needed.
     case "POST /api/hls/master": {

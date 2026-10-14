@@ -50,6 +50,9 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
   explanation of each, follow age, recent messages, quick timeouts).
 - Optional chat history (via [recent-messages.robotty.de](https://recent-messages.robotty.de/), only after
   you opt in) with older pages as you scroll up, and gap filling after a reconnect.
+- Links to X/Twitter posts show a preview card (author, text, picture, counts); the Worker fetches it from the
+  unofficial [FixTweet](https://github.com/FxEmbed/FxEmbed) service so your address isn't shared with it. Links to
+  images can show the picture too (opt-in). Both are under Settings → Chat → Link previews.
 - Clip links in chat show as cards; first-time chatters, deleted messages, highlighted and channel-points
   messages, raids and Gigantified emotes are marked.
 - Reply, save a message as a bookmark, or translate it (with the browser's own translator where it has one,

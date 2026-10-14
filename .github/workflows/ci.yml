@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # wrangler.jsonc (your real hostnames) isn't in git; the template is enough to generate the types.
+      - run: cp wrangler.sample.jsonc wrangler.jsonc
+      - run: npm run types
+      - name: Type-check
+        run: npm run check
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+      - name: Browser tests
+        run: CHROMIUM_PATH="$(node -e "console.log(require('playwright-core').chromium.executablePath())")" npm run test:e2e

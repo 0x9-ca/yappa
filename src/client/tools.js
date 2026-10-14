@@ -1410,7 +1410,7 @@ function xCardEl(card) {
   const stats = [];
   if (card.likes != null) stats.push("♥ " + compactCount(card.likes));
   if (card.retweets != null) stats.push("↻ " + compactCount(card.retweets));
-  if (card.replies != null) stats.push("💬 " + compactCount(card.replies));
+  if (card.replies != null) stats.push("↩ " + compactCount(card.replies));
   if (card.createdAt) stats.push(new Date(card.createdAt).toLocaleDateString());
   if (stats.length) a.appendChild(el("div", "xc-foot", stats.join("  ·  ")));
   return a;

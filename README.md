@@ -332,6 +332,18 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/history-optin-mobile.png" width="240" alt="Chat history opt-in prompt (phone)"> | <img src="docs/screenshots/history-optin-desktop.png" width="520" alt="Chat history opt-in prompt (desktop)"> |
 
+**X/Twitter post preview card**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/x-card-mobile.png" width="240" alt="X post card (phone)"> | <img src="docs/screenshots/x-card-desktop.png" width="520" alt="X post card (desktop)"> |
+
+**Picture from an image link (opt-in)**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/image-preview-mobile.png" width="240" alt="Image link preview (phone)"> | <img src="docs/screenshots/image-preview-desktop.png" width="520" alt="Image link preview (desktop)"> |
+
 </details>
 
 <details>
@@ -470,6 +482,18 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 |---|---|
 | <img src="docs/screenshots/user-card-mobile.png" width="240" alt="User card with follow age and quick timeouts (phone)"> | <img src="docs/screenshots/user-card-desktop.png" width="520" alt="User card with follow age and quick timeouts (desktop)"> |
 
+**Mod tools: banned and timed-out users**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/banned-users-mobile.png" width="240" alt="Banned users (phone)"> | <img src="docs/screenshots/banned-users-desktop.png" width="520" alt="Banned users (desktop)"> |
+
+**Moderator presets: timeout lengths and reasons**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/mod-presets-mobile.png" width="240" alt="Moderator presets (phone)"> | <img src="docs/screenshots/mod-presets-desktop.png" width="520" alt="Moderator presets (desktop)"> |
+
 </details>
 
 <details>
@@ -494,6 +518,30 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | Phone | Desktop |
 |---|---|
 | <img src="docs/screenshots/emote-picker-by-channel-mobile.png" width="240" alt="Emote picker grouped by channel (phone)"> | <img src="docs/screenshots/emote-picker-by-channel-desktop.png" width="520" alt="Emote picker grouped by channel (desktop)"> |
+
+**Channel info**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/channel-info-mobile.png" width="240" alt="Channel info sheet (phone)"> | <img src="docs/screenshots/channel-info-desktop.png" width="520" alt="Channel info sheet (desktop)"> |
+
+**Quick switcher (Ctrl/Cmd+K)**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/quick-switcher-mobile.png" width="240" alt="Quick switcher (phone)"> | <img src="docs/screenshots/quick-switcher-desktop.png" width="520" alt="Quick switcher (desktop)"> |
+
+**Focus mode**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/focus-mode-mobile.png" width="240" alt="Focus mode (phone)"> | <img src="docs/screenshots/focus-mode-desktop.png" width="520" alt="Focus mode (desktop)"> |
+
+**Per-channel auto-translate**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/auto-translate-mobile.png" width="240" alt="Auto-translate setting (phone)"> | <img src="docs/screenshots/auto-translate-desktop.png" width="520" alt="Auto-translate setting (desktop)"> |
 
 </details>
 
@@ -546,5 +594,17 @@ Each state is shown on a phone (390×760 at 2× pixel density) and on a desktop-
 | Phone | Desktop |
 |---|---|
 | <img src="docs/screenshots/color-cycling-mobile.png" width="240" alt="Chat color cycling (phone)"> | <img src="docs/screenshots/color-cycling-desktop.png" width="520" alt="Chat color cycling (desktop)"> |
+
+**Diagnostics**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/diagnostics-mobile.png" width="240" alt="Diagnostics (phone)"> | <img src="docs/screenshots/diagnostics-desktop.png" width="520" alt="Diagnostics (desktop)"> |
+
+**High-contrast theme**
+
+| Phone | Desktop |
+|---|---|
+| <img src="docs/screenshots/high-contrast-mobile.png" width="240" alt="High-contrast theme (phone)"> | <img src="docs/screenshots/high-contrast-desktop.png" width="520" alt="High-contrast theme (desktop)"> |
 
 </details>

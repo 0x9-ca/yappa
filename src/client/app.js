@@ -185,6 +185,13 @@ function safeGet(k) { try { return localStorage.getItem(k); } catch { return nul
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
 pinnedLogin = safeGet("pinnedVideo") || null;
 
+// The last few requests that failed in a way worth knowing about (shown in Settings → Diagnostics).
+const apiErrors = [];
+function noteApiError(path, status, message) {
+  apiErrors.unshift({ at: Date.now(), path: String(path).split("?")[0], status, message: String(message || "").slice(0, 200) });
+  if (apiErrors.length > 20) apiErrors.pop();
+}
+
 async function api(path, body) {
   let res;
   try {
@@ -193,15 +200,17 @@ async function api(path, body) {
     });
   } catch {
     // Offline, or the phone just woke up: callers treat this like any failed request.
+    noteApiError(path, 0, "Network error");
     return { ok: false, error: "Network error; check your connection.", retry: true };
   }
-  return readApi(res);
+  return readApi(res, path);
 }
 
 /** Turns a response into what api() returns (also used for the status request theme.js starts early). */
-async function readApi(res) {
+async function readApi(res, path = "/api/status") {
   let data;
   try { data = await res.json(); } catch { data = { ok: false, error: "Request failed (" + res.status + ")", retry: res.status >= 500 }; }
+  if (res.status >= 500 || res.status === 401 || res.status === 403 || res.status === 429) noteApiError(path, res.status, data && (data.error || (data.signedOut && "Signed out")));
   // 401 + signedOut: the sign-in cookie expired, or this account was taken off the allowlist.
   if (res.status === 401 && data && data.signedOut) {
     show("expired", true);
@@ -4672,6 +4681,9 @@ function openSettings(wantGroup) {
       if (c.checked) syncPull(false);
     }), "Keep settings, open tabs and the pinned stream the same on every device you sign in on (the newest change wins). Video player, theme, text size and notifications stay per device.")),
     item("Backup", row("Settings file", backupControls(), "Save everything (settings, tabs, notes, bookmarks, quick messages) to a file, or restore from one. Restoring replaces what's here.")),
+  ]);
+  group("diag", "Diagnostics", "Version, permissions, recent problems", [
+    item("Diagnostics", window.toolsDiagnostics ? window.toolsDiagnostics() : el("div", "hint", "Not available.")),
     item("Startup timings", el("div", "hint", startupSummary())),
   ]);
 

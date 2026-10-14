@@ -99,6 +99,8 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
   size and notification choices stay per device).
 - Per-channel overrides for notifications, sound, go-live alerts and muted words.
 - Private notes and colored labels on people; quick messages for things you type often; favorite emotes.
+- A Diagnostics section in Settings: server version, token and permission status (with what each missing
+  permission is for and a reconnect link), recent failed requests and startup timings, with a copy button.
 - Light and dark themes, compact or shaded rows, hidden times or badges, monospace or serif font. Settings is a short list of collapsible sections with a search box.
 - Tab menu (move, live-first, pin, close others), desktop shortcuts (`?` lists them), save a chat as text or
   JSON, and a settings backup you can restore from a file.

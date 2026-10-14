@@ -200,6 +200,9 @@ async function handle(request: Request, env: Env): Promise<Response> {
       return json(await stub.putSync(blob));
     }
 
+    case "GET /api/diag":
+      return json({ ok: true, version: { id: env.CF_VERSION_METADATA.id, at: env.CF_VERSION_METADATA.timestamp }, twitch: await stub.diag() });
+
     case "GET /api/status":
       // The first call after opening the app also carries the account's synced settings, saving a round trip.
       if (url.searchParams.has("sync")) {

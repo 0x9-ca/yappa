@@ -189,6 +189,10 @@ await ctx.route("**/*", async (route) => {
       }
       return j({ ok: true, sync: syncMockOff ? null : syncStore });
     }
+    if (u.pathname === "/api/diag") {
+      const have = ["user:read:chat", "user:write:chat", "user:manage:chat_color", "user:read:emotes", "user:read:follows"];
+      return j({ ok: true, version: { id: "abc123def4567890", at: "2026-10-14T12:00:00Z" }, twitch: { login: "testuser", userId: "111", scopes: have, expiresAt: Date.now() + 90 * 60000, validatedAt: Date.now() - 5 * 60000 } });
+    }
     if (u.pathname === "/api/channel/info") {
       log.chanInfo = [...(log.chanInfo || []), u.searchParams.get("broadcaster_id")];
       return j({ ok: true, channel: { id: u.searchParams.get("broadcaster_id"), login: "yappa", name: "Yappa", avatar: "https://img.test/chan-avatar.png", about: "Building a chat app in public.\nCome say hi!", createdAt: "2018-04-02T00:00:00Z", type: "partner", title: "Building a chat app", game: "Software and Game Development", language: "en", tags: ["English", "Coding", "ChillVibes"], labels: ["MatureGame", "Gambling"], branded: true } });
@@ -2857,7 +2861,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await openSettingsUI({ expand: false });
   await page.waitForSelector("#sheet details.set-group");
   const groups = await page.$$eval("#sheet details.set-group", (g) => g.map((d) => d.dataset.group));
-  check("Settings is a short list of sections", JSON.stringify(groups) === '["color","chat","alerts","filters","video","look","account"]', JSON.stringify(groups));
+  check("Settings is a short list of sections", JSON.stringify(groups) === '["color","chat","alerts","filters","video","look","account","diag"]', JSON.stringify(groups));
   const open0 = await page.$$eval("#sheet details.set-group[open]", (g) => g.length);
   const fits = await page.evaluate(() => { const b = document.getElementById("sheet-body"); return b.scrollHeight <= b.clientHeight + 2; });
   check("they start collapsed (apart from the one you had open last), so nothing needs scrolling", open0 <= 1 && fits, open0 + " open, fits " + fits);
@@ -2887,7 +2891,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   check("no match says so", (await page.$$eval("#sheet details.set-group:not([hidden])", (g) => g.length)) === 0 && await page.isVisible("#sheet .set-none"));
   await page.fill("#sheet .set-find", "");
   const back = await page.$$eval("#sheet details.set-group:not([hidden])", (g) => g.length);
-  check("clearing the search brings every section back", back === 7 && await page.$eval("#sheet .set-none", (n) => n.hidden) && (await page.$$eval("#sheet details.set-group[open]", (g) => g.length)) <= 1);
+  check("clearing the search brings every section back", back === 8 && await page.$eval("#sheet .set-none", (n) => n.hidden) && (await page.$$eval("#sheet details.set-group[open]", (g) => g.length)) <= 1);
   await page.click("#sheet-close");
 }
 
@@ -3011,6 +3015,28 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.fill("#message", "/user");
   await page.press("#message", "Enter");
   check("without a name it shows the usage", (await page.textContent(".messages:not([hidden])")).includes("Usage: /user <name>"));
+}
+
+
+// =============== Settings: diagnostics ===============
+{
+  streamsFail = true;
+  await page.evaluate(() => api("/api/streams?ids=1"));
+  streamsFail = false;
+  await openSettingsUI();
+  await page.waitForSelector("#sheet .diag-grid");
+  const d = await page.textContent("#sheet .diag");
+  check("Diagnostics shows the server version, who you're signed in as and the token's state", /abc123de/.test(d) && /@testuser/.test(d) && /good for about \d+ more minutes/.test(d), d.slice(0, 300));
+  check("it counts the permissions and lists the missing ones with what they're for", /5 of 26 granted; 21 missing/.test(d) && /clips:edit/.test(d) && /creating clips/.test(d) && !!(await page.$('#sheet .diag a[href="/auth/login"]')), d.slice(0, 400));
+  check("recent problems lists a failed request", /\/api\/streams/.test(await page.textContent("#sheet .diag-errors")) && /502/.test(await page.textContent("#sheet .diag-errors")));
+  await page.evaluate(() => { window.__clip = null; navigator.clipboard.writeText = async (t) => { window.__clip = t; }; });
+  await page.click('#sheet button:has-text("Copy diagnostics")');
+  await settle(100);
+  const copied = await page.evaluate(() => window.__clip);
+  check("Copy diagnostics copies a plain-text report without secrets", /^Yappa diagnostics/.test(copied) && /Missing permissions: .*clips:edit/.test(copied) && /\/api\/streams 502/.test(copied) && !/token":|secret/i.test(copied), copied && copied.slice(0, 200));
+  check("startup timings now live in Diagnostics", await page.$eval('#sheet details[data-group="diag"]', (g) => /Startup timings/.test(g.textContent)));
+  await shot("diagnostics");
+  await page.keyboard.press("Escape");
 }
 
 // =============== moving to a new address ===============

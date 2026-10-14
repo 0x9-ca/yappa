@@ -553,3 +553,9 @@ button.small, a.btn.small { padding: 3px 9px; font-size: 12px; }
 .ci-tags, .ci-flags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .chip.warn { background: #4a2e12; color: #ffc76b; }
 .ci-about { margin: 4px 0; font-size: 13px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Diagnostics */
+.diag-grid { display: grid; grid-template-columns: minmax(90px, 30%) 1fr; gap: 6px 12px; margin: 8px 0; font-size: 13px; }
+.diag-v { overflow-wrap: anywhere; }
+.diag-missing, .diag-errors { margin: 4px 0 8px; padding-left: 18px; font-size: 12.5px; }
+.diag-errors { font-variant-numeric: tabular-nums; }

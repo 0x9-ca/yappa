@@ -148,6 +148,12 @@ export class ColorLoop extends DurableObject<Env> {
     }
   }
 
+  /** What the Diagnostics section shows about the Twitch connection. Never the tokens themselves. */
+  async diag(): Promise<{ login: string; userId: string; scopes: string[]; expiresAt: number; validatedAt: number } | null> {
+    const t = await this.getTokens();
+    return t ? { login: t.login, userId: t.userId, scopes: t.scopes ?? [], expiresAt: t.expiresAt, validatedAt: t.validatedAt } : null;
+  }
+
   async status(): Promise<Status> {
     const [tokens, cycle] = await Promise.all([this.getTokens(), this.getCycle()]);
     const profile = tokens ? await this.getProfile(tokens) : null;

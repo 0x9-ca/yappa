@@ -110,10 +110,11 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   let twitchLogin = { user_id: "4242", login: "AllowedUser" };
   const env = {
     SESSION_SECRET: "s".repeat(48), ALLOWED_LOGINS: "alloweduser, 777", APP_HOST: "app.test", TWITCH_CLIENT_ID: "cid", TWITCH_CLIENT_SECRET: "sec",
-    CF_VERSION_METADATA: { timestamp: "t" },
+    CF_VERSION_METADATA: { id: "0123456789abcdef", timestamp: "2026-10-14T00:00:00Z" },
     COLOR_LOOP: { getByName: (name) => { calls.names.push(name); return {
       syncVersion: async () => {}, storeTokens: async (tok, info) => { calls.stored.push([name, info.login, tok.access_token]); }, disconnectTwitch: async () => { calls.disconnected.push(name); },
       status: async () => ({ ok: true, twitch: null }),
+      diag: async () => ({ login: "alloweduser", userId: name, scopes: ["user:read:chat"], expiresAt: 1, validatedAt: 2 }),
       getSync: async () => syncSaved, putSync: async (b) => { syncSaved = b; return { ok: true, stored: true, current: b }; },
     }; } },
   };
@@ -213,6 +214,13 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   r = await cb("error=access_denied&error_description=" + encodeURIComponent("<b>hi</b>"));
   check("cancelling at Twitch comes back with a fixed code, not Twitch's text", r.headers.get("Location") === "/?error=cancelled");
 
+  // Diagnostics.
+  let j;
+  r = await get("/api/diag");
+  check("diagnostics need a session", r.status === 401);
+  r = await get("/api/diag", sess);
+  j = await r.json();
+  check("diagnostics give the deployed version and the connection's permissions, never tokens", r.status === 200 && j.version.id === "0123456789abcdef" && j.twitch.scopes[0] === "user:read:chat" && !/token/i.test(JSON.stringify(j)), JSON.stringify(j));
   // X/Twitter preview route.
   const fxCalls = [];
   const realFetch2 = globalThis.fetch;
@@ -231,7 +239,7 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   r = await get("/api/preview/x?id=7001");
   check("post previews need a session", r.status === 401 && fxCalls.length === 0);
   r = await get("/api/preview/x?id=7001", sess);
-  let j = await r.json();
+  j = await r.json();
   check("a session gets a card, fetched from the preview service by id", r.status === 200 && j.ok && j.card.author.handle === "someone" && fxCalls.length === 1 && fxCalls[0] === "https://api.fxtwitter.com/status/7001", JSON.stringify(j));
   await get("/api/preview/x?id=7001", sess);
   check("the same post is remembered, not fetched again", fxCalls.length === 1);

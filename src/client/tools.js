@@ -1403,4 +1403,69 @@ window.toolsLookupUser = async (tab, name) => {
   openUserCard(tab, { id: r.user.id, login: r.user.login, name: r.user.name, color: "", badges: [] });
 };
 
+// ---------- Settings → Diagnostics ----------
+
+const SCOPE_INFO = {
+  "user:read:chat": "reading chat", "user:write:chat": "sending messages", "user:manage:chat_color": "chat color cycling",
+  "user:read:emotes": "your Twitch emotes in the picker", "user:read:follows": "followed channels, the follow heart, go-live alerts",
+  "user:read:subscriptions": "the subscription chip", "user:read:blocked_users": "reading your block list", "user:manage:blocked_users": "blocking and unblocking",
+  "user:read:whispers": "receiving whispers", "user:manage:whispers": "sending whispers", "clips:edit": "creating clips",
+  "user:read:moderated_channels": "knowing which channels you moderate", "moderator:manage:chat_messages": "deleting messages",
+  "moderator:manage:banned_users": "timeouts, bans and the banned list", "moderator:manage:chat_settings": "chat modes",
+  "moderator:manage:automod": "the AutoMod queue", "moderator:read:followers": "follow age on user cards",
+  "moderator:manage:announcements": "announcements", "moderator:manage:shoutouts": "shoutouts", "moderator:manage:warnings": "warnings",
+  "moderator:manage:blocked_terms": "blocked terms", "moderator:manage:shield_mode": "Shield Mode",
+  "moderator:read:suspicious_users": "suspicious-user flags", "moderator:manage:suspicious_users": "marking suspicious users",
+  "moderator:manage:unban_requests": "unban requests", "moderator:read:chatters": "the chatters list",
+};
+
+window.toolsDiagnostics = () => {
+  const box = el("div", "diag");
+  box.appendChild(el("div", "hint", "Loading…"));
+  api("/api/diag").then((r) => {
+    box.replaceChildren();
+    if (!r || !r.ok) { box.appendChild(el("div", "hint", "Couldn't load the diagnostics" + (r && r.error ? ": " + r.error : "."))); return; }
+    const facts = [["Server version", r.version.id.slice(0, 8) + ", deployed " + new Date(r.version.at).toLocaleString()]];
+    const tw = r.twitch;
+    let missing = [];
+    if (tw) {
+      const granted = new Set(tw.scopes);
+      missing = Object.keys(SCOPE_INFO).filter((s) => !granted.has(s));
+      const mins = Math.round((tw.expiresAt - Date.now()) / 60000);
+      facts.push(["Signed in to Twitch as", "@" + tw.login],
+        ["Twitch token", (mins > 0 ? "good for about " + mins + " more minutes (renewed automatically)" : "being renewed") + "; last checked " + since(new Date(tw.validatedAt).toISOString()) + " ago"],
+        ["Permissions", (Object.keys(SCOPE_INFO).length - missing.length) + " of " + Object.keys(SCOPE_INFO).length + " granted" + (missing.length ? "; " + missing.length + " missing" : "")]);
+    } else facts.push(["Twitch", "Not connected"]);
+    facts.push(["Browser", navigator.userAgent], ["Window", innerWidth + "×" + innerHeight + (matchMedia("(pointer: coarse)").matches ? ", touch" : "")],
+      ["Notifications", typeof Notification === "undefined" ? "not supported" : Notification.permission]);
+    const grid = el("div", "diag-grid");
+    for (const [k, v] of facts) { grid.append(el("div", "hint", k), el("div", "diag-v", v)); }
+    box.appendChild(grid);
+    if (missing.length) {
+      box.appendChild(el("h3", null, "Permissions not granted"));
+      const ul = el("ul", "diag-missing");
+      for (const s of missing) ul.appendChild(el("li", null, SCOPE_INFO[s] + " (" + s + ")"));
+      box.appendChild(ul);
+      const a = el("a", "btn", "Reconnect Twitch");
+      a.href = "/auth/login";
+      box.appendChild(a);
+    }
+    box.appendChild(el("h3", null, "Recent problems"));
+    const errs = el("ul", "diag-errors");
+    for (const e of apiErrors) errs.appendChild(el("li", null, new Date(e.at).toLocaleTimeString() + "  " + e.path + "  " + (e.status || "no connection") + (e.message ? "  " + e.message : "")));
+    if (!apiErrors.length) errs.appendChild(el("li", "hint", "None since the page opened."));
+    box.appendChild(errs);
+    const copy = btn("Copy diagnostics", async () => {
+      const text = ["Yappa diagnostics", ...facts.map(([k, v]) => k + ": " + v), "Missing permissions: " + (missing.join(", ") || "none"),
+        "Recent problems:", ...apiErrors.map((e) => "  " + new Date(e.at).toISOString() + " " + e.path + " " + e.status + " " + e.message), "Startup: " + startupSummary()].join("\n");
+      let said = "Copied!";
+      try { await navigator.clipboard.writeText(text); } catch { said = "Couldn't copy"; }
+      copy.textContent = said;
+      setTimeout(() => { copy.textContent = "Copy diagnostics"; }, TEST_TIMING.sayMs || 1500);
+    }, "small");
+    box.appendChild(copy);
+  });
+  return box;
+};
+
 })();

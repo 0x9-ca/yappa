@@ -4,7 +4,7 @@
 import { loadBundles } from "./support.mjs";
 
 const { worker, lib } = await loadBundles();
-const { slimTweet, parseXId, twimgUrl, toolsLib, relayMaster, parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimVideo, clipFailure } = lib;
+const { slimPost, parseXId, twimgUrl, mbedfxMediaUrl, toolsLib, relayMaster, parseClipsQuery, parseVideosQuery, parseCreateClip, parseDuration, videoThumb, slimVideo, clipFailure } = lib;
 let passed = 0, failed = 0;
 const check = (label, cond, extra = "") => {
   cond ? passed++ : failed++;
@@ -35,21 +35,25 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
 
 // =============== X/Twitter post previews: trimming what the preview service sends ===============
 {
-  const fx = (over = {}, media = { photos: [], videos: [] }) => ({ code: 200, tweet: { id: "1234", text: "hello world", created_at: "Tue Mar 21 20:50:14 +0000 2006", replies: 2, retweets: 3, likes: 4, views: null, possibly_sensitive: false,
-    author: { screen_name: "someone", name: "Some One", avatar_url: "https://pbs.twimg.com/profile_images/1/a_200x200.jpg", verification: { verified: true } }, media, ...over } });
-  const card = slimTweet(fx());
-  check("a post becomes a small card: author, text, date, counts, canonical link", card && card.author.handle === "someone" && card.author.name === "Some One" && card.author.verified === true && card.text === "hello world" && card.createdAt === "2006-03-21T20:50:14.000Z" && card.likes === 4 && card.views === null && card.url === "https://x.com/someone/status/1234" && card.media === null && card.sensitive === false, JSON.stringify(card));
-  const photo = slimTweet(fx({}, { photos: [{ url: "https://pbs.twimg.com/media/a.jpg", width: 1200, height: 800 }, { url: "https://pbs.twimg.com/media/b.jpg" }], videos: [] }));
-  check("the first picture is kept and the rest are counted", photo.media.kind === "photo" && photo.media.url === "https://pbs.twimg.com/media/a.jpg" && photo.media.width === 1200 && photo.moreMedia === 1);
-  const vid = slimTweet(fx({}, { photos: [], videos: [{ type: "video", thumbnail_url: "https://pbs.twimg.com/ext_tw_video_thumb/x.jpg", url: "https://video.twimg.com/v.mp4" }] }));
-  const gif = slimTweet(fx({}, { photos: [], videos: [{ type: "gif", thumbnail_url: "https://pbs.twimg.com/tweet_video_thumb/g.jpg" }] }));
-  check("a video or GIF shows its still frame (never the video file)", vid.media.kind === "video" && vid.media.url.includes("ext_tw_video_thumb") && gif.media.kind === "gif");
-  const sneaky = slimTweet(fx({}, { photos: [{ url: "https://evil.example/a.jpg" }, { url: "http://pbs.twimg.com/a.jpg" }, { url: "https://twimg.com.evil.example/a.jpg" }, { url: "javascript:alert(1)" }], videos: [] }));
-  check("media from anywhere but X's CDN over https is dropped", sneaky.media === null && twimgUrl("https://abs.twimg.com/x.png") && !twimgUrl("https://eviltwimg.com/x.png") && !twimgUrl("data:image/png;base64,AAAA"));
-  check("avatars get the same check", slimTweet({ tweet: { ...fx().tweet, author: { screen_name: "a", name: "A", avatar_url: "https://evil.example/a.png" } } }).author.avatar === null);
-  check("a sensitive post is flagged", slimTweet(fx({ possibly_sensitive: true })).sensitive === true);
-  check("long text is cut, a missing name falls back to the handle", slimTweet(fx({ text: "x".repeat(2000) })).text.length === 700 && slimTweet({ tweet: { ...fx().tweet, author: { screen_name: "h" } } }).author.name === "h");
-  check("answers without a usable post give null", [null, {}, { tweet: null }, { tweet: { id: "abc", author: { screen_name: "a" } } }, { tweet: { id: "1" } }, { tweet: { id: "1", author: {} } }, "x", 5].every((v) => slimTweet(v) === null));
+  const M = "https://mbedfx.app/_media/x%3A1234/";
+  const post = (over = {}, media = []) => ({ ok: true, muxing: false, pending: false, post: { platform: "x", canonical: "https://x.com/someone/status/1234", createdAt: "2006-03-21T20:50:14.000Z", title: null, text: "hello world", sensitive: false,
+    author: { name: "Some One", handle: "someone", url: "https://x.com/someone", avatar: M + "avatar" }, counts: { likes: 4, reposts: 3, replies: 2 }, media, quote: null, ...over } });
+  const card = slimPost(post());
+  check("a post becomes a small card: author, text, date, counts, canonical link", card && card.author.handle === "someone" && card.author.name === "Some One" && card.author.avatarSource === M + "avatar" && card.text === "hello world" && card.createdAt === "2006-03-21T20:50:14.000Z" && card.likes === 4 && card.retweets === 3 && card.replies === 2 && card.views === null && card.url === "https://x.com/someone/status/1234" && card.mediaSource === null && card.sensitive === false, JSON.stringify(card));
+  const photo = slimPost(post({}, [{ kind: "image", url: M + "0", poster: null, width: 1200, height: 800, still: false }, { kind: "image", url: M + "1", poster: null, width: 5, height: 5, still: false }]));
+  check("the first picture is kept and the rest are counted", photo.mediaSource.kind === "photo" && photo.mediaSource.source === M + "0" && photo.mediaSource.width === 1200 && photo.moreMedia === 1);
+  const vid = slimPost(post({}, [{ kind: "video", url: M + "0", poster: M + "poster0", width: 1280, height: 720, still: false }]));
+  const still = slimPost(post({}, [{ kind: "image", url: M + "poster0", poster: M + "poster0", width: 1280, height: 720, still: true }]));
+  check("a video shows its poster frame (never the video file), and so does one still being prepared", vid.mediaSource.kind === "video" && vid.mediaSource.source === M + "poster0" && still.mediaSource.kind === "video");
+  const noPoster = slimPost(post({}, [{ kind: "video", url: M + "0", poster: null, width: 1, height: 1, still: false }]));
+  check("a video without a poster shows nothing", noPoster.mediaSource === null && noPoster.moreMedia === 0);
+  const sneaky = slimPost(post({ author: { name: "A", handle: "a", avatar: "https://evil.example/_media/x" } }, [{ kind: "image", url: "https://evil.example/_media/0" }, { kind: "image", url: "http://mbedfx.app/_media/0" }, { kind: "image", url: "https://mbedfx.app.evil.example/_media/0" }, { kind: "image", url: "https://mbedfx.app/other/0" }, { kind: "image", url: "javascript:alert(1)" }]));
+  check("only mbedfx's own https /_media/ addresses are ever picked up", sneaky.mediaSource === null && sneaky.author.avatarSource === null && mbedfxMediaUrl(M + "0") && !mbedfxMediaUrl("https://mbedfx.app/_api/v1") && !mbedfxMediaUrl("https://evil.example/_media/0") && !mbedfxMediaUrl(null));
+  check("X's CDN check stays strict", twimgUrl("https://pbs.twimg.com/media/a.jpg") && twimgUrl("https://abs.twimg.com/x.png") && !twimgUrl("https://eviltwimg.com/x.png") && !twimgUrl("https://twimg.com.evil.example/x.png") && !twimgUrl("http://pbs.twimg.com/a.jpg") && !twimgUrl("data:image/png;base64,AAAA"));
+  check("a sensitive post is flagged", slimPost(post({ sensitive: true })).sensitive === true);
+  check("long text is cut; a missing name falls back to the handle; missing counts are unknown", slimPost(post({ text: "x".repeat(2000) })).text.length === 700 && slimPost(post({ author: { handle: "h" } })).author.name === "h" && slimPost(post({ counts: {} })).likes === null);
+  check("the card's link is rebuilt from the canonical address (twitter.com or x.com only)", slimPost(post({ canonical: "https://twitter.com/Some_One/status/99/" })).url === "https://x.com/Some_One/status/99" && ["https://evil.example/someone/status/1", "https://x.com/someone", "http://x.com/someone/status/1", "https://x.com.evil.example/someone/status/1"].every((c) => slimPost(post({ canonical: c })) === null));
+  check("answers that aren't an X post give null", [null, {}, { ok: false }, { ok: true }, { ok: true, post: null }, post({ platform: "tiktok" }), { ok: false, post: post().post }, "x", 5].every((v) => slimPost(v) === null));
   check("post ids must be digits", parseXId("1234567890123456789") === "1234567890123456789" && [null, "", "12a", "../x", "1".repeat(26), "-5"].every((v) => parseXId(v) === null));
 }
 
@@ -222,36 +226,53 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   j = await r.json();
   check("diagnostics give the deployed version and the connection's permissions, never tokens", r.status === 200 && j.version.id === "0123456789abcdef" && j.twitch.scopes[0] === "user:read:chat" && !/token/i.test(JSON.stringify(j)), JSON.stringify(j));
   // X/Twitter preview route.
-  const fxCalls = [];
+  const calls2 = { api: [], media: [] };
   const realFetch2 = globalThis.fetch;
-  const fxBody = (id) => ({ code: 200, tweet: { id, text: "hello", created_at: "Tue Mar 21 20:50:14 +0000 2006", likes: 1, author: { screen_name: "someone", name: "Some One" }, media: { photos: [] } } });
+  const M = (id) => `https://mbedfx.app/_media/x%3A${id}/`;
+  const mbedBody = (id) => ({ ok: true, muxing: false, pending: false, post: { platform: "x", canonical: `https://x.com/someone/status/${id}`, createdAt: "2006-03-21T20:50:14.000Z", title: null, text: "hello", sensitive: false,
+    author: { name: "Some One", handle: "someone", url: "https://x.com/someone", avatar: M(id) + "avatar" }, counts: { likes: 1 }, media: id === "7005" ? [{ kind: "image", url: M(id) + "0", poster: null, width: 10, height: 10, still: false }] : [], quote: null } });
   globalThis.fetch = async (u, init) => {
     const url = String(u);
-    if (url.startsWith("https://api.fxtwitter.com/")) {
-      fxCalls.push(url);
-      if (url.endsWith("/7002")) return new Response("{}", { status: 404 });
-      if (url.endsWith("/7003")) return new Response("not json", { status: 200 });
-      if (url.endsWith("/7004")) throw new Error("down");
-      return Response.json(fxBody(url.split("/").pop()));
+    if (url.startsWith("https://mbedfx.app/_api/v1")) {
+      const id = decodeURIComponent(url.split("url=")[1]).split("/").pop();
+      calls2.api.push(url);
+      if (id === "7002") return Response.json({ ok: false, error: { code: "private", message: "x" } });
+      if (id === "7003") return new Response("not json", { status: 200 });
+      if (id === "7004") throw new Error("down");
+      if (id === "7006") return new Response("busy", { status: 503 });
+      return Response.json(mbedBody(id));
+    }
+    if (url.startsWith("https://mbedfx.app/_media/")) {
+      calls2.media.push([url, init && init.redirect]);
+      if (url.endsWith("/avatar")) return new Response(null, { status: 302, headers: { location: "https://pbs.twimg.com/profile_images/1/a_normal.jpg" } });
+      if (url.includes("x%3A7005")) return new Response(null, { status: 302, headers: { location: "https://pbs.twimg.com/media/photo.jpg" } });
+      return new Response("bytes", { status: 200 });
     }
     return realFetch2(u, init);
   };
   r = await get("/api/preview/x?id=7001");
-  check("post previews need a session", r.status === 401 && fxCalls.length === 0);
+  check("post previews need a session", r.status === 401 && calls2.api.length === 0);
   r = await get("/api/preview/x?id=7001", sess);
   j = await r.json();
-  check("a session gets a card, fetched from the preview service by id", r.status === 200 && j.ok && j.card.author.handle === "someone" && fxCalls.length === 1 && fxCalls[0] === "https://api.fxtwitter.com/status/7001", JSON.stringify(j));
+  check("a session gets a card, fetched from the preview service by id", r.status === 200 && j.ok && j.card.author.handle === "someone" && calls2.api.length === 1 && calls2.api[0] === "https://mbedfx.app/_api/v1?url=" + encodeURIComponent("https://x.com/i/status/7001"), JSON.stringify(j));
+  check("the avatar comes back as its address on X's CDN (the redirect was followed by the Worker, not the browser)", j.card.author.avatar === "https://pbs.twimg.com/profile_images/1/a_normal.jpg" && calls2.media.every(([, mode]) => mode === "manual"), JSON.stringify([j.card.author, calls2.media]));
   await get("/api/preview/x?id=7001", sess);
-  check("the same post is remembered, not fetched again", fxCalls.length === 1);
+  check("the same post is remembered, not fetched again", calls2.api.length === 1);
   for (const bad of ["", "abc", "1".repeat(30), "../../etc"]) {
     r = await get("/api/preview/x?id=" + bad, sess);
     if (r.status !== 400) check("a bad post id is refused: " + bad, false);
   }
-  check("bad post ids never reach the preview service", fxCalls.length === 1);
+  check("bad post ids never reach the preview service", calls2.api.length === 1);
+  r = await get("/api/preview/x?id=7005", sess);
+  j = await r.json();
+  check("a post's picture is resolved to X's CDN too", j.ok && j.card.media.kind === "photo" && j.card.media.url === "https://pbs.twimg.com/media/photo.jpg" && j.card.media.width === 10, JSON.stringify(j.card));
   r = await get("/api/preview/x?id=7002", sess);
-  check("a post that isn't there is a 404, remembered briefly", r.status === 404 && (await r.json()).ok === false && (await get("/api/preview/x?id=7002", sess)).status === 404 && fxCalls.filter((x) => x.endsWith("/7002")).length === 1);
+  j = await r.json();
+  check("a private post is a 404 with its reason, remembered briefly", r.status === 404 && j.ok === false && /private/.test(j.error) && (await get("/api/preview/x?id=7002", sess)).status === 404 && calls2.api.filter((x) => x.includes("7002")).length === 1);
   r = await get("/api/preview/x?id=7003", sess);
   check("nonsense from the service is a 502, not a crash", r.status === 502);
+  r = await get("/api/preview/x?id=7006", sess);
+  check("a failing service is a 502 saying what it answered", r.status === 502 && /503/.test((await r.json()).error));
   r = await get("/api/preview/x?id=7004", sess);
   check("an unreachable service is a 502 with a plain message", r.status === 502 && /reach/.test((await r.json()).error));
   globalThis.fetch = realFetch2;

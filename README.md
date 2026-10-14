@@ -67,6 +67,8 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
 - The **Mod tools** sheet (shield icon): chat modes (slow, followers-only, subscribers-only, emote-only,
   unique), announcements, shoutouts, blocked terms, the banned and timed-out users list (searchable, with Unban),
   Shield Mode, unban requests and the chatters list.
+- Your own timeout buttons: choose which lengths show on a user card (Settings → Filters and moderation →
+  Moderator presets), the length the message menu uses, and a list of reasons to pick from.
 - AutoMod queue (allow or deny held messages), warnings, and monitoring or restricting suspicious users.
 - Messages Twitch flags as suspicious are marked in chat; an optional line shows other moderators' actions.
 

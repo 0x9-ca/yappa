@@ -3039,6 +3039,65 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.keyboard.press("Escape");
 }
 
+
+// =============== moderator presets: timeout lengths, message-menu timeout, reasons ===============
+{
+  await page.evaluate(() => activate(tabs.get("yappa")));
+  await openSettingsUI();
+  await page.waitForSelector("#sheet .mod-presets");
+  const chips = () => page.$$eval("#sheet .mod-presets .chip", (c) => c.map((x) => x.textContent.replace("×", "")));
+  check("the quick timeout lengths start as 1m, 10m, 1h, 1d", JSON.stringify(await chips()) === '["1m","10m","1h","1d"]', JSON.stringify(await chips()));
+  const lenIn = '#sheet .mod-presets input[placeholder^="Add a length"]';
+  await page.fill(lenIn, "30s");
+  await page.click('#sheet .mod-presets .rule-form button:has-text("Add") >> nth=0');
+  check("a length can be added, and they stay in order", JSON.stringify(await chips()) === '["30s","1m","10m","1h","1d"]', JSON.stringify(await chips()));
+  await page.fill(lenIn, "abc");
+  await page.click('#sheet .mod-presets .rule-form button:has-text("Add") >> nth=0');
+  check("nonsense is refused with a hint", /between 1 second and 2 weeks/.test(await page.textContent("#sheet .mod-presets")) && (await chips()).length === 5);
+  await page.fill(lenIn, "3w");
+  await page.click('#sheet .mod-presets .rule-form button:has-text("Add") >> nth=0');
+  check("so is anything longer than Twitch's 2 weeks", (await chips()).length === 5);
+  await page.click('#sheet .mod-presets .chip:has-text("1d") .chip-x');
+  check("a length can be removed", JSON.stringify(await chips()) === '["30s","1m","10m","1h"]');
+  await page.fill('#sheet .mod-presets input[placeholder^="Add a reason"]', "Spam");
+  await page.click('#sheet .mod-presets .rule-form button:has-text("Add") >> nth=1');
+  check("a reason can be added", await page.evaluate(() => JSON.stringify(settings.modPresets.reasons) === '["Spam"]'));
+  await page.selectOption("#sheet .mod-presets select", "3600");
+  check("the message menu's timeout length is chosen from the lengths", await page.evaluate(() => settings.modPresets.messageTimeout === 3600));
+  await shot("mod-presets");
+  await page.keyboard.press("Escape");
+
+  // The user card uses them.
+  await page.evaluate(() => document.querySelector('li[data-id="mu5"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  const btns = await page.$$eval("#sheet .card-actions button", (b) => b.map((x) => x.textContent));
+  check("the user card's timeout buttons follow the presets", btns.includes("Timeout 30s") && btns.includes("Timeout 1h") && !btns.includes("Timeout 1d"), JSON.stringify(btns));
+  await page.selectOption("#sheet .reason-select", "Spam");
+  await page.click('#sheet .card-actions button:has-text("Timeout 30s")');
+  await settle(200);
+  check("a picked reason goes with the timeout", /"duration":30/.test(JSON.stringify(log.mods.at(-1))) && /"reason":"Spam"/.test(JSON.stringify(log.mods.at(-1))), JSON.stringify(log.mods.at(-1)));
+  await page.evaluate(() => document.querySelector('li[data-id="mu5"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  await page.click('#sheet .card-actions button:has-text("Timeout 1m")');
+  await settle(200);
+  check("with no reason picked none is sent", !/reason/.test(JSON.stringify(log.mods.at(-1))), JSON.stringify(log.mods.at(-1)));
+  await page.evaluate(() => document.querySelector('li[data-id="mu5"] .name').click());
+  await page.waitForSelector("#sheet .card-actions");
+  await page.selectOption("#sheet .reason-select", "Spam");
+  await page.click('#sheet .card-actions button:text-is("Ban")');
+  await settle(200);
+  check("a ban takes the reason too", /"action":"ban"/.test(JSON.stringify(log.mods.at(-1))) && /"reason":"Spam"/.test(JSON.stringify(log.mods.at(-1))), JSON.stringify(log.mods.at(-1)));
+  // The message menu.
+  await page.tap('li[data-id="mu5"] .body');
+  await page.hover('li[data-id="mu5"] .actions button:has-text("Timeout")');
+  check("the message menu's Timeout says how long it is", (await page.getAttribute('li[data-id="mu5"] .actions button:has-text("Timeout")', "title")) === "Time out for 1h");
+  await page.click('li[data-id="mu5"] .actions button:has-text("Timeout")');
+  await settle(200);
+  check("...and uses that length", /"duration":3600/.test(JSON.stringify(log.mods.at(-1))), JSON.stringify(log.mods.at(-1)));
+  await page.evaluate(() => { settings.modPresets = { timeouts: [60, 600, 3600, 86400], messageTimeout: 600, reasons: [] }; saveSettings(); });
+  check("a damaged saved value falls back to the defaults", await page.evaluate(() => { settings.modPresets = { timeouts: "x", messageTimeout: -5, reasons: [1, "  ", "ok"] }; const p = modPresets(); settings.modPresets = { timeouts: [60, 600, 3600, 86400], messageTimeout: 600, reasons: [] }; return p.timeouts.length === 4 && p.messageTimeout === 600 && JSON.stringify(p.reasons) === '["ok"]'; }));
+}
+
 // =============== moving to a new address ===============
 {
   const oldSettings = JSON.stringify({ ...JSON.parse(await page.evaluate(() => localStorage.getItem("settings"))), rules: [{ phrase: "moved", user: "" }] });

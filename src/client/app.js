@@ -51,7 +51,8 @@ let sending = false;
 // history: null until the user answers the opt-in prompt (the service's guidelines ask for consent).
 const DEFAULT_SETTINGS = { notify: false, sound: false, rules: [], fontSize: 14, hidden: [], video: true, followRaids: true, history: null, theme: "dark", player: "embed", bitsButton: "twitch", gifs: true, nativeQuality: "auto", postClips: true, modLog: false, liveAlerts: false, streamChanges: true, syncBlocks: true, mute: { words: [], bots: false, commands: false }, channels: {}, notes: {}, snippets: [], favEmotes: [], bookmarks: [],
   showTime: true, showBadges: true, compact: false, zebra: false, chatFont: "default",
-  previews: { x: true, media: true, images: false } };
+  previews: { x: true, media: true, images: false },
+  modPresets: { timeouts: [60, 600, 3600, 86400], messageTimeout: 600, reasons: [] } };
 let settings = loadSettings();
 function loadSettings() {
   let s;
@@ -1803,7 +1804,11 @@ function renderMessage(tab, ev, opts = {}) {
   const target = !mine && tab.broadcaster && ev.chatter_user_id !== tab.broadcaster.id;
   if (tab.isMod && target) {
     actions.appendChild(actionButton("Delete", () => modAction(tab, { action: "delete", message_id: ev.message_id })));
-    actions.appendChild(actionButton("Timeout", () => modAction(tab, { action: "timeout", user_id: ev.chatter_user_id, login: ev.chatter_user_login, duration: 600 })));
+    const quickTimeout = actionButton("Timeout", () => modAction(tab, { action: "timeout", user_id: ev.chatter_user_id, login: ev.chatter_user_login, duration: modPresets().messageTimeout }));
+    const sayLength = () => { quickTimeout.title = "Time out for " + fmtTimeoutLength(modPresets().messageTimeout); }; // (the setting can change after the message is drawn)
+    sayLength();
+    quickTimeout.addEventListener("pointerenter", sayLength);
+    actions.appendChild(quickTimeout);
     actions.appendChild(actionButton("Ban", () => {
       if (confirm("Ban " + ev.chatter_user_name + " from #" + tab.broadcaster.name + "?")) {
         modAction(tab, { action: "ban", user_id: ev.chatter_user_id, login: ev.chatter_user_login });
@@ -4009,7 +4014,27 @@ function btn(label, onClick, cls) {
 
 // ---------- user cards ----------
 
-const TIMEOUTS = [["1m", 60], ["10m", 600], ["1h", 3600], ["1d", 86400]];
+const MAX_TIMEOUT = 1209600; // Twitch's limit: 14 days
+const DEFAULT_TIMEOUTS = [60, 600, 3600, 86400];
+
+/** The moderator's quick timeout lengths, the length the message menu uses, and their ban/timeout reasons (checked, so a bad saved value can't break the card). */
+function modPresets() {
+  const p = settings.modPresets || {};
+  const ok = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_TIMEOUT;
+  const timeouts = (Array.isArray(p.timeouts) ? p.timeouts : []).filter(ok).slice(0, 8);
+  const list = timeouts.length ? timeouts : DEFAULT_TIMEOUTS;
+  return {
+    timeouts: list,
+    messageTimeout: ok(p.messageTimeout) ? p.messageTimeout : 600,
+    reasons: (Array.isArray(p.reasons) ? p.reasons : []).filter((r) => typeof r === "string" && r.trim()).slice(0, 12).map((r) => r.trim().slice(0, 100)),
+  };
+}
+
+/** 90 → "90s", 600 → "10m", 86400 → "1d". */
+function fmtTimeoutLength(secs) {
+  for (const [unit, n] of [["w", 604800], ["d", 86400], ["h", 3600], ["m", 60]]) if (secs % n === 0) return secs / n + unit;
+  return secs + "s";
+}
 
 /** What a badge means, in words. Twitch's own description is usually just its title, so the common ones are spelled out. */
 function badgeMeaning(tab, setId, id, info) {
@@ -4095,12 +4120,20 @@ async function openUserCard(tab, u) {
   const isMe = me && u.id === me.userId;
   const isBroadcaster = tab.broadcaster && u.id === tab.broadcaster.id;
   if (tab.isMod && !isMe && !isBroadcaster) {
-    for (const [label, secs] of TIMEOUTS) {
-      actions.appendChild(btn("Timeout " + label, () => { modAction(tab, { action: "timeout", user_id: u.id, login: u.login, duration: secs }); closeSheet(); }));
+    const presets = modPresets();
+    let reason = "";
+    if (presets.reasons.length) {
+      const pick = dropdown([["", "Reason: none"], ...presets.reasons.map((r) => [r, r])], "", (v) => { reason = v; });
+      pick.className = "reason-select";
+      pick.setAttribute("aria-label", "Reason for a timeout or ban");
+      actions.appendChild(pick);
+    }
+    for (const secs of presets.timeouts) {
+      actions.appendChild(btn("Timeout " + fmtTimeoutLength(secs), () => { modAction(tab, { action: "timeout", user_id: u.id, login: u.login, duration: secs, ...(reason ? { reason } : {}) }); closeSheet(); }));
     }
     actions.appendChild(btn("Unban", () => { modAction(tab, { action: "unban", user_id: u.id, login: u.login }); closeSheet(); }));
     actions.appendChild(btn("Ban", () => {
-      if (confirm("Ban " + u.name + " from #" + tab.broadcaster.name + "?")) { modAction(tab, { action: "ban", user_id: u.id, login: u.login }); closeSheet(); }
+      if (confirm("Ban " + u.name + " from #" + tab.broadcaster.name + "?")) { modAction(tab, { action: "ban", user_id: u.id, login: u.login, ...(reason ? { reason } : {}) }); closeSheet(); }
     }, "stop"));
   }
 
@@ -4551,6 +4584,68 @@ function openSettings(wantGroup) {
     themeSeg.appendChild(b);
   }
 
+  // Moderator presets: quick timeout lengths, the message menu's timeout, and reasons.
+  const presetsBox = el("div", "mod-presets");
+  const savePresets = (next) => { settings.modPresets = { ...modPresets(), ...next }; saveSettings(); renderPresets(); };
+  const renderPresets = () => {
+    presetsBox.replaceChildren();
+    const p = modPresets();
+    const chips = el("div", "preset-chips");
+    for (const secs of p.timeouts) {
+      const chip = el("span", "chip removable", fmtTimeoutLength(secs));
+      const x = el("button", "chip-x", "×");
+      x.type = "button";
+      x.setAttribute("aria-label", "Remove " + fmtTimeoutLength(secs));
+      x.addEventListener("click", () => {
+        if (p.timeouts.length <= 1) return;
+        const timeouts = p.timeouts.filter((n) => n !== secs);
+        savePresets({ timeouts, messageTimeout: timeouts.includes(p.messageTimeout) ? p.messageTimeout : timeouts[Math.min(1, timeouts.length - 1)] });
+      });
+      chip.appendChild(x);
+      chips.appendChild(chip);
+    }
+    const lenIn = document.createElement("input");
+    lenIn.type = "text";
+    lenIn.placeholder = "Add a length: 30s, 5m, 2h, 1d, 2w";
+    lenIn.autocapitalize = "off";
+    const lenErr = el("div", "hint");
+    const addLen = btn("Add", () => {
+      const secs = parseDuration(lenIn.value.trim());
+      if (!secs || secs < 1 || secs > MAX_TIMEOUT) { lenErr.textContent = "Use a length between 1 second and 2 weeks, like 30s, 5m, 2h, 1d or 2w."; return; }
+      if (p.timeouts.length >= 8) { lenErr.textContent = "Eight is the most."; return; }
+      if (!p.timeouts.includes(secs)) savePresets({ timeouts: [...p.timeouts, secs].sort((a, b) => a - b) });
+      else lenErr.textContent = fmtTimeoutLength(secs) + " is already there.";
+    }, "small");
+    lenIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addLen.click(); } });
+    const lenForm = el("div", "rule-form");
+    lenForm.append(lenIn, addLen);
+    const reasons = el("div", "rules");
+    for (const [i, r] of p.reasons.entries()) {
+      const line = el("div", "row");
+      line.append(el("label", null, r), btn("Remove", () => savePresets({ reasons: p.reasons.filter((_, j) => j !== i) }), "ghost small"));
+      reasons.appendChild(line);
+    }
+    const reasonIn = document.createElement("input");
+    reasonIn.type = "text";
+    reasonIn.maxLength = 100;
+    reasonIn.placeholder = "Add a reason, e.g. Spam";
+    const addReason = btn("Add", () => {
+      const r = reasonIn.value.trim();
+      if (r && p.reasons.length < 12 && !p.reasons.includes(r)) savePresets({ reasons: [...p.reasons, r] });
+    }, "small");
+    reasonIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addReason.click(); } });
+    presetsBox.append(
+      el("div", "hint", "The timeout buttons on a user card (up to eight lengths; tap × to remove one)."), chips,
+      lenForm, lenErr,
+      row("Message menu timeout", dropdown(p.timeouts.map((n) => [String(n), fmtTimeoutLength(n)]), String(p.messageTimeout), (v) => savePresets({ messageTimeout: Number(v) })), "How long the Timeout button in a message's menu times someone out for."),
+      el("div", "hint", "Reasons you can pick on a user card; they're sent to Twitch with the timeout or ban."), reasons,
+    );
+    const reasonForm = el("div", "rule-form");
+    reasonForm.append(reasonIn, addReason);
+    presetsBox.appendChild(reasonForm);
+  };
+  renderPresets();
+
   const hiddenList = el("div");
   const renderHidden = () => {
     hiddenList.replaceChildren();
@@ -4649,6 +4744,7 @@ function openSettings(wantGroup) {
       el("div", "hint", "Muted words and phrases match whole words, ignoring case. Wrap a regular expression in slashes, like /^gg+$/, to match a pattern."),
       muteList, addMute, muteErr),
     item("Ignored users", hiddenList),
+    item("Moderator presets", presetsBox),
     item("Twitch block list", row("Use my Twitch block list", checkbox(settings.syncBlocks !== false, (c) => { settings.syncBlocks = c.checked; saveSettings(); window.toolsReloadBlocks?.(); }),
       "Hide messages from people you've blocked on Twitch, as Twitch's own chat does.")),
     item("Moderation", row("Show moderator actions in chat", checkbox(!!settings.modLog, (c) => { settings.modLog = c.checked; saveSettings(); }),

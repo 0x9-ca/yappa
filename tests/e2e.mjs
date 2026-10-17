@@ -2973,6 +2973,18 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const q = await page.$eval('li[data-id="im3"]', (l) => ({ links: [...l.querySelectorAll("a.link")].map((a) => a.href + "|" + a.textContent), pics: l.querySelectorAll(".img-preview").length, text: l.querySelector(".body, .text")?.textContent || l.textContent }));
   check("a link inside quotes or brackets still links and previews, with the quotes left as text",
     q.links.length === 3 && q.links.every((x) => x === "https://pics.example.com/cat.png|https://pics.example.com/cat.png") && q.pics === 1 && q.text.includes('"https://') && q.text.includes("(https://") && q.text.includes("“https://"), JSON.stringify(q));
+  await say("im4", 'html <div>https://pics.example.com/cat.png</div> and <a href="https://pics.example.com/cat.png">x</a> <img src="https://pics.example.com/cat.png">');
+  await page.waitForSelector('li[data-id="im4"] .img-preview');
+  await settle(200);
+  const h = await page.$eval('li[data-id="im4"]', (l) => ({ links: [...l.querySelectorAll("a.link")].map((a) => a.href), pics: l.querySelectorAll(".img-preview").length, text: l.textContent }));
+  check("links inside pasted HTML (tags, href=, src=) still link and preview, tags stay as text",
+    h.links.length === 3 && h.links.every((x) => x === "https://pics.example.com/cat.png") && h.pics === 1 && h.text.includes("<div>https://") && h.text.includes("</div>") && h.text.includes('<a href="https://'), JSON.stringify(h));
+  await page.evaluate(() => {
+    const ev = ircToEvent("@id=hist-html;tmi-sent-ts=" + (Date.now() - 70000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #yappa :old <div>https://pics.example.com/cat.png</div>");
+    renderMessage(active, ev, { merge: true, historical: true });
+  });
+  await page.waitForSelector('li[data-id="hist-html"] .img-preview', { timeout: 3000 }).catch(() => {});
+  check("...and the same in a message that comes back from history", (await page.$$('li[data-id="hist-html"] a.link')).length === 1 && (await page.$$('li[data-id="hist-html"] .img-preview')).length === 1);
   await shot("image-preview");
   await page.evaluate(() => { settings.previews.images = false; saveSettings(); });
   await openSettingsUI();

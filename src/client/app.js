@@ -1494,7 +1494,9 @@ function appendEmote(parent, img, zeroWidth) {
 function appendText(tab, parent, text, hasBits) {
   // Swap whitespace-separated words that match 7TV/BTTV/FFZ emote names (and, for
   // messages with Bits, cheer words like Cheer100).
-  for (const part of text.split(/(\s+)/)) {
+  // Someone's pasted HTML ("<div>https://…</div>"): the tags are split off as plain text so the link between them still links.
+  const words = text.split(/(\s+)/).flatMap((w) => /<\/?[a-z][a-z0-9]*>/i.test(w) && !findExt(tab, w) ? w.split(/(<\/?[a-z][a-z0-9]*>)/i) : [w]);
+  for (const part of words) {
     if (!part) continue;
     if (hasBits && !/\s/.test(part)) {
       const m = /^([a-z]+)(\d+)$/i.exec(part);
@@ -1524,7 +1526,9 @@ const BARE_TLDS = new Set(("com net org io gg tv me co uk us ca de fr nl eu au n
 function parseLink(word) {
   // Leave quotes and brackets around the link, and trailing punctuation, out of it (a ")" stays only if the URL opened one).
   let core = word, trail = "", lead = "";
-  while (/^["'“‘(\[<]/.test(core)) { lead += core[0]; core = core.slice(1); }
+  for (let m; (m = /^(?:["'“‘(\[<]|[a-z-]+=["']?)/i.exec(core)) && m[0].length < core.length;) { lead += m[0]; core = core.slice(m[0].length); } // (also an attribute: src="…")
+  const cut = /^https?:\/\//i.test(core) ? core.search(/[<>"“”]/) : -1; // (a URL ends where a tag or attribute quote does)
+  if (cut > 0) { trail = core.slice(cut); core = core.slice(0, cut); }
   while (/[.,!?:;'"”’>\])]$/.test(core)) {
     const ch = core.slice(-1);
     if (ch === ")" && (core.match(/\(/g) || []).length >= (core.match(/\)/g) || []).length) break;

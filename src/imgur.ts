@@ -14,7 +14,7 @@ export interface ImgurCard {
   count: number;
   /** Marked mature: the client doesn't load its pictures. */
   sensitive: boolean;
-  /** Up to four thumbnails, always https://i.imgur.com/<id>m.jpg. */
+  /** Up to four pictures, always https://i.imgur.com/<id>h.jpg (1024px) for the first and <id>l.jpg (640px) for the rest. */
   thumbs: { url: string; video: boolean }[];
 }
 
@@ -43,7 +43,7 @@ export function slimImgur(id: string, body: unknown): ImgurCard | null {
     title: str(d.title, 120),
     count,
     sensitive: d.nsfw === true || pics.some((i) => i.nsfw === true),
-    thumbs: pics.slice(0, MAX_THUMBS).map((i) => ({ url: `https://i.imgur.com/${i.id}m.jpg`, video: i.animated === true && typeof i.type === "string" && i.type.startsWith("video/") })),
+    thumbs: pics.slice(0, MAX_THUMBS).map((i, n) => ({ url: `https://i.imgur.com/${i.id}${n === 0 ? "h" : "l"}.jpg`, video: i.animated === true && typeof i.type === "string" && i.type.startsWith("video/") })),
   };
 }
 

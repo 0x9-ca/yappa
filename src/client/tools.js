@@ -1397,7 +1397,7 @@ function imgurCardEl(card) {
     a.appendChild(el("div", "xc-note", "Mature content hidden."));
     return a;
   }
-  const row = el("div", "im-thumbs");
+  const row = el("div", "im-thumbs"); // (the first picture is large, the rest sit in a row under it)
   for (const t of card.thumbs) {
     if (!onImgur(t.url)) continue;
     const box = el("span", "im-thumb");

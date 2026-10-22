@@ -645,7 +645,7 @@ await page.evaluate(() => composer.setText(""));
 
 // =============== moderator tools, whispers, block list, subscription chip, alerts, discovery ===============
 {
-  const L = () => log.tools.at(-1);
+  const L = () => log.tools.filter((x) => x !== "GET /api/blocks").at(-1); // (the block list reloads by itself a few seconds after sign-in)
   await page.evaluate(() => activate(tabs.get("yappa")));
   await settle(300);
 
@@ -3002,6 +3002,8 @@ check("history marks messages deleted before they were loaded", await page.evalu
     al.cards === 2 && al.thumbs === 8 && al.title === "Holiday photos" && al.href === "https://imgur.com/a/Album01" && /9 pictures/.test(al.note) && al.play === 2, JSON.stringify(al));
   check("...asked once per album (a gallery link's id comes after its title), thumbnails sent without a referrer",
     JSON.stringify(log.imgurPreviews.slice(alb0)) === '["Album01","Gall123"]' && log.pics.filter((p) => p.url.includes("i.imgur.com")).every((p) => p.referer === null), JSON.stringify(log.imgurPreviews.slice(alb0)));
+  await page.evaluate(() => document.querySelector('li[data-id="al1"]').scrollIntoView());
+  await (await page.$('li[data-id="al1"] .im-card')).screenshot({ path: dir + "/t-imgur-album.png" });
   await say("al2", "mature https://imgur.com/a/Mature1 gone https://imgur.com/a/Gone404");
   await page.waitForSelector('li[data-id="al2"] .im-card');
   await settle(200);

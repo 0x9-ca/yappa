@@ -297,8 +297,8 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   check("album previews need a session", r.status === 401 && imgurCalls.length === 0);
   r = await get("/api/preview/imgur?id=Album01", sess);
   j = await r.json();
-  check("an album becomes a card: title, true count, the first four thumbnails on i.imgur.com",
-    r.status === 200 && j.ok && j.card.title === "My album" && j.card.count === 6 && j.card.thumbs.length === 4 && j.card.thumbs[0].url === "https://i.imgur.com/Aaaaa1m.jpg" && j.card.thumbs[1].video === true && j.card.thumbs[0].video === false && j.card.url === "https://imgur.com/a/Album01" && !j.card.sensitive, JSON.stringify(j));
+  check("an album becomes a card: title, true count, the first four pictures on i.imgur.com (a large one, then smaller)",
+    r.status === 200 && j.ok && j.card.title === "My album" && j.card.count === 6 && j.card.thumbs.length === 4 && j.card.thumbs[0].url === "https://i.imgur.com/Aaaaa1h.jpg" && j.card.thumbs[1].url === "https://i.imgur.com/Bbbbb2l.jpg" && j.card.thumbs[1].video === true && j.card.thumbs[0].video === false && j.card.url === "https://imgur.com/a/Album01" && !j.card.sensitive, JSON.stringify(j));
   await get("/api/preview/imgur?id=Album01", sess);
   check("the same album is remembered, not fetched again", imgurCalls.length === 1);
   for (const bad of ["", "abc", "x".repeat(30), "../../etc", "a b c d e"]) {
@@ -308,7 +308,7 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   check("bad album ids never reach Imgur", imgurCalls.length === 1);
   r = await get("/api/preview/imgur?id=Single1", sess);
   j = await r.json();
-  check("a gallery link that is one picture still gets a card", j.ok && j.card.count === 1 && j.card.thumbs.length === 1 && j.card.thumbs[0].url === "https://i.imgur.com/Single1m.jpg" && j.card.url === "https://imgur.com/gallery/Single1", JSON.stringify(j));
+  check("a gallery link that is one picture still gets a card", j.ok && j.card.count === 1 && j.card.thumbs.length === 1 && j.card.thumbs[0].url === "https://i.imgur.com/Single1h.jpg" && j.card.url === "https://imgur.com/gallery/Single1", JSON.stringify(j));
   r = await get("/api/preview/imgur?id=Mature1", sess);
   check("a mature album is flagged so the page doesn't load it", (await r.json()).card.sensitive === true);
   r = await get("/api/preview/imgur?id=Gone404", sess);

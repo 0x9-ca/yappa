@@ -2595,6 +2595,13 @@ check("history marks messages deleted before they were loaded", await page.evalu
   await page.evaluate(() => { composer.setText("hello there"); });
   await page.click("#send");
   await page.waitForFunction(() => !document.getElementById("slow-note").hidden);
+  // On a phone, sending must leave the message box focused so the keyboard stays up.
+  await page.evaluate(() => { composer.setText("second one"); composer.focus(); });
+  const focusBefore = await page.evaluate(() => { window.__blurs = 0; document.getElementById("message").addEventListener("blur", () => window.__blurs++); return document.activeElement && document.activeElement.id; });
+  await page.click("#send"); // (a real press: mousedown moves focus to a button unless it is prevented)
+  await settle(300);
+  const focusAfter = await page.evaluate(() => ({ id: document.activeElement && document.activeElement.id, blurs: window.__blurs }));
+  check("tapping Chat never takes focus from the message box (so a phone keyboard stays open)", focusBefore === "message" && focusAfter.id === "message" && focusAfter.blurs === 0, JSON.stringify([focusBefore, focusAfter]));
   check("after sending in a slow-mode channel a countdown shows", /Slow mode: you can chat again in (9|10)s/.test(await page.textContent("#slow-note")), await page.textContent("#slow-note"));
   await page.evaluate(() => activate(tabs.get("yappa")));
   check("the countdown belongs to its channel", await page.$eval("#slow-note", (n) => n.hidden));

@@ -2782,6 +2782,9 @@ async function sendChat(tab, message, replyId) {
   return r;
 }
 
+// Tapping Chat must not take focus from the message box, or a phone's keyboard closes on every send.
+$("send").addEventListener("mousedown", (e) => e.preventDefault());
+
 $("send-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = composer.getText().trim();

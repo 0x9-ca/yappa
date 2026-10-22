@@ -15,7 +15,7 @@ const browser = await chromium.launch({
 });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true, deviceScaleFactor: process.env.SHOTS ? 2 : 1 }); // 2x only for the README gallery
 // Shorten the app's own waits (color-bump grace, raid countdown, sync delay) so tests don't sit through them.
-await ctx.addInitScript(() => { window.__timing = { bump: 100, raidTick: 60, sync: 60, clipRetry: 150, sayMs: 300, watchdog: 250, find: 60 }; });
+await ctx.addInitScript(() => { window.__timing = { bump: 100, raidTick: 60, sync: 60, clipRetry: 150, sayMs: 300, watchdog: 250, find: 60, holdMs: 150, repeatMs: 200 }; });
 // Lets the tests wait for "the page has stopped reacting" instead of sleeping a fixed time (see settle()).
 // Anything that can still change the page counts as activity: requests, socket traffic, DOM changes,
 // scrolling and resizing, and short timers that haven't fired yet.
@@ -1972,6 +1972,46 @@ followingMode = "ok";
   check("button goes away once history is exhausted", !(await page.isVisible("#search-older")));
   await page.click("#search-close");
   await page.evaluate(() => closeTab(tabs.get("deepchan")));
+}
+// Holding Chat repeats the message, slowly, a few times, and stops when you let go or Twitch refuses one.
+{
+  await page.evaluate(() => { activate(tabs.get("yappa")); active.settings = { ...(active.settings || {}), slow_mode: false }; });
+  await settle(100);
+  const hold = async (ms, text) => {
+    await page.evaluate((t) => composer.setText(t), text);
+    const n0 = log.sent.length;
+    const box = await page.locator("#send").boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(ms);
+    const label = await page.textContent("#send");
+    await page.mouse.up();
+    await settle(400);
+    return { sent: log.sent.slice(n0), label };
+  };
+  const quick = await hold(20, "tap once");
+  check("a normal tap still sends exactly once", quick.sent.length === 1 && quick.sent[0] === "tap once" && quick.label === "Chat", JSON.stringify(quick));
+  const held = await hold(150 + 200 * 2 + 120, "again and again");
+  check("holding sends it again every so often while held, showing the count, then stops on release",
+    held.sent.length >= 3 && held.sent.length <= 4 && held.sent.every((m) => m === "again and again") && /^×\d\/5$/.test(held.label) && (await page.textContent("#send")) === "Chat", JSON.stringify(held));
+  const after = log.sent.length;
+  await page.waitForTimeout(600);
+  check("nothing more is sent after letting go", log.sent.length === after);
+  const long = await hold(150 + 200 * 9, "capped");
+  check("a long hold is capped (1 + 5 sends at most)", long.sent.length === 6 && long.sent.every((m) => m === "capped"), JSON.stringify(long.sent.length));
+  sendFailure = "Your message was not sent because it is identical to the previous one you sent less than 30 seconds ago.";
+  const dropped = await hold(150 + 200 * 4, "dupe");
+  sendFailure = null;
+  check("a refused send ends the repeat and shows why", (log.sendTries || []).filter((m) => m === "dupe").length === 1 && /identical/.test(await page.textContent("#send-error")) && (await page.textContent("#send")) === "Chat");
+  await page.evaluate(() => { show("send-error", false); composer.setText(""); });
+  const slowCase = await (async () => {
+    await page.evaluate(() => { active.settings = { ...active.settings, slow_mode: true, slow_mode_wait_time: 2 }; });
+    const r = await hold(150 + 400, "slow one");
+    await page.evaluate(() => { active.settings = { ...active.settings, slow_mode: false }; });
+    return r;
+  })();
+  check("in slow mode the repeat waits for the slow-mode time (so nothing is repeated within 0.5 s)", slowCase.sent.length === 1, JSON.stringify(slowCase.sent));
+  await page.evaluate(() => { composer.setText(""); });
 }
 // =============== light theme ===============
 {

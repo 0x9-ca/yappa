@@ -2785,6 +2785,59 @@ async function sendChat(tab, message, replyId) {
 // Tapping Chat must not take focus from the message box, or a phone's keyboard closes on every send.
 $("send").addEventListener("mousedown", (e) => e.preventDefault());
 
+// Hold Chat to send the same message again, slowly and a few times: every 5 seconds (or just over the
+// channel's slow-mode wait), at most REPEAT_MAX more, stopping when you let go, switch channel or Twitch
+// refuses a send (Twitch drops an identical message within 30 seconds, which is reported and ends it).
+const HOLD_MS = TEST_TIMING.holdMs || 700;
+const REPEAT_MS = TEST_TIMING.repeatMs || 5000;
+const REPEAT_MAX = 5;
+let holdTimer = null, repeater = null;
+
+function stopRepeat() {
+  clearTimeout(holdTimer);
+  holdTimer = null;
+  if (!repeater) return;
+  repeater.stop = true;
+  clearTimeout(repeater.timer);
+  repeater = null;
+  $("send").textContent = "Chat";
+  $("send").removeAttribute("aria-label");
+}
+
+function startRepeat() {
+  const tab = active, text = composer.getText().trim();
+  if (!text || !tab || !tab.broadcaster || sending || text.startsWith("/") || $("send").disabled) return;
+  const slow = tab.settings && tab.settings.slow_mode ? (tab.settings.slow_mode_wait_time || 30) * 1000 + 500 : 0;
+  const gap = Math.max(REPEAT_MS, slow);
+  const rep = (repeater = { stop: false, timer: null, n: 0 });
+  $("send-form").requestSubmit(); // the first send goes the normal way
+  const label = () => { $("send").textContent = "×" + rep.n + "/" + REPEAT_MAX; $("send").setAttribute("aria-label", "Sending again, " + rep.n + " of " + REPEAT_MAX + ". Release to stop."); };
+  label();
+  const next = () => {
+    rep.timer = setTimeout(async () => {
+      if (rep.stop || active !== tab) return stopRepeat();
+      const r = await sendChat(tab, text);
+      if (rep.stop) return;
+      if (!r.ok) { $("send-error").textContent = r.error; show("send-error", true); return stopRepeat(); }
+      window.toolsSent?.(tab);
+      rep.n++;
+      label();
+      if (rep.n >= REPEAT_MAX) return stopRepeat();
+      next();
+    }, gap);
+  };
+  next();
+}
+
+$("send").addEventListener("pointerdown", (e) => {
+  if (e.button > 0 || $("send").disabled) return;
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(startRepeat, HOLD_MS);
+});
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) $("send").addEventListener(ev, stopRepeat);
+$("send").addEventListener("contextmenu", (e) => e.preventDefault()); // a long press must not open the phone's menu
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopRepeat(); });
+
 $("send-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = composer.getText().trim();

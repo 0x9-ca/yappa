@@ -1407,6 +1407,7 @@ function imgurCardEl(card) {
     img.referrerPolicy = "no-referrer";
     img.addEventListener("error", () => box.remove());
     box.appendChild(img);
+    if (!row.childElementCount && t.width && t.height) box.style.aspectRatio = t.width + " / " + t.height; // the large first picture keeps its own shape
     if (t.video) box.appendChild(el("span", "xc-play", "▶"));
     row.appendChild(box);
   }

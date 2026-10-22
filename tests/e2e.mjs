@@ -207,7 +207,7 @@ await ctx.route("**/*", async (route) => {
       const id = u.searchParams.get("id");
       log.imgurPreviews = [...(log.imgurPreviews || []), id];
       if (id === "Gone404") return route.fulfill({ status: 404, json: { ok: false, error: "That album isn't available." } });
-      const th = (n) => Array.from({ length: n }, (_, i) => ({ url: "https://i.imgur.com/Pic" + id + i + "m.jpg", video: i === 1 }));
+      const th = (n) => Array.from({ length: n }, (_, i) => ({ url: "https://i.imgur.com/Pic" + id + i + "m.jpg", video: i === 1, width: i === 0 ? 900 : 300, height: i === 0 ? 600 : 300 }));
       if (id === "Mature1") return j({ ok: true, card: { id, url: "https://imgur.com/a/" + id, title: "Mature one", count: 2, sensitive: true, thumbs: th(2) } });
       return j({ ok: true, card: { id, url: "https://imgur.com/a/" + id, title: "Holiday photos", count: 9, sensitive: false, thumbs: th(4) } });
     }
@@ -3000,6 +3000,7 @@ check("history marks messages deleted before they were loaded", await page.evalu
   const al = await page.$eval('li[data-id="al1"]', (l) => ({ cards: l.querySelectorAll(".im-card").length, thumbs: l.querySelectorAll(".im-thumb img").length, title: l.querySelector(".im-title").textContent, href: l.querySelector(".im-card").href, note: l.querySelector(".im-card .xc-note").textContent, play: l.querySelectorAll(".im-card .xc-play").length }));
   check("with image previews on, an Imgur album link gets a card with its first thumbnails",
     al.cards === 2 && al.thumbs === 8 && al.title === "Holiday photos" && al.href === "https://imgur.com/a/Album01" && /9 pictures/.test(al.note) && al.play === 2, JSON.stringify(al));
+  check("the first picture keeps its own aspect ratio (here 3:2), the others stay square", await page.$eval('li[data-id="al1"] .im-card', (c) => { const [a, b] = [...c.querySelectorAll(".im-thumb")]; const r = (x) => x.getBoundingClientRect().width / x.getBoundingClientRect().height; return Math.abs(r(a) - 900 / 600) < 0.05 && Math.abs(r(b) - 1) < 0.05; }));
   check("...asked once per album (a gallery link's id comes after its title), thumbnails sent without a referrer",
     JSON.stringify(log.imgurPreviews.slice(alb0)) === '["Album01","Gall123"]' && log.pics.filter((p) => p.url.includes("i.imgur.com")).every((p) => p.referer === null), JSON.stringify(log.imgurPreviews.slice(alb0)));
   await page.evaluate(() => document.querySelector('li[data-id="al1"]').scrollIntoView());

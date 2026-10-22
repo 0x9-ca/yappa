@@ -15,7 +15,7 @@ export interface ImgurCard {
   /** Marked mature: the client doesn't load its pictures. */
   sensitive: boolean;
   /** Up to four pictures, always https://i.imgur.com/<id>h.jpg (1024px) for the first and <id>l.jpg (640px) for the rest. */
-  thumbs: { url: string; video: boolean }[];
+  thumbs: { url: string; video: boolean; width: number | null; height: number | null }[];
 }
 
 const API = "https://api.imgur.com/3";
@@ -27,6 +27,7 @@ const MAX_THUMBS = 4;
 /** An album or image id from the query string, or null. */
 export const parseImgurId = (v: string | null): string | null => (v && ID.test(v) ? v : null);
 
+const dim = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v > 0 && v < 100000 ? v : null);
 const str = (v: unknown, max: number): string => (typeof v === "string" ? v.slice(0, max) : "");
 
 /** Turns Imgur's answer for an album (or a single image) into a card, or null if it isn't one. */
@@ -43,7 +44,7 @@ export function slimImgur(id: string, body: unknown): ImgurCard | null {
     title: str(d.title, 120),
     count,
     sensitive: d.nsfw === true || pics.some((i) => i.nsfw === true),
-    thumbs: pics.slice(0, MAX_THUMBS).map((i, n) => ({ url: `https://i.imgur.com/${i.id}${n === 0 ? "h" : "l"}.jpg`, video: i.animated === true && typeof i.type === "string" && i.type.startsWith("video/") })),
+    thumbs: pics.slice(0, MAX_THUMBS).map((i, n) => ({ url: `https://i.imgur.com/${i.id}${n === 0 ? "h" : "l"}.jpg`, video: i.animated === true && typeof i.type === "string" && i.type.startsWith("video/"), width: dim(i.width), height: dim(i.height) })),
   };
 }
 

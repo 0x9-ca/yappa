@@ -245,7 +245,15 @@ function normalizeChannel(v) {
 // so keep direct references rather than looking them up by id.
 const cyclerEl = $("cycler"), swatchEl = $("swatch"), colorEl = $("color"), cycleBtn = $("cycle");
 
+let statusRunning = false;
 async function refreshStatus() {
+  // A focus or pageshow event while the first answer is still on its way must not ask again.
+  if (statusRunning) return;
+  statusRunning = true;
+  try { await refreshStatusNow(); } finally { statusRunning = false; }
+}
+
+async function refreshStatusNow() {
   let s;
   if (status === null && window.earlyStatus) {
     // theme.js started this request before the rest of the page had loaded.
@@ -2791,7 +2799,7 @@ $("send").addEventListener("mousedown", (e) => e.preventDefault());
 const HOLD_MS = TEST_TIMING.holdMs || 700;
 const REPEAT_MS = TEST_TIMING.repeatMs || 5000;
 const REPEAT_MAX = 5;
-let holdTimer = null, repeater = null;
+let holdTimer = null, repeater = null, firstSendFailed = false; // (the last normal send: a held repeat ends if it was refused)
 
 function stopRepeat() {
   clearTimeout(holdTimer);
@@ -2810,12 +2818,15 @@ function startRepeat() {
   const slow = tab.settings && tab.settings.slow_mode ? (tab.settings.slow_mode_wait_time || 30) * 1000 + 500 : 0;
   const gap = Math.max(REPEAT_MS, slow);
   const rep = (repeater = { stop: false, timer: null, n: 0 });
+  firstSendFailed = false;
   $("send-form").requestSubmit(); // the first send goes the normal way
-  const label = () => { $("send").textContent = "×" + rep.n + "/" + REPEAT_MAX; $("send").setAttribute("aria-label", "Sending again, " + rep.n + " of " + REPEAT_MAX + ". Release to stop."); };
+  const label = () => { $("send").textContent = (rep.n + 1) + "/" + (REPEAT_MAX + 1); $("send").setAttribute("aria-label", "Sent " + (rep.n + 1) + " of " + (REPEAT_MAX + 1) + ". Keep holding to send again, release to stop."); };
   label();
   const next = () => {
     rep.timer = setTimeout(async () => {
       if (rep.stop || active !== tab) return stopRepeat();
+      if (sending) return next(); // the previous send hasn't come back yet
+      if (firstSendFailed) return stopRepeat();
       const r = await sendChat(tab, text);
       if (rep.stop) return;
       if (!r.ok) { $("send-error").textContent = r.error; show("send-error", true); return stopRepeat(); }
@@ -2834,7 +2845,9 @@ $("send").addEventListener("pointerdown", (e) => {
   clearTimeout(holdTimer);
   holdTimer = setTimeout(startRepeat, HOLD_MS);
 });
-for (const ev of ["pointerup", "pointercancel", "pointerleave"]) $("send").addEventListener(ev, stopRepeat);
+// The release is listened for on the whole page: the button is disabled while a send is in flight, and a
+// disabled button can miss its own pointerup (the repeat would then never end).
+for (const ev of ["pointerup", "pointercancel", "touchend", "touchcancel", "mouseup", "blur"]) (ev === "blur" ? window : document).addEventListener(ev, stopRepeat, true);
 $("send").addEventListener("contextmenu", (e) => e.preventDefault()); // a long press must not open the phone's menu
 document.addEventListener("visibilitychange", () => { if (document.hidden) stopRepeat(); });
 
@@ -2855,6 +2868,7 @@ $("send-form").addEventListener("submit", async (e) => {
   show("send-error", false);
   const r = await sendChat(tab, text, replyTo ? replyTo.id : undefined);
   sending = false;
+  firstSendFailed = !r.ok;
   updateComposer();
   if (r.ok) {
     lastSent = text;

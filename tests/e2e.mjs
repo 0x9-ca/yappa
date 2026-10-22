@@ -1993,12 +1993,18 @@ followingMode = "ok";
   check("a normal tap still sends exactly once", quick.sent.length === 1 && quick.sent[0] === "tap once" && quick.label === "Chat", JSON.stringify(quick));
   const held = await hold(150 + 200 * 2 + 120, "again and again");
   check("holding sends it again every so often while held, showing the count, then stops on release",
-    held.sent.length >= 3 && held.sent.length <= 4 && held.sent.every((m) => m === "again and again") && /^×\d\/5$/.test(held.label) && (await page.textContent("#send")) === "Chat", JSON.stringify(held));
+    held.sent.length >= 3 && held.sent.length <= 4 && held.sent.every((m) => m === "again and again") && /^\d\/6$/.test(held.label) && (await page.textContent("#send")) === "Chat", JSON.stringify(held));
   const after = log.sent.length;
   await page.waitForTimeout(600);
   check("nothing more is sent after letting go", log.sent.length === after);
   const long = await hold(150 + 200 * 9, "capped");
   check("a long hold is capped (1 + 5 sends at most)", long.sent.length === 6 && long.sent.every((m) => m === "capped"), JSON.stringify(long.sent.length));
+  // Let go while the first send is still in flight (the button is disabled then): it must still end.
+  slowSend = 700;
+  const inflight = await hold(150 + 300, "mid-flight");
+  slowSend = 0;
+  await page.waitForTimeout(700);
+  check("letting go while the send is still in flight ends the repeat", (await page.textContent("#send")) === "Chat" && log.sent.filter((m) => m === "mid-flight").length === 1, JSON.stringify([await page.textContent("#send"), log.sent.filter((m) => m === "mid-flight").length]));
   sendFailure = "Your message was not sent because it is identical to the previous one you sent less than 30 seconds ago.";
   const dropped = await hold(150 + 200 * 4, "dupe");
   sendFailure = null;

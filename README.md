@@ -54,7 +54,7 @@ WebSocket and Helix API, and it runs as a web app you can install on your phone 
   you opt in) with older pages as you scroll up, and gap filling after a reconnect.
 - Links to X/Twitter posts show a preview card (author, text, picture, counts); the Worker fetches it from the
   unofficial [mbedfx](https://mbedfx.app) service so your address isn't shared with it. Links to
-  images can show the picture too (opt-in). Both are under Settings → Chat → Link previews.
+  images can show the picture too, and Imgur album links a card with the first pictures (opt-in, via Imgur's website API). Both are under Settings → Chat → Link previews.
 - Clip links in chat show as cards; first-time chatters, deleted messages, highlighted and channel-points
   messages, raids and Gigantified emotes are marked.
 - Reply, save a message as a bookmark, or translate it (with the browser's own translator where it has one,

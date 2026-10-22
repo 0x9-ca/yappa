@@ -277,6 +277,47 @@ const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6890302,RESOLUTION=1920x108
   check("an unreachable service is a 502 with a plain message", r.status === 502 && /reach/.test((await r.json()).error));
   globalThis.fetch = realFetch2;
 
+  // Imgur album preview route.
+  const imgurCalls = [];
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith("https://api.imgur.com/3/")) {
+      imgurCalls.push([url, init && init.headers && init.headers.Authorization]);
+      const [, kind, id] = /\/3\/(album|image)\/(\w+)/.exec(url);
+      if (id === "Gone404") return Response.json({ success: false }, { status: 404 });
+      if (id === "Busy503") return new Response("busy", { status: 503 });
+      if (id === "Single1" && kind === "album") return Response.json({ success: false }, { status: 404 });
+      if (id === "Single1") return Response.json({ data: { id: "Single1", title: null, type: "image/png", animated: false } });
+      if (id === "Mature1") return Response.json({ data: { id: "Mature1", title: "Spicy", nsfw: true, images_count: 1, images: [{ id: "Pic0001", type: "image/jpeg" }] } });
+      return Response.json({ data: { id, title: "My album", images_count: 6, images: ["Aaaaa1", "Bbbbb2", "Ccccc3", "Ddddd4", "Eeeee5", "Fffff6"].map((i, n) => ({ id: i, type: n === 1 ? "video/mp4" : "image/jpeg", animated: n === 1 })) } });
+    }
+    return realFetch2(u, init);
+  };
+  r = await get("/api/preview/imgur?id=Album01");
+  check("album previews need a session", r.status === 401 && imgurCalls.length === 0);
+  r = await get("/api/preview/imgur?id=Album01", sess);
+  j = await r.json();
+  check("an album becomes a card: title, true count, the first four thumbnails on i.imgur.com",
+    r.status === 200 && j.ok && j.card.title === "My album" && j.card.count === 6 && j.card.thumbs.length === 4 && j.card.thumbs[0].url === "https://i.imgur.com/Aaaaa1m.jpg" && j.card.thumbs[1].video === true && j.card.thumbs[0].video === false && j.card.url === "https://imgur.com/a/Album01" && !j.card.sensitive, JSON.stringify(j));
+  await get("/api/preview/imgur?id=Album01", sess);
+  check("the same album is remembered, not fetched again", imgurCalls.length === 1);
+  for (const bad of ["", "abc", "x".repeat(30), "../../etc", "a b c d e"]) {
+    r = await get("/api/preview/imgur?id=" + encodeURIComponent(bad), sess);
+    if (r.status !== 400) check("a bad album id is refused: " + bad, false);
+  }
+  check("bad album ids never reach Imgur", imgurCalls.length === 1);
+  r = await get("/api/preview/imgur?id=Single1", sess);
+  j = await r.json();
+  check("a gallery link that is one picture still gets a card", j.ok && j.card.count === 1 && j.card.thumbs.length === 1 && j.card.thumbs[0].url === "https://i.imgur.com/Single1m.jpg" && j.card.url === "https://imgur.com/gallery/Single1", JSON.stringify(j));
+  r = await get("/api/preview/imgur?id=Mature1", sess);
+  check("a mature album is flagged so the page doesn't load it", (await r.json()).card.sensitive === true);
+  r = await get("/api/preview/imgur?id=Gone404", sess);
+  check("a missing album is a 404", r.status === 404);
+  r = await get("/api/preview/imgur?id=Busy503", sess);
+  check("a failing Imgur is a 502 saying what it answered", r.status === 502 && /503/.test((await r.json()).error));
+  check("requests use the website's public client id and no one's credentials", imgurCalls.every(([, h]) => /^Client-ID \w+$/.test(h)));
+  globalThis.fetch = realFetch2;
+
   // Syncing settings between devices.
   const syncReq = (method, bodyObj, cookie = sess) => worker.default.fetch(req("/api/sync", { method, headers: { Cookie: cookie, Origin: "https://app.test", "Content-Type": "application/json" }, ...(bodyObj !== undefined ? { body: JSON.stringify(bodyObj) } : {}) }), env);
   r = await get("/api/sync");

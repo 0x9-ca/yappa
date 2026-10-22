@@ -1370,6 +1370,50 @@ function fetchXCard(id) {
   return p;
 }
 
+// imgur.com/a/<id>, or imgur.com/gallery/<title-slug>-<id> (the id is what follows the last hyphen).
+const IMGUR_LINK = /^https?:\/\/(?:www\.|m\.)?imgur\.com\/(?:a|gallery)\/(?:[^/?#]*-)?([A-Za-z0-9]{5,10})(?:[/?#]|$)/i;
+const imgurCards = new Map(); // album id -> promise of its card (null when unavailable)
+
+function fetchImgurCard(id) {
+  let p = imgurCards.get(id);
+  if (!p) {
+    p = api("/api/preview/imgur?id=" + id).then((r) => (r && r.ok ? r.card : null));
+    if (imgurCards.size > 100) imgurCards.delete(imgurCards.keys().next().value);
+    imgurCards.set(id, p);
+    p.then((c) => { if (!c) setTimeout(() => imgurCards.delete(id), 60000); });
+  }
+  return p;
+}
+
+const onImgur = (u) => { try { const x = new URL(u); return x.protocol === "https:" && x.hostname === "i.imgur.com"; } catch { return false; } };
+
+function imgurCardEl(card) {
+  const a = el("a", "x-card im-card");
+  a.href = card.url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer nofollow";
+  a.append(el("div", "im-title", card.title || "Imgur album"), el("div", "xc-note", card.count + (card.count === 1 ? " picture" : " pictures") + " · imgur.com"));
+  if (card.sensitive) {
+    a.appendChild(el("div", "xc-note", "Mature content hidden."));
+    return a;
+  }
+  const row = el("div", "im-thumbs");
+  for (const t of card.thumbs) {
+    if (!onImgur(t.url)) continue;
+    const box = el("span", "im-thumb");
+    const img = document.createElement("img");
+    img.src = t.url;
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => box.remove());
+    box.appendChild(img);
+    if (t.video) box.appendChild(el("span", "xc-play", "▶"));
+    row.appendChild(box);
+  }
+  if (row.childElementCount) a.appendChild(row);
+  return a;
+}
+
 const onXCdn = (u) => { try { const x = new URL(u); return x.protocol === "https:" && /(^|\.)twimg\.com$/.test(x.hostname); } catch { return false; } };
 
 function xCardEl(card) {
@@ -1429,6 +1473,10 @@ window.toolsLinkPreviews = (tab, li, body) => {
   if (pv.x !== false) {
     const ids = [...new Set(links.map((h) => (X_LINK.exec(h) || [])[1]).filter(Boolean))].slice(0, 2);
     for (const id of ids) fetchXCard(id).then((card) => { if (card && li.isConnected) placePreview(tab, li, xCardEl(card)); });
+  }
+  if (pv.images === true) {
+    const albums = [...new Set(links.map((h) => (IMGUR_LINK.exec(h) || [])[1]).filter(Boolean))].slice(0, 2);
+    for (const id of albums) fetchImgurCard(id).then((card) => { if (card && li.isConnected) placePreview(tab, li, imgurCardEl(card)); });
   }
   if (pv.images === true) {
     const imgs = [...new Set(links.filter((h) => { try { const u = new URL(h); return u.protocol === "https:" && IMAGE_LINK.test(u.pathname) && !X_LINK.test(h); } catch { return false; } }))].slice(0, 2);

@@ -4798,7 +4798,7 @@ function openSettings(wantGroup) {
       row("Load pictures in post cards", checkbox(settings.previews.media !== false, (c) => { settings.previews.media = c.checked; saveSettings(); }),
         "Avatars and photos load straight from X's servers (Yappa's server finds their addresses), which can see your address. Turn off for text-only cards. Posts X marks sensitive never load their media."),
       row("Show images from image links", checkbox(settings.previews.images === true, (c) => { settings.previews.images = c.checked; saveSettings(); }),
-        "Show a picture under messages that link to a .png, .jpg, .gif or .webp. Off by default: the picture loads from whatever site the link points to, which can see your address.")),
+        "Show a picture under messages that link to a .png, .jpg, .gif or .webp, and a small card with the first pictures for Imgur albums. Off by default: pictures load from whatever site the link points to, which can see your address.")),
     item("Raids", row("Follow raids", checkbox(settings.followRaids, (c) => { settings.followRaids = c.checked; saveSettings(); }),
       "When the channel you're watching raids, switch to the raided channel after " + RAID_FOLLOW_SECONDS + " seconds (you can stay).")),
   ]);

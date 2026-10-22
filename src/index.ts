@@ -6,6 +6,7 @@ import { staticFiles } from "./static";
 import { relayMaster } from "./usher";
 import { parseSync } from "./sync";
 import { fetchX, parseXId } from "./previews";
+import { fetchImgur, parseImgurId } from "./imgur";
 import { parseAnnounce, parseBanned, parseLoginQuery, parseBlock, parseBroadcaster, parseShield, parseShoutout, parseSuspicious, parseTerm, parseTermRemove, parseUnbanResolve, parseSearch, parseTop, parseWarn, parseWhisper } from "./tools";
 import { PAGE_SIZE, parseClipsQuery, parseCreateClip, parseOffset, parseVideosQuery } from "./browse";
 import { authorizeUrl, exchangeCode, revokeToken, validateToken } from "./twitch";
@@ -164,6 +165,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const id = parseXId(url.searchParams.get("id"));
       if (!id) return json({ ok: false, error: "Bad post id." }, 400);
       const r = await fetchX(id);
+      return json(r, r.ok ? 200 : r.status);
+    }
+    // Preview card for an Imgur album linked in chat (see src/imgur.ts).
+    case "GET /api/preview/imgur": {
+      const id = parseImgurId(url.searchParams.get("id"));
+      if (!id) return json({ ok: false, error: "Bad album id." }, 400);
+      const r = await fetchImgur(id);
       return json(r, r.ok ? 200 : r.status);
     }
     // The native player's quality list (see src/usher.ts). No Durable Object needed.

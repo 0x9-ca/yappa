@@ -84,7 +84,7 @@ await page.addInitScript(() => {
 // Console errors the checks provoke on purpose: the CSP check, the 503 status, the aborted request.
 // The CSP one is allowed once, so a real violation by the app still fails the run.
 // (A 404 is only fine for the URLs listed in intended404; the console line for it is always accepted.)
-const intended404 = [/\/api\/preview\/x\?id=8003/, /pics\.example\.com\/missing/];
+const intended404 = [/\/api\/preview\/x\?id=8003/, /\/api\/preview\/imgur\?id=Gone404/, /pics\.example\.com\/missing/];
 const expectedErrors = [/status of 404/, /status of 403/, /status of 401/, /status of 503/, /status of 502/, /net::ERR_FAILED/];
 let allowedCspErrors = 1;
 const expected = (t) => expectedErrors.some((re) => re.test(t)) || (/Content Security Policy/.test(t) && allowedCspErrors-- > 0);
@@ -202,6 +202,14 @@ await ctx.route("**/*", async (route) => {
       log.lookups = [...(log.lookups || []), login];
       if (login === "nobodyhere") return j({ ok: false, error: "No Twitch user named nobodyhere." });
       return j({ ok: true, user: { id: "5555", login, name: login[0].toUpperCase() + login.slice(1), avatar: null, about: "", createdAt: "2019-01-01T00:00:00Z", type: "" } });
+    }
+    if (u.pathname === "/api/preview/imgur") {
+      const id = u.searchParams.get("id");
+      log.imgurPreviews = [...(log.imgurPreviews || []), id];
+      if (id === "Gone404") return route.fulfill({ status: 404, json: { ok: false, error: "That album isn't available." } });
+      const th = (n) => Array.from({ length: n }, (_, i) => ({ url: "https://i.imgur.com/Pic" + id + i + "m.jpg", video: i === 1 }));
+      if (id === "Mature1") return j({ ok: true, card: { id, url: "https://imgur.com/a/" + id, title: "Mature one", count: 2, sensitive: true, thumbs: th(2) } });
+      return j({ ok: true, card: { id, url: "https://imgur.com/a/" + id, title: "Holiday photos", count: 9, sensitive: false, thumbs: th(4) } });
     }
     if (u.pathname === "/api/preview/x") {
       const id = u.searchParams.get("id");
@@ -365,7 +373,7 @@ await ctx.route("**/*", async (route) => {
     return route.fulfill({ body: wide ? `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue},60%,45%)"/><stop offset="1" stop-color="hsl(${(hue + 60) % 360},60%,25%)"/></linearGradient></defs><rect width="320" height="180" fill="url(#g)"/></svg>` : svg(hue), contentType: "image/svg+xml" });
   }
   // X's picture CDN and a stand-in image-link host: recorded (referrer included), answered with a wide tile.
-  if (/(^|\.)twimg\.com$/.test(u.host) || u.host === "pics.example.com") {
+  if (/(^|\.)twimg\.com$/.test(u.host) || u.host === "pics.example.com" || u.host === "i.imgur.com") {
     log.pics = [...(log.pics || []), { url: u.href, referer: route.request().headers().referer || null }];
     if (u.pathname.includes("missing")) return route.fulfill({ status: 404, body: "" });
     return route.fulfill({ body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="340"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b6cb0"/><stop offset="1" stop-color="#6b46c1"/></linearGradient></defs><rect width="600" height="340" fill="url(#g)"/><circle cx="300" cy="170" r="70" fill="#ffffff33"/></svg>', contentType: "image/svg+xml" });
@@ -2985,8 +2993,32 @@ check("history marks messages deleted before they were loaded", await page.evalu
   });
   await page.waitForSelector('li[data-id="hist-html"] .img-preview', { timeout: 3000 }).catch(() => {});
   check("...and the same in a message that comes back from history", (await page.$$('li[data-id="hist-html"] a.link')).length === 1 && (await page.$$('li[data-id="hist-html"] .img-preview')).length === 1);
+  const alb0 = (log.imgurPreviews || []).length;
+  await say("al1", "album https://imgur.com/a/Album01 and gallery https://imgur.com/gallery/holiday-photos-Gall123 and again https://imgur.com/a/Album01");
+  await page.waitForSelector('li[data-id="al1"] .im-card');
+  await settle(200);
+  const al = await page.$eval('li[data-id="al1"]', (l) => ({ cards: l.querySelectorAll(".im-card").length, thumbs: l.querySelectorAll(".im-thumb img").length, title: l.querySelector(".im-title").textContent, href: l.querySelector(".im-card").href, note: l.querySelector(".im-card .xc-note").textContent, play: l.querySelectorAll(".im-card .xc-play").length }));
+  check("with image previews on, an Imgur album link gets a card with its first thumbnails",
+    al.cards === 2 && al.thumbs === 8 && al.title === "Holiday photos" && al.href === "https://imgur.com/a/Album01" && /9 pictures/.test(al.note) && al.play === 2, JSON.stringify(al));
+  check("...asked once per album (a gallery link's id comes after its title), thumbnails sent without a referrer",
+    JSON.stringify(log.imgurPreviews.slice(alb0)) === '["Album01","Gall123"]' && log.pics.filter((p) => p.url.includes("i.imgur.com")).every((p) => p.referer === null), JSON.stringify(log.imgurPreviews.slice(alb0)));
+  await say("al2", "mature https://imgur.com/a/Mature1 gone https://imgur.com/a/Gone404");
+  await page.waitForSelector('li[data-id="al2"] .im-card');
+  await settle(200);
+  const al2 = await page.$eval('li[data-id="al2"]', (l) => ({ cards: l.querySelectorAll(".im-card").length, thumbs: l.querySelectorAll(".im-thumb").length, text: l.querySelector(".im-card").textContent }));
+  check("a mature album shows no pictures, and a missing album no card", al2.cards === 1 && al2.thumbs === 0 && /Mature content hidden/.test(al2.text), JSON.stringify(al2));
+  await page.evaluate(() => {
+    const ev = ircToEvent("@id=hist-album;tmi-sent-ts=" + (Date.now() - 60000) + ";user-id=9;display-name=Old :old!old@x PRIVMSG #yappa :old <div>https://imgur.com/a/Hist001</div>");
+    renderMessage(active, ev, { merge: true, historical: true });
+  });
+  await page.waitForSelector('li[data-id="hist-album"] .im-card', { timeout: 3000 }).catch(() => {});
+  check("...and one in a message that comes back from history", (await page.$$('li[data-id="hist-album"] .im-card')).length === 1);
   await shot("image-preview");
+  const alb1 = (log.imgurPreviews || []).length;
   await page.evaluate(() => { settings.previews.images = false; saveSettings(); });
+  await say("al3", "off https://imgur.com/a/Off0001");
+  await settle(200);
+  check("with image previews off, an album link loads nothing", (log.imgurPreviews || []).length === alb1 && (await page.$$('li[data-id="al3"] .im-card')).length === 0);
   await openSettingsUI();
   check("Settings has the link preview options", /Show X \/ Twitter posts/.test(await page.textContent("#sheet")) && /Show images from image links/.test(await page.textContent("#sheet")));
   await page.keyboard.press("Escape");
